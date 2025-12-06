@@ -1,0 +1,571 @@
+// Konarae FlowCoder - Government Support Project Matching Platform
+// Based on FDP (Flowcoder Development Process) Architecture
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  directUrl  = env("DIRECT_URL")
+  extensions = [pgvector(map: "vector")]
+}
+
+// ============================================
+// NextAuth.js Core Tables
+// ============================================
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  image         String?
+  emailVerified DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts            Account[]
+  sessions            Session[]
+  companies           CompanyMember[]
+  businessPlans       BusinessPlan[]
+  matchingResults     MatchingResult[]
+  matchingPreferences MatchingPreference[]
+  evaluations         Evaluation[]
+  notifications       Notification[]
+  notificationSetting NotificationSetting?
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ============================================
+// ReBAC Permission System
+// ============================================
+
+model RelationTuple {
+  id          String   @id @default(cuid())
+  namespace   String // e.g., "company", "business_plan"
+  objectId    String // resource ID
+  relation    String // e.g., "owner", "editor", "viewer"
+  subjectType String // "user" or "group"
+  subjectId   String // user or group ID
+  createdAt   DateTime @default(now())
+
+  @@unique([namespace, objectId, relation, subjectType, subjectId])
+  @@index([namespace, objectId])
+  @@index([subjectType, subjectId])
+}
+
+model RelationDefinition {
+  id        String   @id @default(cuid())
+  namespace String
+  relation  String
+  inherits  String[] // relations this relation inherits from
+
+  @@unique([namespace, relation])
+}
+
+// ============================================
+// Domain Tables
+// ============================================
+
+model Company {
+  id                 String   @id @default(cuid())
+  name               String
+  businessNumber     String   @unique
+  corporationNumber  String?
+  representativeName String
+  establishedDate    DateTime
+  companyType        String
+
+  // Business Info
+  businessCategory String?
+  mainBusiness     String?
+  businessItems    String[]
+
+  // Contact
+  phone   String
+  fax     String?
+  email   String
+  website String?
+
+  // Address
+  zipcode       String?
+  address       String
+  addressDetail String?
+
+  // Scale
+  employeeCount Int?
+  capitalAmount BigInt?
+  annualRevenue BigInt?
+  companySize   String?
+
+  // Certifications
+  isVenture  Boolean @default(false)
+  isInnoBiz  Boolean @default(false)
+  isMainBiz  Boolean @default(false)
+  isSocial   Boolean @default(false)
+  isWomen    Boolean @default(false)
+  isDisabled Boolean @default(false)
+
+  // Content
+  introduction String?   @db.Text
+  vision       String?
+  mission      String?
+  coreValues   String[]
+
+  // Media
+  logoUrl   String?
+  bannerUrl String?
+
+  // Status
+  isPublic   Boolean   @default(false)
+  isVerified Boolean   @default(false)
+  verifiedAt DateTime?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  members            CompanyMember[]
+  financials         CompanyFinancial[]
+  certifications     CompanyCertification[]
+  achievements       CompanyAchievement[]
+  matchingResults    MatchingResult[]
+  businessPlans      BusinessPlan[]
+  matchingPreferences MatchingPreference[]
+
+  @@index([businessNumber])
+  @@index([name])
+}
+
+model CompanyMember {
+  id        String    @id @default(cuid())
+  companyId String
+  userId    String
+  role      String // owner, admin, member, viewer
+  invitedAt DateTime  @default(now())
+  joinedAt  DateTime?
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, userId])
+  @@index([userId])
+}
+
+model CompanyFinancial {
+  id               String    @id @default(cuid())
+  companyId        String
+  fiscalYear       Int
+  revenue          BigInt?
+  operatingProfit  BigInt?
+  netProfit        BigInt?
+  totalAssets      BigInt?
+  totalLiabilities BigInt?
+  equity           BigInt?
+  creditRating     String?
+  ratingAgency     String?
+  ratingDate       DateTime?
+  notes            String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, fiscalYear])
+  @@index([fiscalYear])
+}
+
+model CompanyCertification {
+  id                  String   @id @default(cuid())
+  companyId           String
+  certificationType   String
+  certificationName   String
+  issuingOrganization String
+  certificationNumber String?
+  issueDate           DateTime
+  expiryDate          DateTime?
+  fileUrl             String?
+  isActive            Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+}
+
+model CompanyAchievement {
+  id              String   @id @default(cuid())
+  companyId       String
+  achievementType String // award, patent, certification, contract, investment
+  title           String
+  description     String?  @db.Text
+  organization    String?
+  achievementDate DateTime
+  fileUrl         String?
+  linkUrl         String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+}
+
+// ============================================
+// Support Project Tables
+// ============================================
+
+model SupportProject {
+  id         String  @id @default(cuid())
+  externalId String? @unique
+  name       String
+  organization String
+  category String
+  subCategory String?
+  target String
+  region String
+
+  // Amount
+  amountMin         BigInt?
+  amountMax         BigInt?
+  amountDescription String?
+
+  // Timeline
+  startDate   DateTime?
+  endDate     DateTime?
+  deadline    DateTime?
+  isPermanent Boolean   @default(false)
+
+  // Content
+  summary            String    @db.Text
+  description        String?   @db.Text
+  eligibility        String?   @db.Text
+  applicationProcess String?   @db.Text
+  evaluationCriteria String?   @db.Text
+  requiredDocuments  String[]
+  contactInfo        String?
+  websiteUrl         String?
+
+  // Files
+  originalFileUrl  String?
+  originalFileType String? // hwp, hwpx, pdf
+
+  // Status
+  status        String   @default("active") // draft, active, closed
+  viewCount     Int      @default(0)
+  bookmarkCount Int      @default(0)
+
+  // Metadata
+  crawledAt DateTime?
+  sourceUrl String?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  embeddings      SupportProjectEmbedding[]
+  matchingResults MatchingResult[]
+  businessPlans   BusinessPlan[]
+
+  @@index([category])
+  @@index([region])
+  @@index([status])
+  @@index([deadline])
+}
+
+model SupportProjectEmbedding {
+  id        String                         @id @default(cuid())
+  projectId String
+  fieldType String // combined, name, description, eligibility
+  embedding Unsupported("vector(1536)")?
+
+  createdAt DateTime @default(now())
+
+  project SupportProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, fieldType])
+}
+
+model CrawlJob {
+  id              String    @id @default(cuid())
+  sourceId        String
+  status          String    @default("pending") // pending, running, completed, failed
+  startedAt       DateTime?
+  completedAt     DateTime?
+  errorMessage    String?
+  projectsFound   Int       @default(0)
+  projectsNew     Int       @default(0)
+  projectsUpdated Int       @default(0)
+
+  createdAt DateTime @default(now())
+
+  source CrawlSource @relation(fields: [sourceId], references: [id])
+
+  @@index([status])
+  @@index([createdAt(sort: Desc)])
+}
+
+model CrawlSource {
+  id          String    @id @default(cuid())
+  name        String
+  url         String    @unique
+  type        String // api, web
+  schedule    String? // cron expression
+  isActive    Boolean   @default(true)
+  lastCrawled DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  jobs CrawlJob[]
+
+  @@index([isActive])
+}
+
+// ============================================
+// Matching Tables
+// ============================================
+
+model MatchingResult {
+  id        String @id @default(cuid())
+  userId    String
+  companyId String
+  projectId String
+
+  // Scores
+  totalScore       Int
+  semanticScore    Int
+  categoryScore    Int
+  eligibilityScore Int
+  timelinessScore  Int
+  amountScore      Int
+
+  // Details
+  confidence   String // high, medium, low
+  matchReasons String[]
+
+  // User Feedback
+  isRelevant   Boolean?
+  feedbackNote String?
+
+  createdAt DateTime @default(now())
+
+  user    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  company Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  project SupportProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, projectId])
+  @@index([userId])
+  @@index([totalScore(sort: Desc)])
+}
+
+model MatchingPreference {
+  id        String @id @default(cuid())
+  userId    String
+  companyId String
+
+  categories      String[]
+  minAmount       BigInt?
+  maxAmount       BigInt?
+  regions         String[]
+  excludeKeywords String[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, companyId])
+}
+
+// ============================================
+// Business Plan Tables
+// ============================================
+
+model BusinessPlan {
+  id        String  @id @default(cuid())
+  userId    String
+  companyId String
+  projectId String?
+
+  title      String
+  status     String  @default("draft") // draft, in_progress, completed, submitted
+  templateId String?
+
+  // Additional Context
+  newBusinessDescription String? @db.Text
+  additionalNotes        String? @db.Text
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  user    User            @relation(fields: [userId], references: [id])
+  company Company         @relation(fields: [companyId], references: [id])
+  project SupportProject? @relation(fields: [projectId], references: [id])
+
+  sections    BusinessPlanSection[]
+  evaluations Evaluation[]
+
+  @@index([userId])
+  @@index([companyId])
+  @@index([status])
+}
+
+model BusinessPlanSection {
+  id             String  @id @default(cuid())
+  businessPlanId String
+
+  sectionIndex  Int
+  title         String
+  content       String  @db.Text
+  isAiGenerated Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  businessPlan BusinessPlan @relation(fields: [businessPlanId], references: [id], onDelete: Cascade)
+
+  @@unique([businessPlanId, sectionIndex])
+}
+
+// ============================================
+// Evaluation Tables
+// ============================================
+
+model Evaluation {
+  id              String  @id @default(cuid())
+  userId          String
+  businessPlanId  String?
+  uploadedFileUrl String?
+  criteria        String? @db.Text // Evaluation criteria
+
+  // Overall
+  totalScore Int?
+  summary    String? @db.Text
+
+  // Status
+  status       String  @default("pending") // pending, processing, completed, failed
+  errorMessage String?
+
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  businessPlan BusinessPlan? @relation(fields: [businessPlanId], references: [id])
+
+  feedbacks EvaluationFeedback[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt(sort: Desc)])
+}
+
+model EvaluationFeedback {
+  id           String @id @default(cuid())
+  evaluationId String
+
+  criteriaName String
+  score        Int?
+  maxScore     Int?
+  feedback     String?  @db.Text
+  strengths    String[]
+  weaknesses   String[]
+  suggestions  String[]
+
+  createdAt DateTime @default(now())
+
+  evaluation Evaluation @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+
+  @@index([evaluationId])
+}
+
+// ============================================
+// Notification Tables
+// ============================================
+
+model Notification {
+  id      String  @id @default(cuid())
+  userId  String
+  type    String // deadline_alert, matching_result, evaluation_complete
+  title   String
+  message String
+  data    Json?
+  isRead  Boolean @default(false)
+
+  createdAt DateTime  @default(now())
+  readAt    DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+}
+
+model NotificationSetting {
+  id     String @id @default(cuid())
+  userId String @unique
+
+  // Channels
+  emailEnabled   Boolean @default(true)
+  discordEnabled Boolean @default(false)
+  slackEnabled   Boolean @default(false)
+
+  // Webhooks
+  discordWebhookUrl String?
+  slackWebhookUrl   String?
+
+  // Types
+  deadlineAlertDays         Int     @default(7)
+  matchingResultEnabled     Boolean @default(true)
+  evaluationCompleteEnabled Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}

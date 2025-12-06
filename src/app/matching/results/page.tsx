@@ -1,0 +1,131 @@
+import { auth } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
+import { redirect } from "next/navigation";
+import { MatchResultCard } from "@/components/matching/match-result-card";
+
+interface MatchingResultsPageProps {
+  searchParams: Promise<{
+    page?: string;
+    companyId?: string;
+    confidence?: string;
+  }>;
+}
+
+export default async function MatchingResultsPage({
+  searchParams,
+}: MatchingResultsPageProps) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    redirect("/login");
+  }
+
+  const params = await searchParams;
+  const page = parseInt(params.page || "1");
+  const pageSize = 20;
+  const skip = (page - 1) * pageSize;
+
+  // Build where clause
+  const where: any = {
+    userId: session.user.id,
+  };
+
+  if (params.companyId) {
+    where.companyId = params.companyId;
+  }
+
+  if (params.confidence) {
+    where.confidence = params.confidence;
+  }
+
+  const [rawResults, total] = await Promise.all([
+    prisma.matchingResult.findMany({
+      where,
+      skip,
+      take: pageSize,
+      orderBy: { totalScore: "desc" },
+      include: {
+        project: {
+          select: {
+            id: true,
+            name: true,
+            organization: true,
+            category: true,
+            subCategory: true,
+            summary: true,
+            amountMin: true,
+            amountMax: true,
+            deadline: true,
+            isPermanent: true,
+          },
+        },
+        company: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    }),
+    prisma.matchingResult.count({ where }),
+  ]);
+
+  // Type-safe confidence mapping
+  const results = rawResults.map((r) => ({
+    ...r,
+    confidence: r.confidence as "high" | "medium" | "low",
+  }));
+
+  const totalPages = Math.ceil(total / pageSize);
+
+  // Calculate confidence stats
+  const highConfidence = results.filter(
+    (r) => r.confidence === "high"
+  ).length;
+  const mediumConfidence = results.filter(
+    (r) => r.confidence === "medium"
+  ).length;
+  const lowConfidence = results.filter((r) => r.confidence === "low").length;
+
+  return (
+    <div className="container mx-auto py-8">
+      {/* Header */}
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold mb-2">매칭 결과</h1>
+        <p className="text-muted-foreground">
+          총 {total}개의 매칭 결과 (높음: {highConfidence}, 중간:{" "}
+          {mediumConfidence}, 낮음: {lowConfidence})
+        </p>
+      </div>
+
+      {/* Filters */}
+      <div className="mb-6">
+        {/* TODO: Add filter components */}
+      </div>
+
+      {/* Results */}
+      {results.length === 0 ? (
+        <div className="text-center py-12">
+          <p className="text-muted-foreground mb-4">매칭 결과가 없습니다</p>
+          <a href="/matching" className="text-primary hover:underline">
+            매칭 실행하기
+          </a>
+        </div>
+      ) : (
+        <div className="grid gap-4 md:grid-cols-2">
+          {results.map((result) => (
+            <MatchResultCard key={result.id} result={result} />
+          ))}
+        </div>
+      )}
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="mt-8 flex items-center justify-center gap-2">
+          <p className="text-sm text-muted-foreground">
+            Page {page} of {totalPages}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}

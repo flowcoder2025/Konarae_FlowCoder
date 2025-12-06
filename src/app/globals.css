@@ -1,0 +1,147 @@
+@import "tailwindcss";
+
+/* ============================================
+   Flow UI Design Tokens
+   Primary Color만 변경하면 브랜드 변경 완료
+   ============================================ */
+
+@theme inline {
+  /* ========================================
+     BRAND COLOR - 이 값만 변경하세요
+     ======================================== */
+  --color-primary: oklch(59.59% 0.127 182.97);  /* 청록색 (Teal) */
+
+  /* ========================================
+     AUTO-DERIVED COLORS (수정 불필요)
+     ======================================== */
+  --color-primary-foreground: oklch(100% 0 0);  /* 흰색 */
+
+  /* Backgrounds */
+  --color-background: oklch(100% 0 0);
+  --color-foreground: oklch(14.08% 0 0);
+
+  /* Card */
+  --color-card: oklch(100% 0 0);
+  --color-card-foreground: oklch(14.08% 0 0);
+
+  /* Popover */
+  --color-popover: oklch(100% 0 0);
+  --color-popover-foreground: oklch(14.08% 0 0);
+
+  /* Secondary */
+  --color-secondary: oklch(96.83% 0 0);
+  --color-secondary-foreground: oklch(21.03% 0 0);
+
+  /* Muted */
+  --color-muted: oklch(96.83% 0 0);
+  --color-muted-foreground: oklch(55.71% 0 0);
+
+  /* Accent */
+  --color-accent: oklch(96.83% 0 0);
+  --color-accent-foreground: oklch(21.03% 0 0);
+
+  /* Destructive */
+  --color-destructive: oklch(57.71% 0.215 27.33);
+
+  /* Border & Input */
+  --color-border: oklch(91.97% 0 0);
+  --color-input: oklch(91.97% 0 0);
+
+  /* Ring (Focus) - Primary와 동일 */
+  --color-ring: oklch(59.59% 0.127 182.97);
+
+  /* ========================================
+     RADIUS
+     ======================================== */
+  --radius-sm: 0.25rem;
+  --radius: 0.5rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+
+  /* ========================================
+     SIDEBAR (Optional)
+     ======================================== */
+  --color-sidebar: oklch(98.46% 0 0);
+  --color-sidebar-foreground: oklch(14.08% 0 0);
+  --color-sidebar-primary: oklch(59.59% 0.127 182.97);
+  --color-sidebar-primary-foreground: oklch(100% 0 0);
+  --color-sidebar-accent: oklch(96.83% 0 0);
+  --color-sidebar-accent-foreground: oklch(21.03% 0 0);
+  --color-sidebar-border: oklch(91.97% 0 0);
+  --color-sidebar-ring: oklch(59.59% 0.127 182.97);
+
+  /* ========================================
+     CHART COLORS
+     ======================================== */
+  --color-chart-1: oklch(59.59% 0.127 182.97);
+  --color-chart-2: oklch(55% 0.15 200);
+  --color-chart-3: oklch(50% 0.13 220);
+  --color-chart-4: oklch(60% 0.11 240);
+  --color-chart-5: oklch(65% 0.1 260);
+}
+
+/* ============================================
+   DARK MODE
+   ============================================ */
+.dark {
+  --color-background: oklch(14.08% 0 0);
+  --color-foreground: oklch(98.46% 0 0);
+
+  --color-card: oklch(14.08% 0 0);
+  --color-card-foreground: oklch(98.46% 0 0);
+
+  --color-popover: oklch(14.08% 0 0);
+  --color-popover-foreground: oklch(98.46% 0 0);
+
+  --color-secondary: oklch(21.03% 0 0);
+  --color-secondary-foreground: oklch(98.46% 0 0);
+
+  --color-muted: oklch(21.03% 0 0);
+  --color-muted-foreground: oklch(71.19% 0 0);
+
+  --color-accent: oklch(21.03% 0 0);
+  --color-accent-foreground: oklch(98.46% 0 0);
+
+  --color-border: oklch(21.03% 0 0);
+  --color-input: oklch(21.03% 0 0);
+
+  --color-sidebar: oklch(14.08% 0 0);
+  --color-sidebar-foreground: oklch(98.46% 0 0);
+  --color-sidebar-border: oklch(21.03% 0 0);
+}
+
+/* ============================================
+   BASE STYLES
+   ============================================ */
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+/* ============================================
+   ANIMATIONS
+   ============================================ */
+@keyframes accordion-down {
+  from {
+    height: 0;
+  }
+  to {
+    height: var(--radix-accordion-content-height);
+  }
+}
+
+@keyframes accordion-up {
+  from {
+    height: var(--radix-accordion-content-height);
+  }
+  to {
+    height: 0;
+  }
+}
