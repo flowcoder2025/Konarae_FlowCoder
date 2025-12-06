@@ -1,4 +1,5 @@
 import { auth } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
 import { redirect } from "next/navigation";
 import { StatCard } from "@/components/dashboard/stat-card";
 import { RecentActivity } from "@/components/dashboard/recent-activity";
@@ -48,23 +49,160 @@ interface DashboardData {
   }>;
 }
 
-async function getDashboardData(): Promise<DashboardData> {
-  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
-  const res = await fetch(`${baseUrl}/api/dashboard/stats`, {
-    cache: "no-store",
+async function getDashboardData(userId: string): Promise<DashboardData> {
+  // Get user's companies
+  const userCompanies = await prisma.companyMember.findMany({
+    where: { userId },
+    select: { companyId: true },
   });
 
-  if (!res.ok) {
-    throw new Error("Failed to fetch dashboard data");
-  }
+  const companyIds = userCompanies.map((cm) => cm.companyId);
 
-  return res.json();
+  // Parallel queries for better performance
+  const [
+    companiesCount,
+    matchingResultsCount,
+    businessPlansCount,
+    evaluationsCount,
+    recentMatching,
+    recentPlans,
+    recentEvaluations,
+    upcomingDeadlines,
+  ] = await Promise.all([
+    // Total companies user is part of
+    prisma.company.count({
+      where: { id: { in: companyIds } },
+    }),
+
+    // Total matching results
+    prisma.matchingResult.count({
+      where: { companyId: { in: companyIds } },
+    }),
+
+    // Total business plans
+    prisma.businessPlan.count({
+      where: {
+        OR: [
+          { userId },
+          { companyId: { in: companyIds } },
+        ],
+      },
+    }),
+
+    // Total evaluations
+    prisma.evaluation.count({
+      where: { userId },
+    }),
+
+    // Recent 5 matching results
+    prisma.matchingResult.findMany({
+      where: { companyId: { in: companyIds } },
+      include: {
+        company: { select: { name: true } },
+        project: { select: { name: true, organization: true } },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 5,
+    }),
+
+    // Recent 5 business plans
+    prisma.businessPlan.findMany({
+      where: {
+        OR: [
+          { userId },
+          { companyId: { in: companyIds } },
+        ],
+      },
+      include: {
+        company: { select: { name: true } },
+        project: { select: { name: true } },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 5,
+    }),
+
+    // Recent 5 evaluations
+    prisma.evaluation.findMany({
+      where: { userId },
+      include: {
+        businessPlan: {
+          select: { title: true },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 5,
+    }),
+
+    // Upcoming deadlines (next 30 days)
+    prisma.supportProject.findMany({
+      where: {
+        deadline: {
+          gte: new Date(),
+          lte: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        },
+        status: "active",
+      },
+      select: {
+        id: true,
+        name: true,
+        organization: true,
+        deadline: true,
+        amountMax: true,
+      },
+      orderBy: { deadline: "asc" },
+      take: 5,
+    }),
+  ]);
+
+  return {
+    stats: {
+      companiesCount,
+      matchingResultsCount,
+      businessPlansCount,
+      evaluationsCount,
+    },
+    recent: {
+      matching: recentMatching.map((m) => ({
+        id: m.id,
+        companyName: m.company.name,
+        projectTitle: m.project.name,
+        projectAgency: m.project.organization,
+        score: m.totalScore,
+        createdAt: m.createdAt.toISOString(),
+      })),
+      plans: recentPlans.map((p) => ({
+        id: p.id,
+        title: p.title,
+        companyName: p.company?.name,
+        projectTitle: p.project?.name,
+        status: p.status,
+        createdAt: p.createdAt.toISOString(),
+      })),
+      evaluations: recentEvaluations.map((e) => ({
+        id: e.id,
+        planTitle: e.businessPlan?.title || "외부 파일",
+        totalScore: e.totalScore,
+        status: e.status,
+        createdAt: e.createdAt.toISOString(),
+      })),
+    },
+    upcomingDeadlines: upcomingDeadlines.map((p) => ({
+      id: p.id,
+      title: p.name,
+      agency: p.organization,
+      deadline: p.deadline!.toISOString(),
+      budget: p.amountMax ? Number(p.amountMax) : null,
+      daysLeft: Math.ceil(
+        (new Date(p.deadline!).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+      ),
+    })),
+  };
 }
 
 export default async function DashboardPage() {
   const session = await auth();
 
-  if (!session) {
+  if (!session?.user?.id) {
     redirect("/login");
   }
 
@@ -72,7 +210,7 @@ export default async function DashboardPage() {
   let error = false;
 
   try {
-    data = await getDashboardData();
+    data = await getDashboardData(session.user.id);
   } catch (e) {
     console.error("Failed to load dashboard:", e);
     error = true;
