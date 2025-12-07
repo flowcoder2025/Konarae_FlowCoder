@@ -243,6 +243,168 @@ async function fetchDetailPage(
 }
 
 /**
+ * Step 3: Download file from URL
+ */
+async function downloadFile(url: string): Promise<Buffer | null> {
+  try {
+    const axios = (await import("axios")).default;
+
+    console.log(`    → Downloading file...`);
+
+    const response = await axios.get(url, {
+      responseType: 'arraybuffer',
+      timeout: 60000, // 60 seconds for file download
+      maxContentLength: 10 * 1024 * 1024, // 10MB limit
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (compatible; KonaraeBot/1.0; +https://konarae.com)",
+      },
+    });
+
+    const buffer = Buffer.from(response.data);
+    const sizeInMB = (buffer.length / 1024 / 1024).toFixed(2);
+    console.log(`    ✓ Downloaded ${sizeInMB}MB`);
+
+    return buffer;
+  } catch (error: any) {
+    console.error(`    ✗ Download failed:`, error.message);
+    return null;
+  }
+}
+
+/**
+ * Step 3: Extract text from PDF buffer
+ */
+async function extractPdfText(buffer: Buffer): Promise<string | null> {
+  try {
+    // @ts-expect-error - pdf-parse has complex module export
+    const pdfParse = (await import("pdf-parse")).default || await import("pdf-parse");
+
+    console.log(`    → Extracting PDF text...`);
+
+    const data = await (typeof pdfParse === 'function' ? pdfParse(buffer) : pdfParse.default(buffer));
+    const textLength = data.text.length;
+    const pageCount = data.numpages;
+
+    console.log(`    ✓ Extracted ${textLength} characters from ${pageCount} pages`);
+
+    // Limit text to first 10,000 characters for API efficiency
+    const limitedText = data.text.substring(0, 10000);
+
+    return limitedText;
+  } catch (error: any) {
+    console.error(`    ✗ PDF extraction failed:`, error.message);
+    return null;
+  }
+}
+
+/**
+ * Step 4: Analyze document with Gemini AI
+ */
+async function analyzeWithGemini(text: string): Promise<{
+  description?: string;
+  eligibility?: string;
+  applicationProcess?: string;
+  evaluationCriteria?: string;
+} | null> {
+  try {
+    // Check if API key is available
+    if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
+      console.log(`    ⚠ Gemini API key not configured, skipping AI analysis`);
+      return null;
+    }
+
+    const { google } = await import("@ai-sdk/google");
+    const { generateText } = await import("ai");
+
+    console.log(`    → Analyzing with Gemini AI...`);
+
+    const model = google("gemini-1.5-flash");
+
+    const prompt = `다음은 정부 지원사업 공고문입니다. 아래 정보를 JSON 형식으로 추출해주세요:
+
+1. description: 사업의 목적과 개요 (2-3문장, 핵심만)
+2. eligibility: 신청 자격 요건 (핵심만, 있는 경우)
+3. applicationProcess: 신청 방법 및 절차 (간단히, 있는 경우)
+4. evaluationCriteria: 평가 기준 (있는 경우)
+
+응답은 반드시 다음 JSON 형식으로만 작성해주세요:
+{
+  "description": "...",
+  "eligibility": "...",
+  "applicationProcess": "...",
+  "evaluationCriteria": "..."
+}
+
+정보가 없는 항목은 생략하세요.
+
+원문:
+${text}`;
+
+    const { text: result } = await generateText({
+      model,
+      prompt,
+      temperature: 0.1, // Low temperature for consistency
+    });
+
+    // Try to parse JSON response
+    const jsonMatch = result.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      console.log(`    ✗ Failed to extract JSON from response`);
+      return null;
+    }
+
+    const parsed = JSON.parse(jsonMatch[0]);
+    console.log(`    ✓ AI analysis complete`);
+
+    return parsed;
+  } catch (error: any) {
+    console.error(`    ✗ Gemini analysis failed:`, error.message);
+    return null;
+  }
+}
+
+/**
+ * Step 3+4: Process files for a project
+ */
+async function processProjectFiles(
+  project: CrawledProject
+): Promise<Partial<CrawledProject>> {
+  const updates: Partial<CrawledProject> = {};
+
+  // Only process if we have attachment URLs
+  if (!project.attachmentUrls || project.attachmentUrls.length === 0) {
+    return updates;
+  }
+
+  // Process only the first file for now (PDF only in v1)
+  const firstFileUrl = project.attachmentUrls[0];
+
+  console.log(`  → Processing file 1/${project.attachmentUrls.length}`);
+
+  // Step 3a: Download file
+  const fileBuffer = await downloadFile(firstFileUrl);
+  if (!fileBuffer) {
+    return updates;
+  }
+
+  // Step 3b: Extract PDF text (skip non-PDF for v1)
+  const text = await extractPdfText(fileBuffer);
+  if (!text) {
+    console.log(`    ⚠ Not a PDF or extraction failed, skipping (HWP/HWPX support in v2)`);
+    return updates;
+  }
+
+  // Step 4: Analyze with Gemini
+  const analysis = await analyzeWithGemini(text);
+  if (analysis) {
+    Object.assign(updates, analysis);
+  }
+
+  return updates;
+}
+
+/**
  * Actual crawling implementation
  * Supports both 'web' (HTML scraping) and 'api' (JSON response) types
  */
@@ -308,6 +470,45 @@ async function crawlAndParse(
     console.log(`\n=== Detail page crawling complete ===`);
     const projectsWithFiles = projects.filter(p => p.attachmentUrls && p.attachmentUrls.length > 0);
     console.log(`Projects with attachments: ${projectsWithFiles.length}/${projects.length}`);
+
+    // Step 3+4: Download files and analyze with AI
+    console.log(`\n=== Step 3: File download and AI analysis ===`);
+    let processedCount = 0;
+    let successCount = 0;
+
+    for (let i = 0; i < projects.length; i++) {
+      const project = projects[i];
+
+      if (project.attachmentUrls && project.attachmentUrls.length > 0) {
+        console.log(`[${i + 1}/${projects.length}] ${project.name}`);
+
+        try {
+          const updates = await processProjectFiles(project);
+
+          if (Object.keys(updates).length > 0) {
+            // Merge updates into project
+            Object.assign(projects[i], updates);
+            successCount++;
+            console.log(`  ✓ AI analysis complete`);
+          } else {
+            console.log(`  ⚠ No updates from file processing`);
+          }
+
+          processedCount++;
+        } catch (error) {
+          console.error(`  ✗ Error processing files:`, error);
+        }
+
+        // Rate limiting: 4 seconds between Gemini API calls
+        await new Promise(resolve => setTimeout(resolve, 4000));
+      } else {
+        console.log(`[${i + 1}/${projects.length}] ${project.name} - No files to process`);
+      }
+    }
+
+    console.log(`\n=== File processing complete ===`);
+    console.log(`Processed: ${processedCount}/${projectsWithFiles.length}`);
+    console.log(`Successful AI analysis: ${successCount}/${processedCount}`);
 
     return projects;
   } catch (error) {
