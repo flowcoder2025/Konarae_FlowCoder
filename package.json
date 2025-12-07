@@ -41,6 +41,8 @@
     "@tanstack/react-query": "^5.62.8",
     "@upstash/redis": "^1.35.0",
     "ai": "^5.0.108",
+    "axios": "^1.13.2",
+    "cheerio": "^1.1.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
