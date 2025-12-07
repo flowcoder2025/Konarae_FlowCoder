@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { check } from "@/lib/rebac";
+import { exportBusinessPlan, type BusinessPlanExportData, type ExportFormat } from "@/lib/export";
 import { z } from "zod";
 
 const exportSchema = z.object({
@@ -59,18 +60,45 @@ export async function POST(
       );
     }
 
-    // Build document content
-    const documentContent = buildDocumentContent(businessPlan);
+    // 실제 파일 생성
+    const exportData: BusinessPlanExportData = {
+      title: businessPlan.title,
+      companyName: businessPlan.company?.name,
+      projectName: businessPlan.project?.name,
+      createdAt: businessPlan.createdAt,
+      sections: businessPlan.sections.map((section: any) => ({
+        title: section.title,
+        content: section.content || "",
+        order: section.sectionIndex,
+      })),
+      metadata: {
+        author: session.user.name || session.user.email || "Unknown",
+      },
+    };
 
-    // TODO: Integrate with Railway document generation service
-    // For now, return the content as JSON
-    // In production, this should call Railway microservice to generate the file
+    const result = await exportBusinessPlan(
+      exportData,
+      validatedData.format as ExportFormat
+    );
 
-    return NextResponse.json({
-      success: true,
-      format: validatedData.format,
-      content: documentContent,
-      message: "Export prepared (file generation pending Railway integration)",
+    if (!result.success || !result.blob) {
+      return NextResponse.json(
+        { error: result.error || "Export failed" },
+        { status: 500 }
+      );
+    }
+
+    // Blob을 ArrayBuffer로 변환
+    const arrayBuffer = await result.blob.arrayBuffer();
+
+    // 파일 다운로드 응답
+    return new NextResponse(arrayBuffer, {
+      status: 200,
+      headers: {
+        "Content-Type": getMimeType(validatedData.format),
+        "Content-Disposition": `attachment; filename="${result.filename}"`,
+        "Content-Length": arrayBuffer.byteLength.toString(),
+      },
     });
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -89,21 +117,17 @@ export async function POST(
 }
 
 /**
- * Build document content from business plan
+ * Get MIME type for export format
  */
-function buildDocumentContent(businessPlan: any): string {
-  const { title, company, project, sections } = businessPlan;
-
-  let content = `# ${title}\n\n`;
-  content += `**기업명**: ${company.name}\n`;
-  content += `**지원사업**: ${project?.name || "미정"}\n`;
-  content += `**작성일**: ${new Date().toLocaleDateString("ko-KR")}\n\n`;
-  content += `---\n\n`;
-
-  for (const section of sections) {
-    content += `## ${section.title}\n\n`;
-    content += `${section.content}\n\n`;
+function getMimeType(format: string): string {
+  switch (format) {
+    case "pdf":
+      return "application/pdf";
+    case "docx":
+      return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    case "hwp":
+      return "application/x-hwp"; // HWP MIME type
+    default:
+      return "application/octet-stream";
   }
-
-  return content;
 }

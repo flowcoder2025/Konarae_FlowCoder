@@ -17,9 +17,17 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     }),
   ],
   callbacks: {
-    async session({ session, user }) {
-      if (session.user) {
-        session.user.id = user.id;
+    async jwt({ token, user }) {
+      // Persist user id to JWT token on sign in
+      if (user) {
+        token.id = user.id;
+      }
+      return token;
+    },
+    async session({ session, token }) {
+      // Add user id from JWT to session
+      if (session.user && token.id) {
+        session.user.id = token.id as string;
       }
       return session;
     },
@@ -29,7 +37,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     error: "/login",
   },
   session: {
-    strategy: "database",
+    strategy: "jwt", // JWT strategy for Edge Runtime compatibility
     maxAge: 30 * 24 * 60 * 60, // 30 days
   },
 });

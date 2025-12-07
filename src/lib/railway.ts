@@ -2,18 +2,23 @@
  * Railway Microservices Integration (PRD 12.7)
  * - Document parsing (HWP, HWPX, PDF)
  * - Crawler orchestration
+ * - AI processing
  */
 
-const RAILWAY_BASE_URL =
-  process.env.RAILWAY_API_URL || "http://localhost:3001";
+// Railway Microservices (필요한 것만)
 const CRAWLER_SERVICE_URL =
-  process.env.CRAWLER_SERVICE_URL || `${RAILWAY_BASE_URL}/crawler`;
+  process.env.RAILWAY_CRAWLER_URL || "https://crawler-production-5fd6.up.railway.app";
 const HWP_PARSER_URL =
-  process.env.HWP_PARSER_URL || `${RAILWAY_BASE_URL}/parser/hwp`;
+  process.env.RAILWAY_HWP_PARSER_URL || "https://hwp-parser-production.up.railway.app";
+const HWPX_PARSER_URL =
+  process.env.RAILWAY_HWPX_PARSER_URL || "https://hwpx-parser-production.up.railway.app";
 const PDF_PARSER_URL =
-  process.env.PDF_PARSER_URL || `${RAILWAY_BASE_URL}/parser/pdf`;
+  process.env.RAILWAY_PDF_PARSER_URL || "https://pdf-parser-production-d43f.up.railway.app";
+const AI_PROCESSOR_URL =
+  process.env.RAILWAY_AI_PROCESSOR_URL || "https://ai-processor-production-4f58.up.railway.app";
 
 export type ParserType = "hwp" | "hwpx" | "pdf";
+export type ExtractMode = "full" | "text" | "metadata" | "tables";
 
 export interface ParseResult {
   success: boolean;
@@ -36,10 +41,12 @@ export interface CrawlResult {
 
 /**
  * Parse document file using Railway microservices (PRD 3.2)
+ * 실제 프로덕션 마이크로서비스 사용
  */
 export async function parseDocument(
   file: File | Buffer,
-  type: ParserType
+  type: ParserType,
+  mode: ExtractMode = "full"
 ): Promise<ParseResult> {
   try {
     const formData = new FormData();
@@ -55,14 +62,28 @@ export async function parseDocument(
       formData.append("file", file);
     }
 
-    const parserUrl = type === "pdf" ? PDF_PARSER_URL : HWP_PARSER_URL;
+    // 파서 URL 선택
+    let parserUrl: string;
+    let endpoint: string;
 
-    const response = await fetch(`${parserUrl}/parse`, {
+    if (type === "pdf") {
+      parserUrl = PDF_PARSER_URL;
+      endpoint = mode === "full" ? "/parse" : `/parse/${mode}`;
+    } else if (type === "hwpx") {
+      parserUrl = HWPX_PARSER_URL;
+      endpoint = "/parse";
+    } else {
+      // hwp
+      parserUrl = HWP_PARSER_URL;
+      if (mode === "text") endpoint = "/extract-text";
+      else if (mode === "metadata") endpoint = "/extract-metadata";
+      else if (mode === "tables") endpoint = "/extract-tables";
+      else endpoint = "/parse";
+    }
+
+    const response = await fetch(`${parserUrl}${endpoint}`, {
       method: "POST",
       body: formData,
-      headers: {
-        "X-Parser-Type": type,
-      },
     });
 
     if (!response.ok) {
@@ -72,7 +93,7 @@ export async function parseDocument(
     const data = await response.json();
     return {
       success: true,
-      text: data.text || "",
+      text: data.text || data.content || "",
       metadata: data.metadata,
     };
   } catch (error) {
@@ -168,6 +189,113 @@ export async function getCrawlJobStatus(
     return {
       status: "failed",
       error: error instanceof Error ? error.message : "Get status failed",
+    };
+  }
+}
+
+/**
+ * AI Processor - 문서 요약/분류 (PRD 3.3)
+ */
+export interface AIProcessRequest {
+  text: string;
+  task: "summarize" | "classify" | "extract-keywords" | "analyze-sentiment";
+  options?: {
+    maxLength?: number;
+    language?: "ko" | "en";
+    categories?: string[];
+  };
+}
+
+export interface AIProcessResult {
+  success: boolean;
+  result?: {
+    summary?: string;
+    category?: string;
+    keywords?: string[];
+    sentiment?: "positive" | "neutral" | "negative";
+    confidence?: number;
+  };
+  error?: string;
+}
+
+export async function processWithAI(
+  request: AIProcessRequest
+): Promise<AIProcessResult> {
+  try {
+    const response = await fetch(`${AI_PROCESSOR_URL}/process`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(request),
+    });
+
+    if (!response.ok) {
+      throw new Error(`AI processing failed: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return {
+      success: true,
+      result: data,
+    };
+  } catch (error) {
+    console.error("[Railway] AI processing error:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "AI processing failed",
+    };
+  }
+}
+
+/**
+ * Document Gateway - 통합 문서 처리
+ */
+export async function processDocumentComplete(
+  file: File | Buffer,
+  type: ParserType,
+  options?: {
+    extractMode?: ExtractMode;
+    aiSummary?: boolean;
+    aiClassify?: boolean;
+  }
+): Promise<{
+  success: boolean;
+  parsed?: ParseResult;
+  aiResult?: AIProcessResult;
+  error?: string;
+}> {
+  try {
+    // 1. 문서 파싱
+    const parsed = await parseDocument(file, type, options?.extractMode);
+
+    if (!parsed.success) {
+      return {
+        success: false,
+        error: parsed.error,
+      };
+    }
+
+    // 2. AI 처리 (선택적)
+    let aiResult: AIProcessResult | undefined;
+    if (options?.aiSummary && parsed.text) {
+      aiResult = await processWithAI({
+        text: parsed.text,
+        task: "summarize",
+        options: { language: "ko" },
+      });
+    }
+
+    return {
+      success: true,
+      parsed,
+      aiResult,
+    };
+  } catch (error) {
+    console.error("[Railway] Complete document processing error:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Processing failed",
     };
   }
 }

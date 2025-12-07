@@ -86,7 +86,7 @@ async function calculateSemanticScore(
 /**
  * Calculate category match score
  */
-function calculateCategoryScore(
+export function calculateCategoryScore(
   companyCategories: string[],
   projectCategory: string,
   projectSubCategory?: string | null
@@ -117,7 +117,7 @@ function calculateCategoryScore(
 /**
  * Calculate eligibility score
  */
-function calculateEligibilityScore(
+export function calculateEligibilityScore(
   company: {
     companyType: string;
     companySize?: string | null;
@@ -187,7 +187,7 @@ function calculateEligibilityScore(
 /**
  * Calculate timeliness score (deadline proximity)
  */
-function calculateTimelinessScore(
+export function calculateTimelinessScore(
   deadline?: Date | null,
   isPermanent?: boolean
 ): { score: number; reasons: string[] } {
@@ -234,7 +234,7 @@ function calculateTimelinessScore(
 /**
  * Calculate amount fit score
  */
-function calculateAmountScore(
+export function calculateAmountScore(
   companyRevenue?: bigint | null,
   projectAmountMin?: bigint | null,
   projectAmountMax?: bigint | null
