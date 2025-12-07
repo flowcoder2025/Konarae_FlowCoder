@@ -5,9 +5,10 @@
 
 import { prisma } from "@/lib/prisma";
 import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Play, Database, CheckCircle, XCircle, Clock, AlertCircle } from "lucide-react";
+import { CheckCircle, XCircle, Clock, AlertCircle, Play } from "lucide-react";
+import { CrawlerSourceCard } from "@/components/admin/crawler-source-card";
+import { AddSourceDialog } from "@/components/admin/add-source-dialog";
 
 export default async function AdminCrawlerPage() {
   // Fetch crawl sources
@@ -61,48 +62,12 @@ export default async function AdminCrawlerPage() {
       <div>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-semibold">크롤링 소스</h2>
-          <Button>
-            <Database className="mr-2 h-4 w-4" />
-            소스 추가
-          </Button>
+          <AddSourceDialog />
         </div>
 
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {sources.map((source) => (
-            <Card key={source.id} className="p-6">
-              <div className="space-y-4">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <h3 className="font-semibold">{source.name}</h3>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      {source.type === "api" ? "API" : "웹"}
-                    </p>
-                  </div>
-                  <Badge variant={source.isActive ? "default" : "outline"}>
-                    {source.isActive ? "활성" : "비활성"}
-                  </Badge>
-                </div>
-
-                <div className="text-sm text-muted-foreground truncate">
-                  {source.url}
-                </div>
-
-                {source.lastCrawled && (
-                  <div className="text-xs text-muted-foreground">
-                    마지막 크롤링: {new Date(source.lastCrawled).toLocaleString("ko-KR")}
-                  </div>
-                )}
-
-                <Button
-                  size="sm"
-                  className="w-full"
-                  disabled={!source.isActive}
-                >
-                  <Play className="mr-2 h-4 w-4" />
-                  크롤링 시작
-                </Button>
-              </div>
-            </Card>
+            <CrawlerSourceCard key={source.id} source={source} />
           ))}
         </div>
       </div>

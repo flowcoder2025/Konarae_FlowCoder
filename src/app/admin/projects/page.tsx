@@ -5,9 +5,8 @@
 
 import { prisma } from "@/lib/prisma";
 import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { FileText, Eye, Edit, Trash2 } from "lucide-react";
+import { ProjectActionButtons } from "@/components/admin/project-action-buttons";
 
 export default async function AdminProjectsPage() {
   const [projects, stats] = await Promise.all([
@@ -120,17 +119,10 @@ export default async function AdminProjectsPage() {
                     {project.viewCount} / {project.bookmarkCount}
                   </td>
                   <td className="p-4">
-                    <div className="flex justify-end gap-2">
-                      <Button size="sm" variant="ghost">
-                        <Eye className="h-4 w-4" />
-                      </Button>
-                      <Button size="sm" variant="ghost">
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Button size="sm" variant="ghost">
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
+                    <ProjectActionButtons
+                      projectId={project.id}
+                      projectName={project.name}
+                    />
                   </td>
                 </tr>
               ))}

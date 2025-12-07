@@ -117,7 +117,7 @@ importers:
         specifier: ^4.0.3
         version: 4.8.0(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
       sonner:
-        specifier: ^1.7.3
+        specifier: ^1.7.4
         version: 1.7.4(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
       tailwind-merge:
         specifier: ^3.4.0

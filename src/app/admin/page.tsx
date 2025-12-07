@@ -6,6 +6,7 @@
 import { prisma } from "@/lib/prisma";
 import { Card } from "@/components/ui/card";
 import { Users, FileText, Database, Activity } from "lucide-react";
+import Link from "next/link";
 
 export default async function AdminDashboardPage() {
   // Fetch statistics
@@ -83,29 +84,35 @@ export default async function AdminDashboardPage() {
       <div>
         <h2 className="text-xl font-semibold">빠른 작업</h2>
         <div className="mt-4 grid gap-4 md:grid-cols-3">
-          <Card className="p-6 hover:border-primary transition-colors cursor-pointer">
-            <Database className="h-8 w-8 text-primary mb-3" />
-            <h3 className="font-semibold">크롤러 시작</h3>
-            <p className="mt-1 text-sm text-muted-foreground">
-              새로운 크롤링 작업을 시작합니다
-            </p>
-          </Card>
+          <Link href="/admin/crawler">
+            <Card className="p-6 hover:border-primary transition-colors cursor-pointer">
+              <Database className="h-8 w-8 text-primary mb-3" />
+              <h3 className="font-semibold">크롤러 시작</h3>
+              <p className="mt-1 text-sm text-muted-foreground">
+                새로운 크롤링 작업을 시작합니다
+              </p>
+            </Card>
+          </Link>
 
-          <Card className="p-6 hover:border-primary transition-colors cursor-pointer">
-            <FileText className="h-8 w-8 text-primary mb-3" />
-            <h3 className="font-semibold">프로젝트 승인</h3>
-            <p className="mt-1 text-sm text-muted-foreground">
-              대기 중인 프로젝트를 검토하고 승인합니다
-            </p>
-          </Card>
+          <Link href="/admin/projects">
+            <Card className="p-6 hover:border-primary transition-colors cursor-pointer">
+              <FileText className="h-8 w-8 text-primary mb-3" />
+              <h3 className="font-semibold">프로젝트 승인</h3>
+              <p className="mt-1 text-sm text-muted-foreground">
+                대기 중인 프로젝트를 검토하고 승인합니다
+              </p>
+            </Card>
+          </Link>
 
-          <Card className="p-6 hover:border-primary transition-colors cursor-pointer">
-            <Users className="h-8 w-8 text-primary mb-3" />
-            <h3 className="font-semibold">사용자 관리</h3>
-            <p className="mt-1 text-sm text-muted-foreground">
-              사용자 계정을 관리하고 권한을 설정합니다
-            </p>
-          </Card>
+          <Link href="/admin/users">
+            <Card className="p-6 hover:border-primary transition-colors cursor-pointer">
+              <Users className="h-8 w-8 text-primary mb-3" />
+              <h3 className="font-semibold">사용자 관리</h3>
+              <p className="mt-1 text-sm text-muted-foreground">
+                사용자 계정을 관리하고 권한을 설정합니다
+              </p>
+            </Card>
+          </Link>
         </div>
       </div>
     </div>

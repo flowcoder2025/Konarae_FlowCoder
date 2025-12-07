@@ -5,9 +5,9 @@
 
 import { prisma } from "@/lib/prisma";
 import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Shield, User, Mail } from "lucide-react";
+import { User, Mail } from "lucide-react";
+import { UserRoleButton } from "@/components/admin/user-role-button";
 
 export default async function AdminUsersPage() {
   const users = await prisma.user.findMany({
@@ -17,6 +17,7 @@ export default async function AdminUsersPage() {
       id: true,
       email: true,
       name: true,
+      role: true,
       emailVerified: true,
       createdAt: true,
       _count: {
@@ -28,12 +29,15 @@ export default async function AdminUsersPage() {
     },
   });
 
-  // TODO: Enable after migration is applied
-  // const stats = await prisma.user.groupBy({
-  //   by: ["role"],
-  //   _count: true,
-  // });
-  const roleCounts = { admin: 0, user: users.length };
+  const stats = await prisma.user.groupBy({
+    by: ["role"],
+    _count: true,
+  });
+
+  const roleCounts = stats.reduce((acc, { role, _count }) => {
+    acc[role] = _count;
+    return acc;
+  }, {} as Record<string, number>);
 
   return (
     <div className="space-y-8">
@@ -90,8 +94,8 @@ export default async function AdminUsersPage() {
                     {user.email}
                   </td>
                   <td className="p-4">
-                    <Badge variant="outline">
-                      사용자
+                    <Badge variant={user.role === "admin" ? "default" : "outline"}>
+                      {user.role === "admin" ? "관리자" : "사용자"}
                     </Badge>
                   </td>
                   <td className="p-4">
@@ -114,9 +118,11 @@ export default async function AdminUsersPage() {
                   </td>
                   <td className="p-4">
                     <div className="flex justify-end gap-2">
-                      <Button size="sm" variant="outline">
-                        권한 변경
-                      </Button>
+                      <UserRoleButton
+                        userId={user.id}
+                        userName={user.name || user.email}
+                        currentRole={user.role as "user" | "admin"}
+                      />
                     </div>
                   </td>
                 </tr>
