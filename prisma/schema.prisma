@@ -292,6 +292,8 @@ model SupportProject {
   websiteUrl         String?
 
   // Files
+  detailUrl        String?
+  attachmentUrls   String[]
   originalFileUrl  String?
   originalFileType String? // hwp, hwpx, pdf
 
