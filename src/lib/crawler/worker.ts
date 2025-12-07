@@ -126,33 +126,67 @@ interface CrawledProject {
 /**
  * Extract file URLs from detail page
  * Finds HWP, HWPX, PDF attachment links
+ * Specifically handles 기업마당 (bizinfo.go.kr) HTML structure
  */
 function extractFileUrls(
   $: ReturnType<typeof import("cheerio")["load"]>
 ): string[] {
   const fileUrls: string[] = [];
-  const extensions = [".hwp", ".hwpx", ".pdf"];
 
-  // Look for download links in common patterns
-  const selectors = [
+  // 기업마당 specific pattern: Find "첨부파일" or "본문출력파일" sections
+  $('h3').each((_, heading) => {
+    const headingText = $(heading).text().trim();
+
+    if (headingText === "첨부파일" || headingText === "본문출력파일") {
+      // Find the list following this heading
+      let $list = $(heading).next('ul');
+
+      // If not immediately next, search nearby siblings
+      if ($list.length === 0) {
+        $list = $(heading).parent().find('ul').first();
+      }
+
+      // Extract download links from list items
+      $list.find('li').each((_, item) => {
+        // Look for "다운로드" link
+        const $downloadLink = $(item).find('a').filter((_, link) => {
+          return $(link).text().trim() === "다운로드";
+        });
+
+        const href = $downloadLink.attr('href');
+        if (href && !fileUrls.includes(href)) {
+          fileUrls.push(href);
+        }
+      });
+    }
+  });
+
+  // Fallback: Direct search for bizinfo file download pattern
+  $('a[href*="/cmm/fms/getImageFile.do"]').each((_, element) => {
+    const href = $(element).attr('href');
+    if (href && !fileUrls.includes(href)) {
+      fileUrls.push(href);
+    }
+  });
+
+  // Generic fallback for other government sites
+  const genericSelectors = [
     'a[href*=".hwp"]',
     'a[href*=".hwpx"]',
     'a[href*=".pdf"]',
     'a[href*="download"]',
-    'a[href*="file"]',
     'a[href*="attach"]',
     '.file a',
     '.attachment a',
-    '.download a',
   ];
 
-  selectors.forEach((selector) => {
+  genericSelectors.forEach((selector) => {
     $(selector).each((_, element) => {
       const href = $(element).attr("href");
-      if (href) {
-        // Check if it's a file we want
-        const hasValidExt = extensions.some((ext) => href.toLowerCase().includes(ext));
-        if (hasValidExt && !fileUrls.includes(href)) {
+      if (href && !fileUrls.includes(href)) {
+        const extensions = [".hwp", ".hwpx", ".pdf", "getImageFile", "download"];
+        const hasValidPattern = extensions.some((ext) => href.toLowerCase().includes(ext));
+        if (hasValidPattern) {
           fileUrls.push(href);
         }
       }
