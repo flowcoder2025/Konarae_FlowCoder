@@ -302,7 +302,7 @@ function extractFileNameFromHeader(contentDisposition: string | undefined): stri
   // Try filename="name" or filename=name
   const filenameMatch = contentDisposition.match(/filename[^;=\n]*=["']?([^"';\n]+)["']?/i);
   if (filenameMatch) {
-    let fileName = filenameMatch[1].trim();
+    const fileName = filenameMatch[1].trim();
 
     // Handle various encodings
     // 1. URL-encoded (e.g., %ED%95%9C%EA%B8%80)
