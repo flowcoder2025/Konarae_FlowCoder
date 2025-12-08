@@ -10,7 +10,7 @@ import {
 
 export default function BusinessPlansLoading() {
   return (
-    <div className="container mx-auto space-y-6 py-8">
+    <div className="container mx-auto space-y-6 py-8 max-w-7xl">
       <PageHeaderSkeleton />
 
       {/* Business Plan List */}

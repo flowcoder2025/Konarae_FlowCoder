@@ -98,7 +98,7 @@ export default function BusinessPlanDetailPage() {
 
   if (isLoading) {
     return (
-      <div className="container mx-auto py-8 max-w-4xl">
+      <div className="container mx-auto py-8 max-w-7xl">
         <p>로딩 중...</p>
       </div>
     );
@@ -109,7 +109,7 @@ export default function BusinessPlanDetailPage() {
   }
 
   return (
-    <div className="container mx-auto py-8 max-w-4xl">
+    <div className="container mx-auto py-8 max-w-7xl">
       <PageHeader
         title={businessPlan.title}
         description={businessPlan.company.name}

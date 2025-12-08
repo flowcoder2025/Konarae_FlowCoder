@@ -70,7 +70,7 @@ export default async function CompanyDetailPage({
   }
 
   return (
-    <div className="container mx-auto py-8">
+    <div className="container mx-auto py-8 max-w-7xl">
       <PageHeader
         title={company.name}
         description={`사업자등록번호: ${company.businessNumber}`}

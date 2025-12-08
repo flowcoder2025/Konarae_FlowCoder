@@ -217,7 +217,7 @@ export default async function DashboardPage() {
   }
 
   return (
-    <div className="container mx-auto py-8 space-y-8">
+    <div className="container mx-auto py-8 space-y-8 max-w-7xl">
       {/* Header */}
       <div>
         <h1 className="text-3xl font-bold">대시보드</h1>

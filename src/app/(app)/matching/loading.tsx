@@ -10,7 +10,7 @@ import {
 
 export default function MatchingLoading() {
   return (
-    <div className="container mx-auto space-y-6 py-8">
+    <div className="container mx-auto space-y-6 py-8 max-w-7xl">
       <PageHeaderSkeleton />
 
       <div className="grid gap-6 lg:grid-cols-3">

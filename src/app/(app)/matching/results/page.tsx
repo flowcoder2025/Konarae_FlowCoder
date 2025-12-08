@@ -87,7 +87,7 @@ export default async function MatchingResultsPage({
   const lowConfidence = results.filter((r) => r.confidence === "low").length;
 
   return (
-    <div className="container mx-auto py-8">
+    <div className="container mx-auto py-8 max-w-7xl">
       {/* Header */}
       <div className="mb-8">
         <h1 className="text-3xl font-bold mb-2">매칭 결과</h1>

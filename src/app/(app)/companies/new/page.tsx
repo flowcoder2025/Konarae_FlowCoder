@@ -10,7 +10,7 @@ export default async function NewCompanyPage() {
   }
 
   return (
-    <div className="container mx-auto max-w-4xl py-8">
+    <div className="container mx-auto max-w-7xl py-8">
       <PageHeader
         title="기업 등록"
         description="새로운 기업을 등록하고 지원사업 매칭을 시작하세요"

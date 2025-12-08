@@ -130,7 +130,7 @@ export default function NewEvaluationPage() {
   };
 
   return (
-    <div className="container mx-auto py-8 max-w-3xl">
+    <div className="container mx-auto py-8 max-w-7xl">
       <PageHeader
         title="새 평가 요청"
         description="사업계획서를 AI가 평가하고 피드백을 제공합니다"

@@ -63,7 +63,7 @@ export default function EvaluationDetailPage() {
 
   if (isLoading) {
     return (
-      <div className="container mx-auto py-8 max-w-4xl">
+      <div className="container mx-auto py-8 max-w-7xl">
         <p>로딩 중...</p>
       </div>
     );
@@ -82,7 +82,7 @@ export default function EvaluationDetailPage() {
     : evaluation.uploadedFileUrl || "파일명 없음";
 
   return (
-    <div className="container mx-auto py-8 max-w-4xl">
+    <div className="container mx-auto py-8 max-w-7xl">
       <PageHeader
         title={pageTitle}
         description={pageDescription}
