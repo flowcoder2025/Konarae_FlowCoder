@@ -265,6 +265,14 @@ async function downloadFile(url: string): Promise<Buffer | null> {
     const sizeInMB = (buffer.length / 1024 / 1024).toFixed(2);
     console.log(`    ✓ Downloaded ${sizeInMB}MB`);
 
+    // Debug: Check first 100 bytes to verify file type
+    const preview = buffer.slice(0, 100).toString('utf8', 0, 100);
+    if (preview.includes('<!DOCTYPE') || preview.includes('<html')) {
+      console.error(`    ✗ Downloaded HTML instead of file!`);
+      console.error(`    Preview: ${preview.substring(0, 200)}`);
+      return null;
+    }
+
     return buffer;
   } catch (error: any) {
     console.error(`    ✗ Download failed:`, error.message);
@@ -273,27 +281,200 @@ async function downloadFile(url: string): Promise<Buffer | null> {
 }
 
 /**
- * Step 3: Extract text from PDF buffer
+ * Detect file type from buffer using magic bytes
  */
-async function extractPdfText(buffer: Buffer): Promise<string | null> {
+function detectFileType(buffer: Buffer): 'pdf' | 'hwp' | 'hwpx' | 'unknown' {
+  // Check PDF signature: %PDF-
+  if (buffer.length >= 5 && buffer.slice(0, 5).toString() === '%PDF-') {
+    return 'pdf';
+  }
+
+  // Check HWP signature: OLE Compound File (HWP 5.0)
+  if (buffer.length >= 8 &&
+      buffer[0] === 0xD0 && buffer[1] === 0xCF &&
+      buffer[2] === 0x11 && buffer[3] === 0xE0) {
+    return 'hwp';
+  }
+
+  // Check HWPX signature: ZIP file (HWPX is ZIP-based)
+  if (buffer.length >= 4 &&
+      buffer[0] === 0x50 && buffer[1] === 0x4B &&
+      buffer[2] === 0x03 && buffer[3] === 0x04) {
+    return 'hwpx';
+  }
+
+  return 'unknown';
+}
+
+/**
+ * Parse HWP file using local Node.js libraries
+ */
+async function parseHwpLocal(buffer: Buffer): Promise<string | null> {
   try {
-    // @ts-expect-error - pdf-parse has complex module export
-    const pdfParse = (await import("pdf-parse")).default || await import("pdf-parse");
+    // Try hwp.js (named export)
+    const { parse } = await import("hwp.js");
 
-    console.log(`    → Extracting PDF text...`);
+    // Convert Buffer to Uint8Array (hwp.js requires this)
+    const uint8Array = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
 
-    const data = await (typeof pdfParse === 'function' ? pdfParse(buffer) : pdfParse.default(buffer));
-    const textLength = data.text.length;
-    const pageCount = data.numpages;
+    const doc = parse(uint8Array);
 
-    console.log(`    ✓ Extracted ${textLength} characters from ${pageCount} pages`);
+    // Extract text from all sections
+    const textParts: string[] = [];
+    if (doc.sections) {
+      for (const section of doc.sections) {
+        if (section.content) {
+          // Try to extract text from paragraphs
+          const sectionText = extractTextFromSection(section);
+          if (sectionText) textParts.push(sectionText);
+        }
+      }
+    }
 
-    // Limit text to first 10,000 characters for API efficiency
-    const limitedText = data.text.substring(0, 10000);
-
-    return limitedText;
+    const fullText = textParts.join('\n\n');
+    if (fullText.length > 0) {
+      console.log(`    ✓ Local HWP parser extracted ${fullText.length} characters`);
+      return fullText;
+    }
   } catch (error: any) {
-    console.error(`    ✗ PDF extraction failed:`, error.message);
+    console.log(`    ⚠ hwp.js failed: ${error.message}`);
+  }
+
+  return null;
+}
+
+/**
+ * Extract text from HWP section
+ */
+function extractTextFromSection(section: any): string {
+  const texts: string[] = [];
+
+  try {
+    // Try to get paragraph content
+    if (section.content && Array.isArray(section.content)) {
+      for (const para of section.content) {
+        if (para.content && Array.isArray(para.content)) {
+          for (const item of para.content) {
+            if (typeof item === 'string') {
+              texts.push(item);
+            } else if (item.value && typeof item.value === 'string') {
+              texts.push(item.value);
+            }
+          }
+        }
+      }
+    }
+  } catch (error) {
+    // Silently ignore parsing errors
+  }
+
+  return texts.join(' ').trim();
+}
+
+/**
+ * Parse HWPX file using JSZip
+ */
+async function parseHwpxLocal(buffer: Buffer): Promise<string | null> {
+  try {
+    const JSZip = (await import("jszip")).default;
+    const zip = await JSZip.loadAsync(buffer);
+
+    // HWPX structure: Contents/section0.xml, section1.xml, etc.
+    const textParts: string[] = [];
+
+    // Try to find and extract text from section files
+    const sectionFiles = Object.keys(zip.files).filter(name =>
+      name.startsWith('Contents/section') && name.endsWith('.xml')
+    );
+
+    for (const fileName of sectionFiles) {
+      const content = await zip.files[fileName].async('text');
+      // Extract text between <TEXT> tags (simplified)
+      const textMatches = content.match(/<TEXT[^>]*>([\s\S]*?)<\/TEXT>/g);
+      if (textMatches) {
+        textMatches.forEach(match => {
+          // Remove XML tags
+          const text = match.replace(/<[^>]+>/g, '').trim();
+          if (text) textParts.push(text);
+        });
+      }
+    }
+
+    const fullText = textParts.join('\n\n');
+
+    if (fullText.length > 0) {
+      console.log(`    ✓ Local HWPX parser extracted ${fullText.length} characters`);
+      return fullText;
+    }
+  } catch (error: any) {
+    console.log(`    ⚠ HWPX local parser failed: ${error.message}`);
+  }
+
+  return null;
+}
+
+/**
+ * Step 3: Extract text from file buffer
+ * Tries Railway parsers first, then falls back to local libraries
+ * Supports PDF, HWP, and HWPX formats
+ */
+async function extractFileText(buffer: Buffer): Promise<string | null> {
+  try {
+    // Detect file type
+    const fileType = detectFileType(buffer);
+
+    if (fileType === 'unknown') {
+      console.log(`    ✗ Unknown file format`);
+      return null;
+    }
+
+    console.log(`    → Detected file type: ${fileType.toUpperCase()}`);
+
+    // Try Railway parser first
+    console.log(`    → Trying Railway ${fileType.toUpperCase()} parser...`);
+    try {
+      const { parseDocument } = await import("@/lib/railway");
+      const result = await parseDocument(buffer, fileType, 'text');
+
+      if (result.success && result.text.length > 0) {
+        const textLength = result.text.length;
+        console.log(`    ✓ Railway extracted ${textLength} characters`);
+
+        // Limit text to first 10,000 characters for API efficiency
+        const limitedText = result.text.substring(0, 10000);
+        return limitedText;
+      } else {
+        console.log(`    ⚠ Railway parser returned no text, trying local fallback...`);
+      }
+    } catch (railwayError: any) {
+      console.log(`    ⚠ Railway parser failed: ${railwayError.message}`);
+      console.log(`    → Falling back to local parsing...`);
+    }
+
+    // Fallback to local parsing
+    let extractedText: string | null = null;
+
+    if (fileType === 'hwp') {
+      extractedText = await parseHwpLocal(buffer);
+    } else if (fileType === 'hwpx') {
+      extractedText = await parseHwpxLocal(buffer);
+    } else if (fileType === 'pdf') {
+      // Keep PDF parsing as-is or add local fallback later
+      console.log(`    ⚠ PDF local parsing not implemented yet`);
+      return null;
+    }
+
+    if (extractedText && extractedText.length > 0) {
+      // Limit text to first 10,000 characters for API efficiency
+      const limitedText = extractedText.substring(0, 10000);
+      return limitedText;
+    }
+
+    console.log(`    ✗ All parsing methods failed`);
+    return null;
+
+  } catch (error: any) {
+    console.error(`    ✗ File extraction failed:`, error.message);
     return null;
   }
 }
@@ -388,10 +569,10 @@ async function processProjectFiles(
     return updates;
   }
 
-  // Step 3b: Extract PDF text (skip non-PDF for v1)
-  const text = await extractPdfText(fileBuffer);
+  // Step 3b: Extract text (supports PDF/HWP/HWPX via Railway parsers)
+  const text = await extractFileText(fileBuffer);
   if (!text) {
-    console.log(`    ⚠ Not a PDF or extraction failed, skipping (HWP/HWPX support in v2)`);
+    console.log(`    ⚠ File extraction failed or unsupported format`);
     return updates;
   }
 

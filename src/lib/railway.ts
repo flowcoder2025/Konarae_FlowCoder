@@ -49,16 +49,20 @@ export async function parseDocument(
   mode: ExtractMode = "full"
 ): Promise<ParseResult> {
   try {
-    const formData = new FormData();
+    // Node.js 환경에서는 form-data 패키지 사용
+    const FormDataNode = (await import("form-data")).default;
+    const formData = new FormDataNode();
 
     if (Buffer.isBuffer(file)) {
-      const arrayBuffer = file.buffer.slice(
-        file.byteOffset,
-        file.byteOffset + file.byteLength
-      ) as ArrayBuffer;
-      const blob = new Blob([arrayBuffer]);
-      formData.append("file", blob, `document.${type}`);
+      // Buffer를 직접 form-data에 추가
+      formData.append("file", file, {
+        filename: `document.${type}`,
+        contentType: type === 'pdf' ? 'application/pdf' :
+                     type === 'hwp' ? 'application/x-hwp' :
+                     'application/vnd.hancom.hwpx'
+      });
     } else {
+      // File 객체 (브라우저 환경)
       formData.append("file", file);
     }
 
@@ -81,22 +85,42 @@ export async function parseDocument(
       else endpoint = "/parse";
     }
 
-    const response = await fetch(`${parserUrl}${endpoint}`, {
-      method: "POST",
-      body: formData,
+    // Use axios for proper form-data streaming support
+    const axios = (await import("axios")).default;
+
+    const response = await axios.post(`${parserUrl}${endpoint}`, formData, {
+      headers: formData.getHeaders(),
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity,
     });
 
-    if (!response.ok) {
-      throw new Error(`Parser failed: ${response.statusText}`);
-    }
-
-    const data = await response.json();
+    const data = response.data;
     return {
       success: true,
       text: data.text || data.content || "",
       metadata: data.metadata,
     };
-  } catch (error) {
+  } catch (error: any) {
+    // Handle axios errors
+    if (error.response) {
+      const errorBody = typeof error.response.data === 'string'
+        ? error.response.data
+        : JSON.stringify(error.response.data);
+
+      console.error(`[Railway] ${type.toUpperCase()} parser error:`, {
+        status: error.response.status,
+        statusText: error.response.statusText,
+        url: error.config?.url || 'unknown',
+        errorBody
+      });
+
+      return {
+        success: false,
+        text: "",
+        error: `Parser failed: ${error.response.status} ${error.response.statusText}`,
+      };
+    }
+
     console.error(`[Railway] Parse error (${type}):`, error);
     return {
       success: false,
