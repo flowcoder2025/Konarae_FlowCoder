@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { evaluateBusinessPlan } from "@/lib/evaluation-engine";
-import { parseDocument } from "@/lib/railway";
+import { parseDocument } from "@/lib/document-parser";
 import { sendEvaluationCompleteNotification } from "@/lib/notifications";
 import { z } from "zod";
 
@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Parse uploaded document using Railway
+    // Parse uploaded document using text_parser
     let parsedContent = "";
     try {
       let fileType: "hwp" | "hwpx" | "pdf";

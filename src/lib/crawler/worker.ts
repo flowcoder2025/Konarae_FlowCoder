@@ -430,24 +430,24 @@ async function extractFileText(buffer: Buffer): Promise<string | null> {
 
     console.log(`    → Detected file type: ${fileType.toUpperCase()}`);
 
-    // Try Railway parser first
-    console.log(`    → Trying Railway ${fileType.toUpperCase()} parser...`);
+    // Try text_parser service first
+    console.log(`    → Trying text_parser ${fileType.toUpperCase()} parser...`);
     try {
-      const { parseDocument } = await import("@/lib/railway");
+      const { parseDocument } = await import("@/lib/document-parser");
       const result = await parseDocument(buffer, fileType, 'text');
 
       if (result.success && result.text.length > 0) {
         const textLength = result.text.length;
-        console.log(`    ✓ Railway extracted ${textLength} characters`);
+        console.log(`    ✓ text_parser extracted ${textLength} characters`);
 
         // Limit text to first 10,000 characters for API efficiency
         const limitedText = result.text.substring(0, 10000);
         return limitedText;
       } else {
-        console.log(`    ⚠ Railway parser returned no text, trying local fallback...`);
+        console.log(`    ⚠ text_parser returned no text, trying local fallback...`);
       }
-    } catch (railwayError: any) {
-      console.log(`    ⚠ Railway parser failed: ${railwayError.message}`);
+    } catch (parserError: any) {
+      console.log(`    ⚠ text_parser failed: ${parserError.message}`);
       console.log(`    → Falling back to local parsing...`);
     }
 
