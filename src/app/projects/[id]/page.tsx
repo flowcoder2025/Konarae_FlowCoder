@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { redirect, notFound } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { ProjectFiles } from "@/components/project/project-files";
 
 interface ProjectDetailPageProps {
   params: Promise<{ id: string }>;
@@ -204,6 +205,9 @@ export default async function ProjectDetailPage({
             </div>
           </Card>
         )}
+
+        {/* Attachments */}
+        <ProjectFiles projectId={id} />
       </div>
     </div>
   );
