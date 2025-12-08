@@ -313,6 +313,7 @@ model SupportProject {
   embeddings      SupportProjectEmbedding[]
   matchingResults MatchingResult[]
   businessPlans   BusinessPlan[]
+  attachments     ProjectAttachment[]
 
   @@index([category])
   @@index([region])
@@ -331,6 +332,31 @@ model SupportProjectEmbedding {
   project SupportProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@unique([projectId, fieldType])
+}
+
+model ProjectAttachment {
+  id          String  @id @default(cuid())
+  projectId   String
+  fileName    String  // 원본 파일명
+  fileType    String  // hwp, hwpx, pdf, unknown
+  fileSize    Int     // 바이트 단위
+  storagePath String  // Supabase 버킷 내 경로
+  sourceUrl   String? // 원본 다운로드 URL
+
+  // 스마트 파싱
+  shouldParse   Boolean @default(false) // 파싱 대상 여부
+  isParsed      Boolean @default(false) // 파싱 완료 여부
+  parsedContent String? @db.Text        // 파싱된 텍스트 내용
+  parseError    String?                 // 파싱 실패 시 에러 메시지
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project SupportProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([fileType])
+  @@index([shouldParse, isParsed])
 }
 
 model CrawlJob {

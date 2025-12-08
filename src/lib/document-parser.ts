@@ -126,11 +126,16 @@ function extractTextFromResponse(response: TextParserResponse): string {
 function extractMetadataFromResponse(
   response: TextParserResponse
 ): ParseResult["metadata"] {
-  if (!response.content?.metadata) {
+  // content가 string인 경우 메타데이터 없음
+  if (!response.content || typeof response.content === "string") {
     return undefined;
   }
 
   const meta = response.content.metadata;
+  if (!meta) {
+    return undefined;
+  }
+
   return {
     title: meta.title,
     author: meta.author,

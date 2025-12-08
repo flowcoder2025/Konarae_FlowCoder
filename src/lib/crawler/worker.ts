@@ -1,9 +1,20 @@
 /**
  * Crawler Worker
  * Background worker for processing crawl jobs
+ *
+ * 파일 처리 흐름:
+ * 1. 다운로드 → 2. Supabase 저장 → 3. 스마트 파싱 판단 → 4. 파싱 실행 → 5. DB 저장
  */
 
 import { prisma } from "@/lib/prisma";
+import {
+  uploadFile,
+  getFileTypeFromName,
+  shouldParseFile,
+  getParsingPriority,
+  sortByParsingPriority,
+  type FileType,
+} from "@/lib/supabase-storage";
 
 /**
  * Process a single crawl job
@@ -41,10 +52,13 @@ export async function processCrawlJob(jobId: string) {
 
     console.log(`Found ${crawledProjects.length} projects`);
 
-    // Save projects to database
-    const { newCount, updatedCount } = await saveProjects(crawledProjects);
+    // Save projects to database (includes file processing)
+    console.log(`\n=== Step 3+4: Saving projects and processing files ===`);
+    const { newCount, updatedCount, filesProcessed } = await saveProjects(crawledProjects);
 
-    console.log(`Saved: ${newCount} new, ${updatedCount} updated`);
+    console.log(`\n=== Crawl Summary ===`);
+    console.log(`Projects: ${newCount} new, ${updatedCount} updated`);
+    console.log(`Files processed: ${filesProcessed}`);
 
     // Update job status to completed
     await prisma.crawlJob.update({
@@ -68,6 +82,7 @@ export async function processCrawlJob(jobId: string) {
       projectsFound: crawledProjects.length,
       projectsNew: newCount,
       projectsUpdated: updatedCount,
+      filesProcessed,
     };
 
     console.log(`Crawl job ${jobId} completed successfully`, stats);
@@ -121,6 +136,23 @@ interface CrawledProject {
   sourceUrl: string;
   detailUrl?: string;
   attachmentUrls?: string[];
+  // 저장된 첨부파일 정보
+  savedAttachments?: SavedAttachment[];
+}
+
+/**
+ * Supabase에 저장된 첨부파일 정보
+ */
+interface SavedAttachment {
+  fileName: string;
+  fileType: FileType;
+  fileSize: number;
+  storagePath: string;
+  sourceUrl: string;
+  shouldParse: boolean;
+  isParsed: boolean;
+  parsedContent?: string;
+  parseError?: string;
 }
 
 /**
@@ -546,43 +578,154 @@ ${text}`;
 }
 
 /**
- * Step 3+4: Process files for a project
+ * Extract filename from URL
+ */
+function extractFileName(url: string): string {
+  try {
+    const urlObj = new URL(url);
+    const pathParts = urlObj.pathname.split('/');
+    const fileName = pathParts[pathParts.length - 1];
+
+    // If no valid filename, generate one with timestamp
+    if (!fileName || fileName.length < 3) {
+      return `file_${Date.now()}`;
+    }
+
+    // Decode URL encoded filename
+    return decodeURIComponent(fileName);
+  } catch {
+    return `file_${Date.now()}`;
+  }
+}
+
+/**
+ * Step 3+4: Process files for a project (NEW: 모든 파일 저장 + 스마트 파싱)
+ *
+ * 처리 흐름:
+ * 1. 모든 첨부파일 다운로드
+ * 2. Supabase Storage에 저장
+ * 3. 스마트 파싱 대상 판단 (공고, 신청서, 사업계획서 등)
+ * 4. 파싱 대상만 텍스트 추출
+ * 5. 첫 번째 파싱된 파일로 AI 분석
+ *
+ * @param projectId 프로젝트 ID (DB에 저장된 후)
+ * @param attachmentUrls 첨부파일 URL 목록
+ * @returns 저장된 첨부파일 정보 + AI 분석 결과
  */
 async function processProjectFiles(
-  project: CrawledProject
-): Promise<Partial<CrawledProject>> {
-  const updates: Partial<CrawledProject> = {};
+  projectId: string,
+  attachmentUrls: string[]
+): Promise<{
+  attachments: SavedAttachment[];
+  aiAnalysis?: {
+    description?: string;
+    eligibility?: string;
+    applicationProcess?: string;
+    evaluationCriteria?: string;
+  };
+}> {
+  const attachments: SavedAttachment[] = [];
+  let aiAnalysis: {
+    description?: string;
+    eligibility?: string;
+    applicationProcess?: string;
+    evaluationCriteria?: string;
+  } | undefined;
 
-  // Only process if we have attachment URLs
-  if (!project.attachmentUrls || project.attachmentUrls.length === 0) {
-    return updates;
+  // 파일별 다운로드 정보 준비
+  const fileInfos = attachmentUrls.map(url => ({
+    url,
+    fileName: extractFileName(url),
+    fileType: getFileTypeFromName(extractFileName(url)),
+  }));
+
+  // 파싱 우선순위로 정렬 (공고 > 신청서 > 일반)
+  const sortedFiles = sortByParsingPriority(fileInfos);
+
+  console.log(`  → Processing ${sortedFiles.length} file(s)`);
+  let firstParsedText: string | null = null;
+
+  for (let i = 0; i < sortedFiles.length; i++) {
+    const { url, fileName, fileType } = sortedFiles[i];
+    const shouldParse = shouldParseFile(fileName);
+
+    console.log(`  [${i + 1}/${sortedFiles.length}] ${fileName}`);
+    console.log(`    → Type: ${fileType}, Parse: ${shouldParse ? 'YES' : 'SKIP'}`);
+
+    // Step 1: 파일 다운로드
+    const fileBuffer = await downloadFile(url);
+    if (!fileBuffer) {
+      console.log(`    ✗ Download failed, skipping`);
+      continue;
+    }
+
+    // Step 2: 파일 타입 검증 (magic bytes)
+    const detectedType = detectFileType(fileBuffer);
+    const finalFileType = detectedType !== 'unknown' ? detectedType : fileType;
+
+    // Step 3: Supabase Storage에 저장
+    const uploadResult = await uploadFile(
+      fileBuffer,
+      projectId,
+      fileName,
+      finalFileType as FileType
+    );
+
+    if (!uploadResult.success || !uploadResult.storagePath) {
+      console.log(`    ✗ Upload failed: ${uploadResult.error}`);
+      continue;
+    }
+
+    console.log(`    ✓ Uploaded to: ${uploadResult.storagePath}`);
+
+    // Step 4: 스마트 파싱 (대상 파일만)
+    let parsedContent: string | undefined;
+    let parseError: string | undefined;
+    let isParsed = false;
+
+    if (shouldParse) {
+      try {
+        const text = await extractFileText(fileBuffer);
+        if (text && text.length > 0) {
+          parsedContent = text;
+          isParsed = true;
+          console.log(`    ✓ Parsed ${text.length} characters`);
+
+          // 첫 번째 파싱된 텍스트를 AI 분석에 사용
+          if (!firstParsedText) {
+            firstParsedText = text;
+          }
+        } else {
+          parseError = 'No text extracted';
+          console.log(`    ⚠ No text extracted`);
+        }
+      } catch (error) {
+        parseError = error instanceof Error ? error.message : 'Unknown parsing error';
+        console.log(`    ✗ Parse error: ${parseError}`);
+      }
+    }
+
+    // 첨부파일 정보 저장
+    attachments.push({
+      fileName,
+      fileType: finalFileType as FileType,
+      fileSize: fileBuffer.length,
+      storagePath: uploadResult.storagePath,
+      sourceUrl: url,
+      shouldParse,
+      isParsed,
+      parsedContent,
+      parseError,
+    });
   }
 
-  // Process only the first file for now (PDF only in v1)
-  const firstFileUrl = project.attachmentUrls[0];
-
-  console.log(`  → Processing file 1/${project.attachmentUrls.length}`);
-
-  // Step 3a: Download file
-  const fileBuffer = await downloadFile(firstFileUrl);
-  if (!fileBuffer) {
-    return updates;
+  // Step 5: 첫 번째 파싱된 파일로 AI 분석
+  if (firstParsedText) {
+    console.log(`  → Running AI analysis on parsed content...`);
+    aiAnalysis = await analyzeWithGemini(firstParsedText) || undefined;
   }
 
-  // Step 3b: Extract text (supports PDF/HWP/HWPX via Railway parsers)
-  const text = await extractFileText(fileBuffer);
-  if (!text) {
-    console.log(`    ⚠ File extraction failed or unsupported format`);
-    return updates;
-  }
-
-  // Step 4: Analyze with Gemini
-  const analysis = await analyzeWithGemini(text);
-  if (analysis) {
-    Object.assign(updates, analysis);
-  }
-
-  return updates;
+  return { attachments, aiAnalysis };
 }
 
 /**
@@ -652,45 +795,14 @@ async function crawlAndParse(
     const projectsWithFiles = projects.filter(p => p.attachmentUrls && p.attachmentUrls.length > 0);
     console.log(`Projects with attachments: ${projectsWithFiles.length}/${projects.length}`);
 
-    // Step 3+4: Download files and analyze with AI
-    console.log(`\n=== Step 3: File download and AI analysis ===`);
-    let processedCount = 0;
-    let successCount = 0;
+    // NOTE: File processing (Step 3+4) now happens in saveProjects()
+    // This allows us to:
+    // 1. Save project first to get projectId
+    // 2. Upload files to Supabase Storage with proper path
+    // 3. Save attachment records linked to project
+    // 4. Apply smart parsing only to relevant files
 
-    for (let i = 0; i < projects.length; i++) {
-      const project = projects[i];
-
-      if (project.attachmentUrls && project.attachmentUrls.length > 0) {
-        console.log(`[${i + 1}/${projects.length}] ${project.name}`);
-
-        try {
-          const updates = await processProjectFiles(project);
-
-          if (Object.keys(updates).length > 0) {
-            // Merge updates into project
-            Object.assign(projects[i], updates);
-            successCount++;
-            console.log(`  ✓ AI analysis complete`);
-          } else {
-            console.log(`  ⚠ No updates from file processing`);
-          }
-
-          processedCount++;
-        } catch (error) {
-          console.error(`  ✗ Error processing files:`, error);
-        }
-
-        // Rate limiting: 4 seconds between Gemini API calls
-        await new Promise(resolve => setTimeout(resolve, 4000));
-      } else {
-        console.log(`[${i + 1}/${projects.length}] ${project.name} - No files to process`);
-      }
-    }
-
-    console.log(`\n=== File processing complete ===`);
-    console.log(`Processed: ${processedCount}/${projectsWithFiles.length}`);
-    console.log(`Successful AI analysis: ${successCount}/${processedCount}`);
-
+    console.log(`\n=== Returning ${projects.length} projects for processing ===`);
     return projects;
   } catch (error) {
     console.error(`Crawling failed for ${url}:`, error);
@@ -891,12 +1003,14 @@ function parseApiResponse(data: any, sourceUrl: string): CrawledProject[] {
 
 /**
  * Save crawled projects to database with upsert logic
+ * NEW: 프로젝트 저장 후 첨부파일 처리
  */
 async function saveProjects(
   projects: CrawledProject[]
-): Promise<{ newCount: number; updatedCount: number }> {
+): Promise<{ newCount: number; updatedCount: number; filesProcessed: number }> {
   let newCount = 0;
   let updatedCount = 0;
+  let filesProcessed = 0;
 
   for (const project of projects) {
     try {
@@ -912,27 +1026,88 @@ async function saveProjects(
             },
           });
 
+      // Prepare project data (exclude savedAttachments which is not in schema)
+      const { savedAttachments, attachmentUrls, ...projectData } = project;
+
+      let projectId: string;
+
       if (existing) {
         // Update existing project
         await prisma.supportProject.update({
           where: { id: existing.id },
           data: {
-            ...project,
+            ...projectData,
             crawledAt: new Date(),
             updatedAt: new Date(),
           },
         });
+        projectId = existing.id;
         updatedCount++;
+        console.log(`  ✓ Updated project: ${project.name}`);
       } else {
         // Create new project
-        await prisma.supportProject.create({
+        const created = await prisma.supportProject.create({
           data: {
-            ...project,
+            ...projectData,
             crawledAt: new Date(),
             status: "active",
           },
         });
+        projectId = created.id;
         newCount++;
+        console.log(`  ✓ Created project: ${project.name}`);
+      }
+
+      // Process and save attachments (NEW)
+      if (attachmentUrls && attachmentUrls.length > 0) {
+        console.log(`  → Processing ${attachmentUrls.length} attachment(s)...`);
+
+        try {
+          const { attachments, aiAnalysis } = await processProjectFiles(
+            projectId,
+            attachmentUrls
+          );
+
+          // Save attachments to database
+          for (const attachment of attachments) {
+            await prisma.projectAttachment.create({
+              data: {
+                projectId,
+                fileName: attachment.fileName,
+                fileType: attachment.fileType,
+                fileSize: attachment.fileSize,
+                storagePath: attachment.storagePath,
+                sourceUrl: attachment.sourceUrl,
+                shouldParse: attachment.shouldParse,
+                isParsed: attachment.isParsed,
+                parsedContent: attachment.parsedContent,
+                parseError: attachment.parseError,
+              },
+            });
+            filesProcessed++;
+          }
+
+          console.log(`  ✓ Saved ${attachments.length} attachment(s) to DB`);
+
+          // Update project with AI analysis if available
+          if (aiAnalysis) {
+            await prisma.supportProject.update({
+              where: { id: projectId },
+              data: {
+                description: aiAnalysis.description || undefined,
+                eligibility: aiAnalysis.eligibility || undefined,
+                applicationProcess: aiAnalysis.applicationProcess || undefined,
+                evaluationCriteria: aiAnalysis.evaluationCriteria || undefined,
+              },
+            });
+            console.log(`  ✓ Updated project with AI analysis`);
+          }
+        } catch (fileError) {
+          console.error(`  ✗ Error processing attachments:`, fileError);
+        }
+
+        // Rate limiting: 2 seconds between projects with files
+        await new Promise(resolve => setTimeout(resolve, 2000));
       }
     } catch (error) {
       console.error(`Failed to save project "${project.name}":`, error);
@@ -940,7 +1115,7 @@ async function saveProjects(
     }
   }
 
-  return { newCount, updatedCount };
+  return { newCount, updatedCount, filesProcessed };
 }
 
 /**
