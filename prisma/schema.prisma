@@ -337,11 +337,11 @@ model SupportProjectEmbedding {
 model ProjectAttachment {
   id          String  @id @default(cuid())
   projectId   String
-  fileName    String  // 원본 파일명
+  fileName    String  // 원본 파일명 (Content-Disposition에서 추출)
   fileType    String  // hwp, hwpx, pdf, unknown
-  fileSize    Int     // 바이트 단위
-  storagePath String  // Supabase 버킷 내 경로
-  sourceUrl   String? // 원본 다운로드 URL
+  fileSize    Int     // 바이트 단위 (0 = 크기 미확인)
+  storagePath String? // Supabase 버킷 내 경로 (핵심 문서만 저장)
+  sourceUrl   String  // 원본 다운로드 URL (필수)
 
   // 스마트 파싱
   shouldParse   Boolean @default(false) // 파싱 대상 여부

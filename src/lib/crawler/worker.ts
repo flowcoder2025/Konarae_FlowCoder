@@ -275,9 +275,51 @@ async function fetchDetailPage(
 }
 
 /**
- * Step 3: Download file from URL
+ * Download result with buffer and actual filename
  */
-async function downloadFile(url: string): Promise<Buffer | null> {
+interface DownloadResult {
+  buffer: Buffer;
+  fileName: string | null; // 실제 파일명 (Content-Disposition에서 추출)
+}
+
+/**
+ * Extract filename from Content-Disposition header
+ * Handles both ASCII and UTF-8 encoded filenames
+ */
+function extractFileNameFromHeader(contentDisposition: string | undefined): string | null {
+  if (!contentDisposition) return null;
+
+  // Try filename*=UTF-8''encoded_name (RFC 5987)
+  const utf8Match = contentDisposition.match(/filename\*=(?:UTF-8|utf-8)''([^;\s]+)/i);
+  if (utf8Match) {
+    try {
+      return decodeURIComponent(utf8Match[1]);
+    } catch {
+      // Fall through to other methods
+    }
+  }
+
+  // Try filename="name" or filename=name
+  const filenameMatch = contentDisposition.match(/filename[^;=\n]*=["']?([^"';\n]+)["']?/i);
+  if (filenameMatch) {
+    let fileName = filenameMatch[1].trim();
+    // Handle URL-encoded Korean filenames
+    try {
+      fileName = decodeURIComponent(fileName);
+    } catch {
+      // Not URL encoded, use as-is
+    }
+    return fileName;
+  }
+
+  return null;
+}
+
+/**
+ * Step 3: Download file from URL
+ * Returns buffer and actual filename from Content-Disposition header
+ */
+async function downloadFile(url: string): Promise<DownloadResult | null> {
   try {
     const axios = (await import("axios")).default;
 
@@ -295,7 +337,16 @@ async function downloadFile(url: string): Promise<Buffer | null> {
 
     const buffer = Buffer.from(response.data);
     const sizeInMB = (buffer.length / 1024 / 1024).toFixed(2);
-    console.log(`    ✓ Downloaded ${sizeInMB}MB`);
+
+    // Extract actual filename from Content-Disposition header
+    const contentDisposition = response.headers['content-disposition'];
+    const fileName = extractFileNameFromHeader(contentDisposition);
+
+    if (fileName) {
+      console.log(`    ✓ Downloaded ${sizeInMB}MB - "${fileName}"`);
+    } else {
+      console.log(`    ✓ Downloaded ${sizeInMB}MB`);
+    }
 
     // Debug: Check first 100 bytes to verify file type
     const preview = buffer.slice(0, 100).toString('utf8', 0, 100);
@@ -305,7 +356,7 @@ async function downloadFile(url: string): Promise<Buffer | null> {
       return null;
     }
 
-    return buffer;
+    return { buffer, fileName };
   } catch (error: any) {
     console.error(`    ✗ Download failed:`, error.message);
     return null;
@@ -599,14 +650,13 @@ function extractFileName(url: string): string {
 }
 
 /**
- * Step 3+4: Process files for a project (NEW: 모든 파일 저장 + 스마트 파싱)
+ * Step 3+4: Process files for a project (Selective Storage Strategy)
  *
  * 처리 흐름:
- * 1. 모든 첨부파일 다운로드
- * 2. Supabase Storage에 저장
- * 3. 스마트 파싱 대상 판단 (공고, 신청서, 사업계획서 등)
- * 4. 파싱 대상만 텍스트 추출
- * 5. 첫 번째 파싱된 파일로 AI 분석
+ * 1. 파싱 대상 판단 (공고, 신청서, 사업계획서만 Storage 저장)
+ * 2. 파싱 대상: 다운로드 → Content-Disposition 파일명 추출 → Storage 저장 → 텍스트 추출
+ * 3. 비파싱 대상: URL만 기록 (storagePath = null, fileSize = 0)
+ * 4. 첫 번째 파싱된 파일로 AI 분석
  *
  * @param projectId 프로젝트 ID (DB에 저장된 후)
  * @param attachmentUrls 첨부파일 URL 목록
@@ -632,10 +682,10 @@ async function processProjectFiles(
     evaluationCriteria?: string;
   } | undefined;
 
-  // 파일별 다운로드 정보 준비
+  // 파일별 정보 준비
   const fileInfos = attachmentUrls.map(url => ({
     url,
-    fileName: extractFileName(url),
+    fileName: extractFileName(url), // URL에서 추출한 예상 파일명
     fileType: getFileTypeFromName(extractFileName(url)),
   }));
 
@@ -646,73 +696,115 @@ async function processProjectFiles(
   let firstParsedText: string | null = null;
 
   for (let i = 0; i < sortedFiles.length; i++) {
-    const { url, fileName, fileType } = sortedFiles[i];
-    const shouldParse = shouldParseFile(fileName);
+    const { url, fileName: urlFileName, fileType } = sortedFiles[i];
+    const shouldParse = shouldParseFile(urlFileName);
 
-    console.log(`  [${i + 1}/${sortedFiles.length}] ${fileName}`);
-    console.log(`    → Type: ${fileType}, Parse: ${shouldParse ? 'YES' : 'SKIP'}`);
+    console.log(`  [${i + 1}/${sortedFiles.length}] ${urlFileName}`);
+    console.log(`    → Type: ${fileType}, Storage: ${shouldParse ? 'YES (핵심문서)' : 'NO (URL만 저장)'}`);
 
-    // Step 1: 파일 다운로드
-    const fileBuffer = await downloadFile(url);
-    if (!fileBuffer) {
-      console.log(`    ✗ Download failed, skipping`);
+    // ===== 비파싱 대상: URL만 저장 (Storage에 저장하지 않음) =====
+    if (!shouldParse) {
+      attachments.push({
+        fileName: urlFileName,
+        fileType: fileType as FileType,
+        fileSize: 0, // 다운로드하지 않으므로 크기 미확인
+        storagePath: '', // null 대신 빈 문자열 (DB에서 null로 저장됨)
+        sourceUrl: url,
+        shouldParse: false,
+        isParsed: false,
+      });
+      console.log(`    ✓ URL recorded (no download)`);
       continue;
     }
+
+    // ===== 파싱 대상: 다운로드 → Storage 저장 → 텍스트 추출 =====
+
+    // Step 1: 파일 다운로드 + Content-Disposition 파일명 추출
+    const downloadResult = await downloadFile(url);
+    if (!downloadResult) {
+      console.log(`    ✗ Download failed, recording URL only`);
+      // 다운로드 실패해도 URL은 기록
+      attachments.push({
+        fileName: urlFileName,
+        fileType: fileType as FileType,
+        fileSize: 0,
+        storagePath: '',
+        sourceUrl: url,
+        shouldParse: true,
+        isParsed: false,
+        parseError: 'Download failed',
+      });
+      continue;
+    }
+
+    const { buffer: fileBuffer, fileName: actualFileName } = downloadResult;
+    // 실제 파일명: Content-Disposition에서 추출한 것 우선, 없으면 URL에서 추출
+    const finalFileName = actualFileName || urlFileName;
 
     // Step 2: 파일 타입 검증 (magic bytes)
     const detectedType = detectFileType(fileBuffer);
     const finalFileType = detectedType !== 'unknown' ? detectedType : fileType;
 
-    // Step 3: Supabase Storage에 저장
+    // Step 3: Supabase Storage에 저장 (핵심 문서만)
     const uploadResult = await uploadFile(
       fileBuffer,
       projectId,
-      fileName,
+      finalFileName,
       finalFileType as FileType
     );
 
     if (!uploadResult.success || !uploadResult.storagePath) {
       console.log(`    ✗ Upload failed: ${uploadResult.error}`);
+      // 업로드 실패해도 URL은 기록
+      attachments.push({
+        fileName: finalFileName,
+        fileType: finalFileType as FileType,
+        fileSize: fileBuffer.length,
+        storagePath: '',
+        sourceUrl: url,
+        shouldParse: true,
+        isParsed: false,
+        parseError: `Upload failed: ${uploadResult.error}`,
+      });
       continue;
     }
 
-    console.log(`    ✓ Uploaded to: ${uploadResult.storagePath}`);
+    console.log(`    ✓ Stored: ${uploadResult.storagePath}`);
+    console.log(`    ✓ Filename: "${finalFileName}"`);
 
-    // Step 4: 스마트 파싱 (대상 파일만)
+    // Step 4: 텍스트 추출
     let parsedContent: string | undefined;
     let parseError: string | undefined;
     let isParsed = false;
 
-    if (shouldParse) {
-      try {
-        const text = await extractFileText(fileBuffer);
-        if (text && text.length > 0) {
-          parsedContent = text;
-          isParsed = true;
-          console.log(`    ✓ Parsed ${text.length} characters`);
+    try {
+      const text = await extractFileText(fileBuffer);
+      if (text && text.length > 0) {
+        parsedContent = text;
+        isParsed = true;
+        console.log(`    ✓ Parsed ${text.length} characters`);
 
-          // 첫 번째 파싱된 텍스트를 AI 분석에 사용
-          if (!firstParsedText) {
-            firstParsedText = text;
-          }
-        } else {
-          parseError = 'No text extracted';
-          console.log(`    ⚠ No text extracted`);
+        // 첫 번째 파싱된 텍스트를 AI 분석에 사용
+        if (!firstParsedText) {
+          firstParsedText = text;
         }
-      } catch (error) {
-        parseError = error instanceof Error ? error.message : 'Unknown parsing error';
-        console.log(`    ✗ Parse error: ${parseError}`);
+      } else {
+        parseError = 'No text extracted';
+        console.log(`    ⚠ No text extracted`);
       }
+    } catch (error) {
+      parseError = error instanceof Error ? error.message : 'Unknown parsing error';
+      console.log(`    ✗ Parse error: ${parseError}`);
     }
 
-    // 첨부파일 정보 저장
+    // 첨부파일 정보 저장 (Storage에 저장됨)
     attachments.push({
-      fileName,
+      fileName: finalFileName,
       fileType: finalFileType as FileType,
       fileSize: fileBuffer.length,
       storagePath: uploadResult.storagePath,
       sourceUrl: url,
-      shouldParse,
+      shouldParse: true,
       isParsed,
       parsedContent,
       parseError,
@@ -1076,7 +1168,8 @@ async function saveProjects(
                 fileName: attachment.fileName,
                 fileType: attachment.fileType,
                 fileSize: attachment.fileSize,
-                storagePath: attachment.storagePath,
+                // storagePath: 빈 문자열이면 null로 저장 (핵심 문서만 Storage에 저장됨)
+                storagePath: attachment.storagePath || null,
                 sourceUrl: attachment.sourceUrl,
                 shouldParse: attachment.shouldParse,
                 isParsed: attachment.isParsed,

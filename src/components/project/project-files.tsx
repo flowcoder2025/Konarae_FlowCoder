@@ -8,7 +8,7 @@
 import { useState, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { FileText, FileSpreadsheet, Download, Loader2 } from "lucide-react";
+import { FileText, FileSpreadsheet, Download, Loader2, ExternalLink } from "lucide-react";
 
 interface ProjectFile {
   id: string;
@@ -17,6 +17,8 @@ interface ProjectFile {
   fileSize: number;
   fileSizeFormatted: string;
   downloadUrl: string | null;
+  sourceUrl: string;
+  isStoredLocally: boolean; // true = Supabase Storage, false = 원본 URL
   isParsed: boolean;
   createdAt: string;
 }
@@ -150,10 +152,14 @@ export function ProjectFiles({ projectId }: ProjectFilesProps) {
                   href={file.downloadUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  download
+                  download={file.isStoredLocally ? file.fileName : undefined}
                 >
-                  <Download className="h-4 w-4 mr-1" />
-                  다운로드
+                  {file.isStoredLocally ? (
+                    <Download className="h-4 w-4 mr-1" />
+                  ) : (
+                    <ExternalLink className="h-4 w-4 mr-1" />
+                  )}
+                  {file.isStoredLocally ? "다운로드" : "원본 열기"}
                 </a>
               </Button>
             ) : (
