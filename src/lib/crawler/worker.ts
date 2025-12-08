@@ -617,6 +617,10 @@ async function analyzeWithGemini(text: string): Promise<{
   eligibility?: string;
   applicationProcess?: string;
   evaluationCriteria?: string;
+  amountDescription?: string;
+  deadline?: string;
+  startDate?: string;
+  endDate?: string;
 } | null> {
   try {
     // Check if API key is available
@@ -638,16 +642,24 @@ async function analyzeWithGemini(text: string): Promise<{
 2. eligibility: 신청 자격 요건 (핵심만, 있는 경우)
 3. applicationProcess: 신청 방법 및 절차 (간단히, 있는 경우)
 4. evaluationCriteria: 평가 기준 (있는 경우)
+5. amountDescription: 지원 금액 상세 설명 (예: "최대 5천만원", "업체당 500만원 이내" 등)
+6. deadline: 신청 마감일 (YYYY-MM-DD 형식, 있는 경우)
+7. startDate: 사업/접수 시작일 (YYYY-MM-DD 형식, 있는 경우)
+8. endDate: 사업/접수 종료일 (YYYY-MM-DD 형식, 있는 경우)
 
 응답은 반드시 다음 JSON 형식으로만 작성해주세요:
 {
   "description": "...",
   "eligibility": "...",
   "applicationProcess": "...",
-  "evaluationCriteria": "..."
+  "evaluationCriteria": "...",
+  "amountDescription": "...",
+  "deadline": "2025-12-31",
+  "startDate": "2025-01-01",
+  "endDate": "2025-12-31"
 }
 
-정보가 없는 항목은 생략하세요.
+정보가 없는 항목은 생략하세요. 날짜는 반드시 YYYY-MM-DD 형식으로 작성하세요.
 
 원문:
 ${text}`;
@@ -1341,6 +1353,13 @@ async function saveProjects(
 
           // Update project with AI analysis if available
           if (aiAnalysis) {
+            // Parse dates if provided
+            const parseDate = (dateStr?: string): Date | undefined => {
+              if (!dateStr) return undefined;
+              const date = new Date(dateStr);
+              return isNaN(date.getTime()) ? undefined : date;
+            };
+
             await prisma.supportProject.update({
               where: { id: projectId },
               data: {
@@ -1348,6 +1367,10 @@ async function saveProjects(
                 eligibility: aiAnalysis.eligibility || undefined,
                 applicationProcess: aiAnalysis.applicationProcess || undefined,
                 evaluationCriteria: aiAnalysis.evaluationCriteria || undefined,
+                amountDescription: aiAnalysis.amountDescription || undefined,
+                deadline: parseDate(aiAnalysis.deadline),
+                startDate: parseDate(aiAnalysis.startDate),
+                endDate: parseDate(aiAnalysis.endDate),
               },
             });
             console.log(`  ✓ Updated project with AI analysis`);
