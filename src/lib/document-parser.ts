@@ -31,20 +31,28 @@ export interface ParseResult {
  * Text Parser API 응답 형식
  */
 interface TextParserResponse {
-  status: "success" | "error";
+  success?: boolean;
+  status?: "success" | "error";
   filename?: string;
-  content?: {
-    paragraphs?: Array<{ text: string; style?: string }>;
-    tables?: Array<{ rows: string[][] }>;
-    metadata?: {
-      title?: string;
-      author?: string;
-      created?: string;
-      pages?: number;
-    };
-    text?: string; // hwp-to-text 응답
-    word_count?: number;
-  };
+  format?: string;
+  message?: string;
+  content?:
+    | string // hwp-to-text 응답 (직접 텍스트)
+    | {
+        paragraphs?: Array<{ text: string; style?: string }>;
+        tables?: Array<{ rows: string[][] }>;
+        metadata?: {
+          title?: string;
+          author?: string;
+          created?: string;
+          pages?: number;
+        };
+        text?: string;
+        word_count?: number;
+        version?: string;
+        extracted_at?: string;
+        statistics?: Record<string, unknown>;
+      };
   text?: string; // 직접 텍스트 응답 (일부 엔드포인트)
   processing_time?: number;
   error?: string;
@@ -86,9 +94,14 @@ function getEndpoint(mode: ExtractMode): string {
  * API 응답에서 텍스트 추출
  */
 function extractTextFromResponse(response: TextParserResponse): string {
-  // 직접 text 필드가 있는 경우 (hwp-to-text)
+  // 직접 text 필드가 있는 경우
   if (response.text) {
     return response.text;
+  }
+
+  // content가 문자열인 경우 (hwp-to-text API 응답)
+  if (typeof response.content === "string") {
+    return response.content;
   }
 
   // content.text 필드 (일부 응답)
@@ -178,8 +191,8 @@ export async function parseDocument(
     const data = response.data;
 
     // 에러 응답 처리
-    if (data.status === "error" || data.error || data.detail) {
-      const errorMsg = data.error || data.detail || "Unknown parser error";
+    if (data.success === false || data.status === "error" || data.error || data.detail) {
+      const errorMsg = data.error || data.detail || data.message || "Unknown parser error";
       console.error(`[DocumentParser] Parser error: ${errorMsg}`);
       return {
         success: false,
