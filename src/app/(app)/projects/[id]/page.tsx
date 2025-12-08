@@ -4,6 +4,7 @@ import { redirect, notFound } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ProjectFiles } from "@/components/project/project-files";
+import { PageHeader } from "@/components/common";
 
 interface ProjectDetailPageProps {
   params: Promise<{ id: string }>;
@@ -57,40 +58,39 @@ export default async function ProjectDetailPage({
     return `${num.toLocaleString()}원`;
   };
 
+  const statusLabel =
+    project.status === "active"
+      ? "모집중"
+      : project.status === "closed"
+      ? "마감"
+      : "준비중";
+
+  const statusVariant =
+    project.status === "active"
+      ? "default"
+      : project.status === "closed"
+      ? "destructive"
+      : "outline";
+
   return (
     <div className="container mx-auto py-8 max-w-4xl">
-      {/* Header */}
-      <div className="mb-6">
-        <div className="flex items-center gap-2 mb-3">
-          <Badge variant="outline">{project.category}</Badge>
-          {project.subCategory && (
-            <Badge variant="outline">{project.subCategory}</Badge>
-          )}
-          <Badge
-            variant={
-              project.status === "active"
-                ? "default"
-                : project.status === "closed"
-                ? "destructive"
-                : "outline"
-            }
-          >
-            {project.status === "active"
-              ? "모집중"
-              : project.status === "closed"
-              ? "마감"
-              : "준비중"}
-          </Badge>
-        </div>
-        <h1 className="text-3xl font-bold mb-2">{project.name}</h1>
-        <div className="flex items-center gap-4 text-muted-foreground">
-          <span>{project.organization}</span>
-          <span>•</span>
-          <span>{project.region}</span>
-          <span>•</span>
-          <span>조회 {project.viewCount}</span>
-        </div>
-      </div>
+      <PageHeader
+        title={project.name}
+        description={`${project.organization} • ${project.region} • 조회 ${project.viewCount}`}
+        listHref="/projects"
+        listLabel="지원사업 목록"
+        actions={
+          <div className="flex items-center gap-2">
+            <Badge variant="outline">{project.category}</Badge>
+            {project.subCategory && (
+              <Badge variant="outline">{project.subCategory}</Badge>
+            )}
+            <Badge variant={statusVariant as "default" | "destructive" | "outline"}>
+              {statusLabel}
+            </Badge>
+          </div>
+        }
+      />
 
       {/* Main Info */}
       <div className="grid gap-6 mb-8">

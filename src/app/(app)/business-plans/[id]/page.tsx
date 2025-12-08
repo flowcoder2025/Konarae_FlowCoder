@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SectionEditor } from "@/components/business-plans/section-editor";
 import Link from "next/link";
+import { PageHeader } from "@/components/common";
 
 const STATUS_LABELS: Record<string, string> = {
   draft: "초안",
@@ -109,19 +110,22 @@ export default function BusinessPlanDetailPage() {
 
   return (
     <div className="container mx-auto py-8 max-w-4xl">
-      {/* Header */}
-      <div className="mb-6">
-        <div className="flex items-center gap-2 mb-3">
-          <Badge>{STATUS_LABELS[businessPlan.status] || businessPlan.status}</Badge>
-          {businessPlan.project && (
-            <span className="text-sm text-muted-foreground">
-              {businessPlan.project.name} ({businessPlan.project.organization})
-            </span>
-          )}
-        </div>
-        <h1 className="text-3xl font-bold mb-2">{businessPlan.title}</h1>
-        <p className="text-muted-foreground">{businessPlan.company.name}</p>
-      </div>
+      <PageHeader
+        title={businessPlan.title}
+        description={businessPlan.company.name}
+        listHref="/business-plans"
+        listLabel="사업계획서 목록"
+        actions={
+          <div className="flex items-center gap-2">
+            <Badge>{STATUS_LABELS[businessPlan.status] || businessPlan.status}</Badge>
+            {businessPlan.project && (
+              <span className="text-sm text-muted-foreground">
+                {businessPlan.project.name} ({businessPlan.project.organization})
+              </span>
+            )}
+          </div>
+        }
+      />
 
       {/* Actions */}
       <div className="flex gap-3 mb-6">

@@ -14,6 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { PageHeader } from "@/components/common";
 
 function NewBusinessPlanForm() {
   const router = useRouter();
@@ -89,12 +90,12 @@ function NewBusinessPlanForm() {
 
   return (
     <div className="container mx-auto py-8 max-w-3xl">
-      <div className="mb-6">
-        <h1 className="text-3xl font-bold mb-2">새 사업계획서 작성</h1>
-        <p className="text-muted-foreground">
-          기본 정보를 입력하고 AI가 사업계획서를 생성합니다
-        </p>
-      </div>
+      <PageHeader
+        title="새 사업계획서 작성"
+        description="기본 정보를 입력하고 AI가 사업계획서를 생성합니다"
+        listHref="/business-plans"
+        listLabel="사업계획서 목록"
+      />
 
       <Card className="p-6">
         <form onSubmit={handleSubmit} className="space-y-6">

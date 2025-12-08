@@ -52,6 +52,7 @@ export function QuickActions() {
             <Button
               key={action.href}
               variant={action.variant}
+              rounded="lg"
               className="h-auto flex-col items-start p-4 text-left"
               asChild
             >
@@ -60,7 +61,13 @@ export function QuickActions() {
                   <action.icon className="h-5 w-5" />
                   <span className="font-semibold">{action.title}</span>
                 </div>
-                <p className="text-xs text-muted-foreground font-normal">
+                <p
+                  className={`text-xs font-normal ${
+                    action.variant === "default"
+                      ? "text-primary-foreground/80"
+                      : "text-muted-foreground"
+                  }`}
+                >
                   {action.description}
                 </p>
               </Link>

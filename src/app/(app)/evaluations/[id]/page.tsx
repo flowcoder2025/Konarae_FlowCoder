@@ -8,6 +8,7 @@ import { Progress } from "@/components/ui/progress";
 import { FeedbackItem } from "@/components/evaluations/feedback-item";
 import { Card } from "@/components/ui/card";
 import Link from "next/link";
+import { PageHeader } from "@/components/common";
 
 const STATUS_LABELS: Record<string, string> = {
   processing: "평가 중",
@@ -72,40 +73,35 @@ export default function EvaluationDetailPage() {
     return null;
   }
 
+  const pageTitle = evaluation.businessPlan
+    ? evaluation.businessPlan.title
+    : "업로드 파일 평가";
+
+  const pageDescription = evaluation.businessPlan
+    ? evaluation.businessPlan.company.name
+    : evaluation.uploadedFileUrl || "파일명 없음";
+
   return (
     <div className="container mx-auto py-8 max-w-4xl">
-      {/* Header */}
-      <div className="mb-6">
-        <div className="flex items-center gap-2 mb-3">
-          <Badge variant={STATUS_VARIANTS[evaluation.status] || "outline"}>
-            {STATUS_LABELS[evaluation.status] || evaluation.status}
-          </Badge>
-          {evaluation.businessPlan?.project && (
-            <span className="text-sm text-muted-foreground">
-              {evaluation.businessPlan.project.name} (
-              {evaluation.businessPlan.project.organization})
-            </span>
-          )}
-        </div>
-
-        {evaluation.businessPlan ? (
-          <>
-            <h1 className="text-3xl font-bold mb-2">
-              {evaluation.businessPlan.title}
-            </h1>
-            <p className="text-muted-foreground">
-              {evaluation.businessPlan.company.name}
-            </p>
-          </>
-        ) : (
-          <>
-            <h1 className="text-3xl font-bold mb-2">업로드 파일 평가</h1>
-            <p className="text-muted-foreground">
-              {evaluation.uploadedFileUrl || "파일명 없음"}
-            </p>
-          </>
-        )}
-      </div>
+      <PageHeader
+        title={pageTitle}
+        description={pageDescription}
+        listHref="/evaluations"
+        listLabel="평가 목록"
+        actions={
+          <div className="flex items-center gap-2">
+            <Badge variant={STATUS_VARIANTS[evaluation.status] || "outline"}>
+              {STATUS_LABELS[evaluation.status] || evaluation.status}
+            </Badge>
+            {evaluation.businessPlan?.project && (
+              <span className="text-sm text-muted-foreground">
+                {evaluation.businessPlan.project.name} (
+                {evaluation.businessPlan.project.organization})
+              </span>
+            )}
+          </div>
+        }
+      />
 
       {/* Overall Score */}
       {evaluation.status === "completed" && evaluation.totalScore !== null && (

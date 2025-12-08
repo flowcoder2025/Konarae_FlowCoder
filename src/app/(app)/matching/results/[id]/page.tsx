@@ -5,6 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import Link from "next/link";
+import { PageHeader } from "@/components/common";
 
 interface MatchResultDetailPageProps {
   params: Promise<{ id: string }>;
@@ -65,24 +66,23 @@ export default async function MatchResultDetailPage({
 
   return (
     <div className="container mx-auto py-8 max-w-4xl">
-      {/* Header */}
-      <div className="mb-6">
-        <div className="flex items-center gap-2 mb-3">
-          <Badge variant={CONFIDENCE_VARIANTS[confidence]}>
-            {CONFIDENCE_LABELS[confidence]}
-          </Badge>
-          <Badge variant="outline">{result.project.category}</Badge>
-          {result.project.subCategory && (
-            <Badge variant="outline">{result.project.subCategory}</Badge>
-          )}
-        </div>
-        <h1 className="text-3xl font-bold mb-2">{result.project.name}</h1>
-        <div className="flex items-center gap-4 text-muted-foreground">
-          <span>{result.company.name}</span>
-          <span>•</span>
-          <span>{result.project.organization}</span>
-        </div>
-      </div>
+      <PageHeader
+        title={result.project.name}
+        description={`${result.company.name} • ${result.project.organization}`}
+        listHref="/matching/results"
+        listLabel="매칭 결과 목록"
+        actions={
+          <div className="flex items-center gap-2">
+            <Badge variant={CONFIDENCE_VARIANTS[confidence]}>
+              {CONFIDENCE_LABELS[confidence]}
+            </Badge>
+            <Badge variant="outline">{result.project.category}</Badge>
+            {result.project.subCategory && (
+              <Badge variant="outline">{result.project.subCategory}</Badge>
+            )}
+          </div>
+        }
+      />
 
       {/* Overall Score */}
       <Card className="p-6 mb-6">

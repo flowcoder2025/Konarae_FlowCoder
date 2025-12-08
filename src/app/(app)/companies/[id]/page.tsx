@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Building2, Mail, Phone, MapPin, Users, Calendar } from "lucide-react";
 import { format } from "date-fns";
+import { PageHeader } from "@/components/common";
 
 export default async function CompanyDetailPage({
   params,
@@ -70,12 +71,12 @@ export default async function CompanyDetailPage({
 
   return (
     <div className="container mx-auto py-8">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold">{company.name}</h1>
-        <p className="text-muted-foreground mt-2">
-          사업자등록번호: {company.businessNumber}
-        </p>
-      </div>
+      <PageHeader
+        title={company.name}
+        description={`사업자등록번호: ${company.businessNumber}`}
+        listHref="/companies"
+        listLabel="기업 목록"
+      />
 
       <div className="grid gap-6 md:grid-cols-2">
         <Card>

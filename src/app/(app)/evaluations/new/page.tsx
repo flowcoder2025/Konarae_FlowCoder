@@ -15,6 +15,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { PageHeader } from "@/components/common";
 
 export default function NewEvaluationPage() {
   const router = useRouter();
@@ -130,12 +131,12 @@ export default function NewEvaluationPage() {
 
   return (
     <div className="container mx-auto py-8 max-w-3xl">
-      <div className="mb-6">
-        <h1 className="text-3xl font-bold mb-2">새 평가 요청</h1>
-        <p className="text-muted-foreground">
-          사업계획서를 AI가 평가하고 피드백을 제공합니다
-        </p>
-      </div>
+      <PageHeader
+        title="새 평가 요청"
+        description="사업계획서를 AI가 평가하고 피드백을 제공합니다"
+        listHref="/evaluations"
+        listLabel="평가 목록"
+      />
 
       <Tabs value={mode} onValueChange={(v) => setMode(v as any)}>
         <TabsList className="grid w-full grid-cols-2">
