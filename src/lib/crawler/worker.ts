@@ -731,6 +731,10 @@ async function processProjectFiles(
     eligibility?: string;
     applicationProcess?: string;
     evaluationCriteria?: string;
+    amountDescription?: string;
+    deadline?: string;
+    startDate?: string;
+    endDate?: string;
   };
 }> {
   const attachments: SavedAttachment[] = [];
@@ -739,6 +743,10 @@ async function processProjectFiles(
     eligibility?: string;
     applicationProcess?: string;
     evaluationCriteria?: string;
+    amountDescription?: string;
+    deadline?: string;
+    startDate?: string;
+    endDate?: string;
   } | undefined;
 
   // 파일별 정보 준비
