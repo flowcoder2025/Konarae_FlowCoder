@@ -107,10 +107,12 @@ export async function uploadFile(
     // 버킷 확인
     await ensureBucketExists();
 
-    // 스토리지 경로: projects/{projectId}/{timestamp}_{fileName}
+    // 스토리지 경로: projects/{projectId}/{timestamp}_{randomId}.{ext}
+    // 한글 파일명은 DB에만 저장하고, Storage에는 ASCII-safe 경로 사용
     const timestamp = Date.now();
-    const safeName = fileName.replace(/[^a-zA-Z0-9가-힣._-]/g, "_");
-    const storagePath = `projects/${projectId}/${timestamp}_${safeName}`;
+    const randomId = Math.random().toString(36).substring(2, 10);
+    const ext = fileName.split('.').pop()?.toLowerCase() || fileType;
+    const storagePath = `projects/${projectId}/${timestamp}_${randomId}.${ext}`;
 
     // MIME 타입 결정
     const mimeType = getMimeType(fileType);

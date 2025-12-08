@@ -303,12 +303,59 @@ function extractFileNameFromHeader(contentDisposition: string | undefined): stri
   const filenameMatch = contentDisposition.match(/filename[^;=\n]*=["']?([^"';\n]+)["']?/i);
   if (filenameMatch) {
     let fileName = filenameMatch[1].trim();
-    // Handle URL-encoded Korean filenames
+
+    // Handle various encodings
+    // 1. URL-encoded (e.g., %ED%95%9C%EA%B8%80)
     try {
-      fileName = decodeURIComponent(fileName);
+      const decoded = decodeURIComponent(fileName);
+      if (decoded !== fileName) {
+        return decoded;
+      }
     } catch {
-      // Not URL encoded, use as-is
+      // Not URL encoded
     }
+
+    // 2. Double-encoded UTF-8 (common issue with Korean government sites)
+    // Problem: Server sends UTF-8 bytes (EC A7 80 for "지")
+    //          Node.js HTTP parser interprets as Latin-1 → chars ì § \x80
+    //          Then encodes to UTF-8 for JS string → bytes C3 AC C2 A7 C2 80
+    // Solution: Decode twice - first to Latin-1 chars, then their code points as UTF-8 bytes
+    try {
+      // Check if all characters are in Latin-1 range (0-255)
+      let isLatin1 = true;
+      for (let i = 0; i < fileName.length; i++) {
+        if (fileName.charCodeAt(i) > 255) {
+          isLatin1 = false;
+          break;
+        }
+      }
+
+      if (isLatin1) {
+        // Step 1: Convert current string's char codes to bytes, decode as UTF-8
+        // This undoes the Node.js UTF-8 encoding of Latin-1 characters
+        const bytes1 = new Uint8Array(fileName.length);
+        for (let i = 0; i < fileName.length; i++) {
+          bytes1[i] = fileName.charCodeAt(i);
+        }
+        const intermediate = new TextDecoder('utf-8').decode(bytes1);
+
+        // Step 2: Now we have Latin-1 chars (their code points = original UTF-8 bytes)
+        // Take those code points as bytes and decode as UTF-8 again
+        const bytes2 = new Uint8Array(intermediate.length);
+        for (let i = 0; i < intermediate.length; i++) {
+          bytes2[i] = intermediate.charCodeAt(i);
+        }
+        const finalDecoded = new TextDecoder('utf-8').decode(bytes2);
+
+        // Check if it looks like valid Korean
+        if (/[\uAC00-\uD7AF]/.test(finalDecoded)) {
+          return finalDecoded;
+        }
+      }
+    } catch {
+      // Decoding failed
+    }
+
     return fileName;
   }
 
@@ -697,13 +744,123 @@ async function processProjectFiles(
 
   for (let i = 0; i < sortedFiles.length; i++) {
     const { url, fileName: urlFileName, fileType } = sortedFiles[i];
-    const shouldParse = shouldParseFile(urlFileName);
+
+    // URL에서 파일 타입을 알 수 없는 경우 (예: getImageFile.do) 일단 다운로드 필요
+    const needsDownloadToCheck = fileType === 'unknown' || urlFileName.includes('getImageFile');
+    const preliminaryShouldParse = shouldParseFile(urlFileName);
 
     console.log(`  [${i + 1}/${sortedFiles.length}] ${urlFileName}`);
-    console.log(`    → Type: ${fileType}, Storage: ${shouldParse ? 'YES (핵심문서)' : 'NO (URL만 저장)'}`);
+
+    // URL에서 타입을 알 수 없으면 일단 다운로드해서 확인
+    if (needsDownloadToCheck) {
+      console.log(`    → Type unknown, downloading to check...`);
+
+      const downloadResult = await downloadFile(url);
+      if (!downloadResult) {
+        console.log(`    ✗ Download failed, recording URL only`);
+        attachments.push({
+          fileName: urlFileName,
+          fileType: 'unknown' as FileType,
+          fileSize: 0,
+          storagePath: '',
+          sourceUrl: url,
+          shouldParse: false,
+          isParsed: false,
+          parseError: 'Download failed',
+        });
+        continue;
+      }
+
+      const { buffer: fileBuffer, fileName: actualFileName } = downloadResult;
+      const finalFileName = actualFileName || urlFileName;
+      const detectedType = detectFileType(fileBuffer);
+
+      // 실제 파일명으로 파싱 대상 재판단
+      const actualShouldParse = shouldParseFile(finalFileName);
+
+      console.log(`    → Actual filename: "${finalFileName}"`);
+      console.log(`    → Detected type: ${detectedType}, Storage: ${actualShouldParse ? 'YES (핵심문서)' : 'NO (URL만 저장)'}`);
+
+      if (!actualShouldParse) {
+        // 핵심 문서가 아님 - URL만 저장
+        attachments.push({
+          fileName: finalFileName,
+          fileType: detectedType as FileType,
+          fileSize: fileBuffer.length,
+          storagePath: '',
+          sourceUrl: url,
+          shouldParse: false,
+          isParsed: false,
+        });
+        console.log(`    ✓ URL recorded (not a key document)`);
+        continue;
+      }
+
+      // 핵심 문서임 - Storage에 저장하고 파싱
+      const uploadResult = await uploadFile(
+        fileBuffer,
+        projectId,
+        finalFileName,
+        detectedType as FileType
+      );
+
+      if (!uploadResult.success || !uploadResult.storagePath) {
+        console.log(`    ✗ Upload failed: ${uploadResult.error}`);
+        attachments.push({
+          fileName: finalFileName,
+          fileType: detectedType as FileType,
+          fileSize: fileBuffer.length,
+          storagePath: '',
+          sourceUrl: url,
+          shouldParse: true,
+          isParsed: false,
+          parseError: `Upload failed: ${uploadResult.error}`,
+        });
+        continue;
+      }
+
+      console.log(`    ✓ Stored: ${uploadResult.storagePath}`);
+
+      // 텍스트 추출
+      let parsedContent: string | undefined;
+      let parseError: string | undefined;
+      let isParsed = false;
+
+      try {
+        const text = await extractFileText(fileBuffer);
+        if (text && text.length > 0) {
+          parsedContent = text;
+          isParsed = true;
+          console.log(`    ✓ Parsed ${text.length} characters`);
+          if (!firstParsedText) firstParsedText = text;
+        } else {
+          parseError = 'No text extracted';
+          console.log(`    ⚠ No text extracted`);
+        }
+      } catch (error) {
+        parseError = error instanceof Error ? error.message : 'Unknown parsing error';
+        console.log(`    ✗ Parse error: ${parseError}`);
+      }
+
+      attachments.push({
+        fileName: finalFileName,
+        fileType: detectedType as FileType,
+        fileSize: fileBuffer.length,
+        storagePath: uploadResult.storagePath,
+        sourceUrl: url,
+        shouldParse: true,
+        isParsed,
+        parsedContent,
+        parseError,
+      });
+      continue;
+    }
+
+    // URL에서 파일 타입을 알 수 있는 경우 - 기존 로직
+    console.log(`    → Type: ${fileType}, Storage: ${preliminaryShouldParse ? 'YES (핵심문서)' : 'NO (URL만 저장)'}`);
 
     // ===== 비파싱 대상: URL만 저장 (Storage에 저장하지 않음) =====
-    if (!shouldParse) {
+    if (!preliminaryShouldParse) {
       attachments.push({
         fileName: urlFileName,
         fileType: fileType as FileType,
