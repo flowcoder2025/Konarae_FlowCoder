@@ -273,7 +273,8 @@ model SupportProject {
   // Amount
   amountMin         BigInt?
   amountMax         BigInt?
-  amountDescription String?
+  fundingSummary    String?  // 간결한 지원금액 요약 (예: "최대 400만원")
+  amountDescription String?  // 상세 지원금액 설명
 
   // Timeline
   startDate   DateTime?

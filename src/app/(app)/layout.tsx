@@ -30,7 +30,7 @@ export default async function AppLayout({
           image: session.user.image,
         }}
       />
-      <main className="flex-1">{children}</main>
+      <main className="flex-1 px-4 md:px-6 lg:px-8">{children}</main>
     </div>
   );
 }

@@ -252,7 +252,7 @@ export function calculateAmountScore(
   }
 
   const revenue = Number(companyRevenue);
-  const min = projectAmountMin ? Number(projectAmountMin) : 0;
+  const _min = projectAmountMin ? Number(projectAmountMin) : 0;
   const max = projectAmountMax ? Number(projectAmountMax) : Infinity;
 
   // Check if company can benefit from this amount

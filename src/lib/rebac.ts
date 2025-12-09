@@ -71,6 +71,9 @@ export async function revoke<N extends Namespace>(
 
 /**
  * Check if user has permission (with inheritance)
+ *
+ * Permission inheritance: owner > admin > member > viewer
+ * If user has 'owner' relation, they automatically have all lower permissions.
  */
 export async function check<N extends Namespace>(
   userId: string,
@@ -79,15 +82,26 @@ export async function check<N extends Namespace>(
   requiredRelation: Relation<N>
 ): Promise<boolean> {
   const permissions = PERMISSIONS[namespace];
-  const inherited = (permissions[requiredRelation] || []) as readonly string[];
-  const allowedRelations = [requiredRelation as string, ...inherited];
+
+  // Find all roles that include the required permission
+  // e.g., if requiredRelation is "viewer", allowedRelations includes ["viewer", "member", "admin", "owner"]
+  const allowedRelations: string[] = [];
+  for (const [role, inherits] of Object.entries(permissions)) {
+    // Role itself matches OR role inherits the required relation
+    if (
+      role === (requiredRelation as string) ||
+      (inherits as string[]).includes(requiredRelation as string)
+    ) {
+      allowedRelations.push(role);
+    }
+  }
 
   const count = await prisma.relationTuple.count({
     where: {
       namespace,
       objectId,
       relation: {
-        in: allowedRelations as string[],
+        in: allowedRelations,
       },
       subjectType: "user",
       subjectId: userId,
@@ -113,8 +127,16 @@ export async function list<N extends Namespace>(
 
   if (relation) {
     const permissions = PERMISSIONS[namespace];
-    const inherited = (permissions[relation] || []) as readonly string[];
-    const allowedRelations = [relation as string, ...inherited];
+    // Find all roles that include the required permission
+    const allowedRelations: string[] = [];
+    for (const [role, inherits] of Object.entries(permissions)) {
+      if (
+        role === (relation as string) ||
+        (inherits as string[]).includes(relation as string)
+      ) {
+        allowedRelations.push(role);
+      }
+    }
     where.relation = { in: allowedRelations };
   }
 

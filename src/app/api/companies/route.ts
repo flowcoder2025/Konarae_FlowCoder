@@ -19,9 +19,14 @@ const createCompanySchema = z.object({
   zipcode: z.string().optional(),
   fax: z.string().optional(),
   website: z.string().optional(),
+  // 사업 정보 (매칭용)
   businessCategory: z.string().optional(),
   mainBusiness: z.string().optional(),
   businessItems: z.array(z.string()).optional(),
+  // 기업 소개
+  introduction: z.string().optional(),
+  vision: z.string().optional(),
+  mission: z.string().optional(),
 });
 
 /**

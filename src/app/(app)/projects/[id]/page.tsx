@@ -108,7 +108,7 @@ export default async function ProjectDetailPage({
                   ? `${formatAmount(project.amountMin)} ~ ${formatAmount(
                       project.amountMax
                     )}`
-                  : project.amountDescription || "미정"}
+                  : project.fundingSummary || "미정"}
               </dd>
             </div>
             <div>
@@ -149,6 +149,33 @@ export default async function ProjectDetailPage({
             <div className="prose max-w-none">
               <p className="whitespace-pre-wrap">{project.description}</p>
             </div>
+          </Card>
+        )}
+
+        {/* 지원 금액 상세 */}
+        {(project.amountMin || project.amountMax || project.amountDescription) && (
+          <Card className="p-6">
+            <h2 className="font-semibold mb-4">지원 금액 상세</h2>
+            <dl className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {project.amountMin && (
+                <div>
+                  <dt className="text-sm text-muted-foreground mb-1">최소 지원 금액</dt>
+                  <dd className="font-medium text-lg">{formatAmount(project.amountMin)}</dd>
+                </div>
+              )}
+              {project.amountMax && (
+                <div>
+                  <dt className="text-sm text-muted-foreground mb-1">최대 지원 금액</dt>
+                  <dd className="font-medium text-lg">{formatAmount(project.amountMax)}</dd>
+                </div>
+              )}
+              {project.amountDescription && (
+                <div className="md:col-span-2">
+                  <dt className="text-sm text-muted-foreground mb-1">상세 설명</dt>
+                  <dd className="whitespace-pre-wrap text-sm">{project.amountDescription}</dd>
+                </div>
+              )}
+            </dl>
           </Card>
         )}
 

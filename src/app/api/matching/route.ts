@@ -5,6 +5,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
 import { checkCompanyPermission } from "@/lib/rebac";
 import { executeMatching, storeMatchingResults } from "@/lib/matching";
 import { sendMatchingResultNotification } from "@/lib/notifications";
@@ -66,11 +67,30 @@ export async function POST(req: NextRequest) {
     });
 
     // Store results if requested
+    let savedResultIds: Record<string, string> = {};
     if (validatedData.saveResults) {
       await storeMatchingResults(
         session.user.id,
         validatedData.companyId,
         results
+      );
+
+      // Query saved results to get their IDs
+      const savedResults = await prisma.matchingResult.findMany({
+        where: {
+          userId: session.user.id,
+          companyId: validatedData.companyId,
+        },
+        select: {
+          id: true,
+          projectId: true,
+        },
+      });
+
+      // Create a map of projectId -> resultId
+      savedResultIds = savedResults.reduce(
+        (acc, r) => ({ ...acc, [r.projectId]: r.id }),
+        {} as Record<string, string>
       );
 
       // Send notification if matches found
@@ -84,9 +104,15 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Add result IDs to the response
+    const resultsWithIds = results.map((result) => ({
+      ...result,
+      matchingResultId: savedResultIds[result.projectId] || null,
+    }));
+
     return NextResponse.json({
       success: true,
-      results,
+      results: resultsWithIds,
       totalMatches: results.length,
       highConfidence: results.filter((r) => r.confidence === "high").length,
       mediumConfidence: results.filter((r) => r.confidence === "medium")

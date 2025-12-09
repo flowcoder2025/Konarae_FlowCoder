@@ -8,9 +8,9 @@ import { google } from "@ai-sdk/google";
 import { hybridSearch } from "./rag";
 import { prisma } from "./prisma";
 
-// Token limits (PRD 12.6)
-const CONTEXT_TOKEN_LIMIT = 8000;
-const CONTEXT_ALLOCATION = {
+// Token limits (PRD 12.6) - Reserved for future optimization
+const _CONTEXT_TOKEN_LIMIT = 8000;
+const _CONTEXT_ALLOCATION = {
   project: 0.4, // 40%
   company: 0.35, // 35%
   references: 0.25, // 25%

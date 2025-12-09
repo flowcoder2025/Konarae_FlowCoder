@@ -99,9 +99,9 @@ class Logger {
     }
   }
 
-  private sendToErrorTracking(entry: LogEntry) {
+  private sendToErrorTracking(_entry: LogEntry) {
     // TODO: Integrate with error tracking service (Sentry, LogRocket, etc.)
-    // Example: Sentry.captureException(entry.error);
+    // Example: Sentry.captureException(_entry.error);
   }
 }
 

@@ -11,7 +11,6 @@ import {
   uploadFile,
   getFileTypeFromName,
   shouldParseFile,
-  getParsingPriority,
   sortByParsingPriority,
   type FileType,
 } from "@/lib/supabase-storage";
@@ -494,7 +493,7 @@ function extractTextFromSection(section: any): string {
         }
       }
     }
-  } catch (error) {
+  } catch {
     // Silently ignore parsing errors
   }
 
@@ -617,6 +616,7 @@ async function analyzeWithGemini(text: string): Promise<{
   eligibility?: string;
   applicationProcess?: string;
   evaluationCriteria?: string;
+  fundingSummary?: string;
   amountDescription?: string;
   deadline?: string;
   startDate?: string;
@@ -642,10 +642,11 @@ async function analyzeWithGemini(text: string): Promise<{
 2. eligibility: 신청 자격 요건 (핵심만, 있는 경우)
 3. applicationProcess: 신청 방법 및 절차 (간단히, 있는 경우)
 4. evaluationCriteria: 평가 기준 (있는 경우)
-5. amountDescription: 지원 금액 상세 설명 (예: "최대 5천만원", "업체당 500만원 이내" 등)
-6. deadline: 신청 마감일 (YYYY-MM-DD 형식, 있는 경우)
-7. startDate: 사업/접수 시작일 (YYYY-MM-DD 형식, 있는 경우)
-8. endDate: 사업/접수 종료일 (YYYY-MM-DD 형식, 있는 경우)
+5. fundingSummary: 지원 금액을 한 줄로 간결하게 요약 (예: "최대 400만원", "업체당 500만원 이내", "최대 1억원 (전액 무상)", "70% 보조금 지원"). 반드시 10~30자 이내로 핵심만 작성.
+6. amountDescription: 지원 금액에 대한 상세 설명. 세부 항목별 금액, 지원 조건, 자부담 비율 등 상세 내용을 포함.
+7. deadline: 신청 마감일 (YYYY-MM-DD 형식, 있는 경우)
+8. startDate: 사업/접수 시작일 (YYYY-MM-DD 형식, 있는 경우)
+9. endDate: 사업/접수 종료일 (YYYY-MM-DD 형식, 있는 경우)
 
 응답은 반드시 다음 JSON 형식으로만 작성해주세요:
 {
@@ -653,6 +654,7 @@ async function analyzeWithGemini(text: string): Promise<{
   "eligibility": "...",
   "applicationProcess": "...",
   "evaluationCriteria": "...",
+  "fundingSummary": "...",
   "amountDescription": "...",
   "deadline": "2025-12-31",
   "startDate": "2025-01-01",
@@ -731,6 +733,7 @@ async function processProjectFiles(
     eligibility?: string;
     applicationProcess?: string;
     evaluationCriteria?: string;
+    fundingSummary?: string;
     amountDescription?: string;
     deadline?: string;
     startDate?: string;
@@ -743,6 +746,7 @@ async function processProjectFiles(
     eligibility?: string;
     applicationProcess?: string;
     evaluationCriteria?: string;
+    fundingSummary?: string;
     amountDescription?: string;
     deadline?: string;
     startDate?: string;
@@ -998,8 +1002,70 @@ async function processProjectFiles(
 }
 
 /**
+ * Crawler configuration
+ * 성수기 시즌(100+ 지원사업/일) 대응을 위한 설정
+ */
+const CRAWLER_CONFIG = {
+  // 페이지네이션 설정
+  MAX_PAGES: 10,           // 최대 페이지 수 (15개/페이지 × 10 = 150개)
+  PAGE_SIZE: 15,           // 기업마당 기본 페이지 크기
+  MAX_PROJECTS: 150,       // 최대 수집 프로젝트 수
+
+  // 시간 필터 설정
+  HOURS_FILTER: 28,        // N시간 이내 등록된 공고만 수집
+
+  // 요청 간격 (rate limiting)
+  PAGE_DELAY_MS: 500,      // 페이지 간 딜레이
+  DETAIL_DELAY_MS: 500,    // 상세 페이지 요청 간 딜레이
+  FILE_DELAY_MS: 2000,     // 파일 처리 간 딜레이
+};
+
+/**
+ * Check if upload date is within time filter
+ * 기업마당 등록일 형식: "2025-12-05" (YYYY-MM-DD)
+ */
+function isWithinTimeFilter(dateStr: string, hoursFilter: number): boolean {
+  try {
+    // 날짜 파싱
+    const uploadDate = new Date(dateStr);
+    if (isNaN(uploadDate.getTime())) {
+      console.log(`  ⚠ Invalid date format: ${dateStr}, including anyway`);
+      return true; // 파싱 실패시 포함
+    }
+
+    // 현재 시간과 비교
+    const now = new Date();
+    const diffHours = (now.getTime() - uploadDate.getTime()) / (1000 * 60 * 60);
+
+    return diffHours <= hoursFilter;
+  } catch {
+    return true; // 오류 시 포함
+  }
+}
+
+/**
+ * Build paginated URL for 기업마당
+ * 기업마당 URL 패턴: ?pageIndex=N 또는 ?cpage=N
+ */
+function buildPaginatedUrl(baseUrl: string, pageIndex: number): string {
+  const url = new URL(baseUrl);
+
+  // 기존 페이지 파라미터 제거
+  url.searchParams.delete('pageIndex');
+  url.searchParams.delete('cpage');
+  url.searchParams.delete('page');
+
+  // 새 페이지 파라미터 추가 (기업마당은 pageIndex 사용)
+  url.searchParams.set('pageIndex', pageIndex.toString());
+
+  return url.toString();
+}
+
+/**
  * Actual crawling implementation
  * Supports both 'web' (HTML scraping) and 'api' (JSON response) types
+ *
+ * Enhanced: 페이지네이션 지원 + 28시간 이내 필터링
  */
 async function crawlAndParse(
   url: string,
@@ -1009,25 +1075,79 @@ async function crawlAndParse(
   const { load } = await import("cheerio");
 
   try {
-    // Fetch data
-    const response = await axios.get(url, {
-      timeout: 30000,
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (compatible; KonaraeBot/1.0; +https://konarae.com)",
-      },
-    });
-
-    let projects: CrawledProject[] = [];
+    let allProjects: CrawledProject[] = [];
 
     if (type === "api") {
-      // API response parsing (JSON)
-      projects = parseApiResponse(response.data, url);
+      // API response parsing (JSON) - 단일 요청
+      const response = await axios.get(url, {
+        timeout: 30000,
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (compatible; KonaraeBot/1.0; +https://konarae.com)",
+        },
+      });
+      allProjects = parseApiResponse(response.data, url);
     } else {
-      // Web scraping (HTML)
-      const $ = load(response.data);
-      projects = parseHtmlContent($, url);
+      // Web scraping (HTML) - 페이지네이션 지원
+      console.log(`\n=== Step 1: Crawling with pagination (max ${CRAWLER_CONFIG.MAX_PAGES} pages) ===`);
+
+      let pageIndex = 1;
+      let consecutiveEmptyPages = 0;
+
+      while (pageIndex <= CRAWLER_CONFIG.MAX_PAGES && allProjects.length < CRAWLER_CONFIG.MAX_PROJECTS) {
+        const pageUrl = buildPaginatedUrl(url, pageIndex);
+        console.log(`\n[Page ${pageIndex}/${CRAWLER_CONFIG.MAX_PAGES}] ${pageUrl}`);
+
+        try {
+          const response = await axios.get(pageUrl, {
+            timeout: 30000,
+            headers: {
+              "User-Agent":
+                "Mozilla/5.0 (compatible; KonaraeBot/1.0; +https://konarae.com)",
+            },
+          });
+
+          const $ = load(response.data);
+          const pageProjects = parseHtmlContentWithDateFilter($, url, CRAWLER_CONFIG.HOURS_FILTER);
+
+          console.log(`  → Found ${pageProjects.length} projects (within ${CRAWLER_CONFIG.HOURS_FILTER}h filter)`);
+
+          if (pageProjects.length === 0) {
+            consecutiveEmptyPages++;
+            console.log(`  ⚠ Empty page (${consecutiveEmptyPages} consecutive)`);
+
+            // 2페이지 연속 빈 페이지면 중단 (시간 필터로 인한 자연스러운 종료)
+            if (consecutiveEmptyPages >= 2) {
+              console.log(`  → Stopping: No more recent projects`);
+              break;
+            }
+          } else {
+            consecutiveEmptyPages = 0;
+            allProjects.push(...pageProjects);
+          }
+
+          // 최대 수집 개수 도달 시 중단
+          if (allProjects.length >= CRAWLER_CONFIG.MAX_PROJECTS) {
+            console.log(`  → Reached max projects limit (${CRAWLER_CONFIG.MAX_PROJECTS})`);
+            break;
+          }
+
+          pageIndex++;
+
+          // Rate limiting
+          if (pageIndex <= CRAWLER_CONFIG.MAX_PAGES) {
+            await new Promise(resolve => setTimeout(resolve, CRAWLER_CONFIG.PAGE_DELAY_MS));
+          }
+        } catch (pageError) {
+          console.error(`  ✗ Error fetching page ${pageIndex}:`, pageError);
+          break;
+        }
+      }
+
+      console.log(`\n=== Pagination complete: ${allProjects.length} projects collected ===`);
     }
+
+    const projects = allProjects;
 
     // Step 2: Fetch detail pages and extract file URLs
     console.log(`\n=== Step 2: Fetching detail pages for ${projects.length} projects ===`);
@@ -1082,21 +1202,15 @@ async function crawlAndParse(
 }
 
 /**
- * Parse HTML content (기업마당, K-Startup 등)
+ * Parse HTML content with date filtering (기업마당, K-Startup 등)
+ * Enhanced: 28시간 이내 등록된 공고만 필터링
  */
-function parseHtmlContent(
+function parseHtmlContentWithDateFilter(
   $: ReturnType<typeof import("cheerio")["load"]>,
-  sourceUrl: string
+  sourceUrl: string,
+  hoursFilter: number
 ): CrawledProject[] {
   const projects: CrawledProject[] = [];
-
-  // Debug: Log HTML structure
-  console.log("=== HTML Debug Info ===");
-  console.log("Page title:", $("title").text());
-  console.log("Total tables:", $("table").length);
-  console.log("Total tbody:", $("tbody").length);
-  console.log("Total tr:", $("tr").length);
-  console.log("Total divs with class:", $("div[class*='list'], div[class*='item'], div[class*='board']").length);
 
   // Try different selectors for 기업마당
   const selectors = [
@@ -1108,60 +1222,44 @@ function parseHtmlContent(
     "tr",
   ];
 
-  let foundRows = 0;
   for (const selector of selectors) {
     const rows = $(selector);
     if (rows.length > 0) {
-      console.log(`✓ Found ${rows.length} rows with selector: ${selector}`);
-      foundRows = rows.length;
-
       // Parse each row
       rows.each((idx, element) => {
-        if (idx === 0) {
-          // Skip header row if exists
-          const headerText = $(element).text().toLowerCase();
-          if (headerText.includes('번호') || headerText.includes('제목') || headerText.includes('구분')) {
-            console.log("Skipping header row");
-            return;
-          }
+        // Skip header row
+        const headerText = $(element).text().toLowerCase();
+        if (headerText.includes('번호') && headerText.includes('제목')) {
+          return;
         }
 
         const $row = $(element);
-
-        // Debug first few rows
-        if (idx < 3) {
-          console.log(`\nRow ${idx}:`);
-          console.log("HTML:", $row.html());
-          console.log("Cells:", $row.find("td").length);
-          $row.find("td").each((cellIdx, cell) => {
-            console.log(`  Cell ${cellIdx}:`, $(cell).text().trim().substring(0, 50));
-          });
-        }
-
-        // Extract data from cells
         const cells = $row.find("td");
-        if (cells.length < 2) return; // Skip if not enough cells
+        if (cells.length < 2) return;
 
-        // Try to extract project info from table cells
         let name = "";
         let organization = "";
         let category = "";
+        let region = "";
         let detailUrl = "";
+        let uploadDate = ""; // 등록일
 
-        // Common patterns for government support sites:
-        // [번호, 제목, 기관, 분류, 기간, ...]
+        // 기업마당 테이블 구조: [번호, 분야, 제목, 기간, 지역, 기관유형, 등록일, 조회수]
         cells.each((cellIdx, cell) => {
           const text = $(cell).text().trim();
 
-          // Title is usually in a link or longest cell
-          if ($(cell).find("a").length > 0 && !name) {
+          // Cell 1: 카테고리 (분야)
+          if (cellIdx === 1 && text.length >= 2 && text.length < 20) {
+            category = text;
+          }
+
+          // Cell 2: 제목 (링크 포함)
+          if (cellIdx === 2 && $(cell).find("a").length > 0) {
             const $link = $(cell).find("a").first();
             name = $link.text().trim();
 
-            // Extract detail page URL
             const href = $link.attr("href");
             if (href) {
-              // Handle relative URLs
               if (href.startsWith("http")) {
                 detailUrl = href;
               } else if (href.startsWith("/")) {
@@ -1175,23 +1273,28 @@ function parseHtmlContent(
             }
           }
 
-          // Category/organization detection
-          if (text.length > 2 && text.length < 30) {
-            if (!category && (text.includes("지원") || text.includes("사업") || text.includes("공모"))) {
-              category = text;
-            }
-            if (!organization && (text.includes("부") || text.includes("청") || text.includes("원") || text.includes("공단"))) {
-              organization = text;
+          // Cell 4: 지역
+          if (cellIdx === 4 && text.length >= 2 && text.length < 20) {
+            region = text;
+          }
+
+          // Cell 5: 기관유형/기관명
+          if (cellIdx === 5 && text.length >= 2) {
+            organization = text;
+          }
+
+          // Cell 6: 등록일 (YYYY-MM-DD 형식)
+          if (cellIdx === 6) {
+            const dateMatch = text.match(/\d{4}-\d{2}-\d{2}/);
+            if (dateMatch) {
+              uploadDate = dateMatch[0];
             }
           }
         });
 
-        // If name is still empty, try the second or third cell
-        if (!name && cells.length >= 2) {
-          name = $(cells[1]).text().trim();
-          if (!name || name.length < 3) {
-            name = $(cells[2]).text().trim();
-          }
+        // 등록일 기반 필터링
+        if (uploadDate && !isWithinTimeFilter(uploadDate, hoursFilter)) {
+          return; // 시간 필터 밖이면 스킵
         }
 
         // Skip if no valid name
@@ -1202,9 +1305,9 @@ function parseHtmlContent(
         const project: CrawledProject = {
           name,
           organization: organization || "미분류",
-          category: category || "지원사업",
+          category: category || "기타",
           target: "중소기업",
-          region: "전국",
+          region: region || "전국",
           summary: name,
           sourceUrl,
           detailUrl: detailUrl || undefined,
@@ -1214,26 +1317,11 @@ function parseHtmlContent(
         projects.push(project);
       });
 
-      // If we found projects, stop trying other selectors
       if (projects.length > 0) {
         break;
       }
     }
   }
-
-  if (foundRows === 0) {
-    console.log("⚠️ No table rows found. Trying div-based structure...");
-
-    // Try div-based structure
-    $("div[class*='item'], div[class*='list'], article").each((idx, element) => {
-      if (idx < 5) {
-        console.log(`\nDiv structure ${idx}:`, $(element).attr("class"));
-        console.log("Content:", $(element).text().trim().substring(0, 100));
-      }
-    });
-  }
-
-  console.log(`=== Parsing complete: ${projects.length} projects found ===\n`);
 
   return projects;
 }
@@ -1296,7 +1384,7 @@ async function saveProjects(
           });
 
       // Prepare project data (exclude savedAttachments which is not in schema)
-      const { savedAttachments, attachmentUrls, ...projectData } = project;
+      const { savedAttachments: _savedAttachments, attachmentUrls, ...projectData } = project;
 
       let projectId: string;
 
@@ -1375,6 +1463,7 @@ async function saveProjects(
                 eligibility: aiAnalysis.eligibility || undefined,
                 applicationProcess: aiAnalysis.applicationProcess || undefined,
                 evaluationCriteria: aiAnalysis.evaluationCriteria || undefined,
+                fundingSummary: aiAnalysis.fundingSummary || undefined,
                 amountDescription: aiAnalysis.amountDescription || undefined,
                 deadline: parseDate(aiAnalysis.deadline),
                 startDate: parseDate(aiAnalysis.startDate),

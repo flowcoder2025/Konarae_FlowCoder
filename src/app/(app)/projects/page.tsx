@@ -2,6 +2,8 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { redirect } from "next/navigation";
 import { ProjectCard } from "@/components/projects/project-card";
+import { ProjectFilters } from "@/components/projects/project-filters";
+import { ProjectPagination } from "@/components/projects/project-pagination";
 
 interface ProjectsPageProps {
   searchParams: Promise<{
@@ -9,6 +11,7 @@ interface ProjectsPageProps {
     category?: string;
     region?: string;
     search?: string;
+    deadline?: string;
   }>;
 }
 
@@ -22,7 +25,7 @@ export default async function ProjectsPage({
 
   const params = await searchParams;
   const page = parseInt(params.page || "1");
-  const pageSize = 20;
+  const pageSize = 12;
   const skip = (page - 1) * pageSize;
 
   // Build where clause
@@ -47,12 +50,35 @@ export default async function ProjectsPage({
     ];
   }
 
-  const [projects, total] = await Promise.all([
+  // Handle deadline filter
+  if (params.deadline) {
+    if (params.deadline === "permanent") {
+      where.isPermanent = true;
+    } else {
+      const days = parseInt(params.deadline);
+      if (!isNaN(days)) {
+        const futureDate = new Date();
+        futureDate.setDate(futureDate.getDate() + days);
+        where.deadline = {
+          lte: futureDate,
+          gte: new Date(),
+        };
+        where.isPermanent = false;
+      }
+    }
+  }
+
+  // Get categories and regions for filters
+  const [projects, total, categories, regions] = await Promise.all([
     prisma.supportProject.findMany({
       where,
       skip,
       take: pageSize,
-      orderBy: [{ deadline: "asc" }, { createdAt: "desc" }],
+      orderBy: [
+        { isPermanent: "asc" }, // 마감있는것 먼저
+        { deadline: "asc" },
+        { createdAt: "desc" },
+      ],
       select: {
         id: true,
         name: true,
@@ -63,15 +89,26 @@ export default async function ProjectsPage({
         region: true,
         amountMin: true,
         amountMax: true,
-        amountDescription: true,
+        fundingSummary: true,
         deadline: true,
         isPermanent: true,
         summary: true,
         viewCount: true,
-        bookmarkCount: true,
       },
     }),
     prisma.supportProject.count({ where }),
+    prisma.supportProject.groupBy({
+      by: ["category"],
+      where: { deletedAt: null, status: "active" },
+      _count: true,
+      orderBy: { _count: { category: "desc" } },
+    }),
+    prisma.supportProject.groupBy({
+      by: ["region"],
+      where: { deletedAt: null, status: "active" },
+      _count: true,
+      orderBy: { _count: { region: "desc" } },
+    }),
   ]);
 
   const totalPages = Math.ceil(total / pageSize);
@@ -87,19 +124,30 @@ export default async function ProjectsPage({
       </div>
 
       {/* Filters */}
-      <div className="mb-6">
-        <div className="flex items-center gap-4">
-          {/* TODO: Add filter components (select, search input) */}
-          <p className="text-sm text-muted-foreground">
-            총 {total}개의 지원사업
-          </p>
-        </div>
-      </div>
+      <ProjectFilters
+        categories={categories.map((c) => ({
+          value: c.category,
+          count: c._count,
+        }))}
+        regions={regions.map((r) => ({ value: r.region, count: r._count }))}
+        currentCategory={params.category}
+        currentRegion={params.region}
+        currentSearch={params.search}
+        currentDeadline={params.deadline}
+        total={total}
+      />
 
       {/* Projects Grid */}
       {projects.length === 0 ? (
         <div className="text-center py-12">
-          <p className="text-muted-foreground">지원사업이 없습니다</p>
+          <p className="text-muted-foreground">
+            {params.search ||
+            params.category ||
+            params.region ||
+            params.deadline
+              ? "검색 조건에 맞는 지원사업이 없습니다"
+              : "지원사업이 없습니다"}
+          </p>
         </div>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -110,14 +158,12 @@ export default async function ProjectsPage({
       )}
 
       {/* Pagination */}
-      {totalPages > 1 && (
-        <div className="mt-8 flex items-center justify-center gap-2">
-          {/* TODO: Add pagination component */}
-          <p className="text-sm text-muted-foreground">
-            Page {page} of {totalPages}
-          </p>
-        </div>
-      )}
+      <ProjectPagination
+        currentPage={page}
+        totalPages={totalPages}
+        total={total}
+        pageSize={pageSize}
+      />
     </div>
   );
 }
