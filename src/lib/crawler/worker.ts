@@ -407,84 +407,245 @@ interface DownloadResult {
 }
 
 /**
+ * Check if a string contains valid Korean characters
+ */
+function hasValidKorean(str: string): boolean {
+  // Check for Korean syllables (가-힣)
+  return /[\uAC00-\uD7AF]/.test(str) && !str.includes('�');
+}
+
+/**
+ * Check if filename appears corrupted
+ * Detects common encoding corruption patterns
+ */
+function isCorruptedFileName(fileName: string): boolean {
+  // Pattern A: Separated Korean jamo (ㅊ, ㅋ, ㅌ appearing frequently)
+  // These characters appear when UTF-8 bytes are misinterpreted as EUC-KR
+  const jamoPattern = /[\u3131-\u3163\u314F-\u3163]{2,}/;
+
+  // Pattern B: Latin-1 UTF-8 corruption (Ã, Â appearing together)
+  const latin1Pattern = /[ÃÂ]{2,}|Ã[\x80-\xBF]/;
+
+  // Pattern C: Replacement character
+  const replacementPattern = /\uFFFD/;
+
+  // Pattern D: Chinese-looking characters that shouldn't be in Korean filenames
+  // (Often result of wrong encoding interpretation)
+  const suspiciousChinesePattern = /[\u4E00-\u9FFF]{3,}/;
+
+  return jamoPattern.test(fileName) ||
+         latin1Pattern.test(fileName) ||
+         replacementPattern.test(fileName) ||
+         suspiciousChinesePattern.test(fileName);
+}
+
+/**
+ * Attempt to repair a corrupted filename
+ * Tries multiple decoding strategies
+ */
+async function repairCorruptedFileName(fileName: string): Promise<string> {
+  const iconv = (await import('iconv-lite')).default;
+
+  // Strategy 1: Latin-1 → UTF-8 (most common for Ã patterns)
+  try {
+    let isLatin1Range = true;
+    for (let i = 0; i < fileName.length; i++) {
+      if (fileName.charCodeAt(i) > 255) {
+        isLatin1Range = false;
+        break;
+      }
+    }
+
+    if (isLatin1Range) {
+      const bytes = Buffer.from(fileName, 'latin1');
+      const utf8Decoded = bytes.toString('utf-8');
+      if (hasValidKorean(utf8Decoded) && !isCorruptedFileName(utf8Decoded)) {
+        return utf8Decoded;
+      }
+    }
+  } catch {
+    // Continue to next strategy
+  }
+
+  // Strategy 2: Try to recover from EUC-KR misinterpretation
+  // When UTF-8 bytes are read as EUC-KR, we need to reverse it
+  try {
+    // Encode back to EUC-KR bytes, then decode as UTF-8
+    const eucKrBytes = iconv.encode(fileName, 'euc-kr');
+    const utf8Decoded = eucKrBytes.toString('utf-8');
+    if (hasValidKorean(utf8Decoded) && !isCorruptedFileName(utf8Decoded)) {
+      return utf8Decoded;
+    }
+  } catch {
+    // Continue to next strategy
+  }
+
+  // Strategy 3: Double UTF-8 encoding recovery
+  try {
+    // First decode assuming it's UTF-8 bytes stored as Latin-1
+    let bytes: Buffer | null = null;
+    let allInRange = true;
+
+    for (let i = 0; i < fileName.length; i++) {
+      if (fileName.charCodeAt(i) > 255) {
+        allInRange = false;
+        break;
+      }
+    }
+
+    if (allInRange) {
+      bytes = Buffer.from(fileName, 'latin1');
+    } else {
+      // Try encoding as UTF-8 first
+      bytes = Buffer.from(fileName, 'utf-8');
+    }
+
+    if (bytes) {
+      // Try EUC-KR decode
+      const eucKrDecoded = iconv.decode(bytes, 'euc-kr');
+      if (hasValidKorean(eucKrDecoded) && !isCorruptedFileName(eucKrDecoded)) {
+        return eucKrDecoded;
+      }
+    }
+  } catch {
+    // Continue
+  }
+
+  // Strategy 4: CP949 (extended EUC-KR)
+  try {
+    let allInRange = true;
+    for (let i = 0; i < fileName.length; i++) {
+      if (fileName.charCodeAt(i) > 255) {
+        allInRange = false;
+        break;
+      }
+    }
+
+    if (allInRange) {
+      const bytes = Buffer.from(fileName, 'latin1');
+      const cp949Decoded = iconv.decode(bytes, 'cp949');
+      if (hasValidKorean(cp949Decoded) && !isCorruptedFileName(cp949Decoded)) {
+        return cp949Decoded;
+      }
+    }
+  } catch {
+    // Continue
+  }
+
+  // No repair successful, return original
+  return fileName;
+}
+
+/**
  * Extract filename from Content-Disposition header
- * Handles ASCII, UTF-8, and EUC-KR encoded filenames (common in Korean government sites)
+ * Handles ASCII, UTF-8, EUC-KR, and various encoding issues
+ * common in Korean government sites
  */
 async function extractFileNameFromHeader(contentDisposition: string | undefined): Promise<string | null> {
   if (!contentDisposition) return null;
 
-  // Try filename*=UTF-8''encoded_name (RFC 5987)
+  const iconv = (await import('iconv-lite')).default;
+
+  // 1. Try filename*=UTF-8''encoded_name (RFC 5987) - most reliable
   const utf8Match = contentDisposition.match(/filename\*=(?:UTF-8|utf-8)''([^;\s]+)/i);
   if (utf8Match) {
     try {
-      return decodeURIComponent(utf8Match[1]);
+      const decoded = decodeURIComponent(utf8Match[1]);
+      if (hasValidKorean(decoded) || /^[\x20-\x7E]+$/.test(decoded)) {
+        return decoded;
+      }
     } catch {
       // Fall through to other methods
     }
   }
 
-  // Try filename="name" or filename=name
+  // 2. Try filename="name" or filename=name
   const filenameMatch = contentDisposition.match(/filename[^;=\n]*=["']?([^"';\n]+)["']?/i);
-  if (filenameMatch) {
-    const fileName = filenameMatch[1].trim();
+  if (!filenameMatch) return null;
 
-    // Handle various encodings
-    // 1. URL-encoded (e.g., %ED%95%9C%EA%B8%80)
-    try {
-      const decoded = decodeURIComponent(fileName);
-      if (decoded !== fileName && /[\uAC00-\uD7AF]/.test(decoded)) {
-        return decoded;
-      }
-    } catch {
-      // Not URL encoded
+  let fileName = filenameMatch[1].trim();
+
+  // Remove surrounding quotes if present
+  if ((fileName.startsWith('"') && fileName.endsWith('"')) ||
+      (fileName.startsWith("'") && fileName.endsWith("'"))) {
+    fileName = fileName.slice(1, -1);
+  }
+
+  // 3. Try URL decoding first
+  try {
+    const urlDecoded = decodeURIComponent(fileName);
+    if (urlDecoded !== fileName && hasValidKorean(urlDecoded)) {
+      return urlDecoded;
     }
+  } catch {
+    // Not URL encoded
+  }
 
-    // Check if all characters are in Latin-1 range (0-255)
-    // This indicates the filename bytes were interpreted as Latin-1
-    let isLatin1 = true;
-    for (let i = 0; i < fileName.length; i++) {
-      if (fileName.charCodeAt(i) > 255) {
-        isLatin1 = false;
-        break;
-      }
-    }
-
-    if (isLatin1) {
-      // Convert string to byte array (Latin-1 code points = original bytes)
-      const bytes = Buffer.from(fileName, 'latin1');
-
-      // 2. Try EUC-KR decoding first (common in Korean government sites like K-Startup)
-      try {
-        const iconv = (await import('iconv-lite')).default;
-        const eucKrDecoded = iconv.decode(bytes, 'euc-kr');
-
-        // Check if it looks like valid Korean
-        if (/[\uAC00-\uD7AF]/.test(eucKrDecoded) && !eucKrDecoded.includes('�')) {
-          return eucKrDecoded;
-        }
-      } catch {
-        // EUC-KR decoding failed
-      }
-
-      // 3. Try UTF-8 decoding (double-encoded UTF-8 case)
-      try {
-        const utf8Decoded = bytes.toString('utf-8');
-
-        // Check if it looks like valid Korean
-        if (/[\uAC00-\uD7AF]/.test(utf8Decoded) && !utf8Decoded.includes('�')) {
-          return utf8Decoded;
-        }
-      } catch {
-        // UTF-8 decoding failed
-      }
-    }
-
-    // Return original if no decoding worked
+  // 4. Check if it's already valid Korean
+  if (hasValidKorean(fileName) && !isCorruptedFileName(fileName)) {
     return fileName;
   }
 
-  return null;
+  // 5. Check if all characters are in Latin-1 range (0-255)
+  let isLatin1Range = true;
+  for (let i = 0; i < fileName.length; i++) {
+    if (fileName.charCodeAt(i) > 255) {
+      isLatin1Range = false;
+      break;
+    }
+  }
+
+  if (isLatin1Range) {
+    // Convert string to byte array (Latin-1 code points = original bytes)
+    const bytes = Buffer.from(fileName, 'latin1');
+
+    // 5a. Try UTF-8 decoding first (most common for modern servers)
+    try {
+      const utf8Decoded = bytes.toString('utf-8');
+      if (hasValidKorean(utf8Decoded) && !isCorruptedFileName(utf8Decoded)) {
+        return utf8Decoded;
+      }
+    } catch {
+      // UTF-8 decoding failed
+    }
+
+    // 5b. Try EUC-KR decoding (common in older Korean government sites)
+    try {
+      const eucKrDecoded = iconv.decode(bytes, 'euc-kr');
+      if (hasValidKorean(eucKrDecoded) && !isCorruptedFileName(eucKrDecoded)) {
+        return eucKrDecoded;
+      }
+    } catch {
+      // EUC-KR decoding failed
+    }
+
+    // 5c. Try CP949 (Microsoft extended EUC-KR)
+    try {
+      const cp949Decoded = iconv.decode(bytes, 'cp949');
+      if (hasValidKorean(cp949Decoded) && !isCorruptedFileName(cp949Decoded)) {
+        return cp949Decoded;
+      }
+    } catch {
+      // CP949 decoding failed
+    }
+  }
+
+  // 6. If filename appears corrupted, try to repair it
+  if (isCorruptedFileName(fileName)) {
+    const repaired = await repairCorruptedFileName(fileName);
+    if (repaired !== fileName && hasValidKorean(repaired)) {
+      return repaired;
+    }
+  }
+
+  // 7. Return original if no decoding worked
+  return fileName;
 }
+
+/**
+ * Export repair function for use in admin scripts
+ */
+export { repairCorruptedFileName, isCorruptedFileName, hasValidKorean };
 
 /**
  * Step 3: Download file from URL
