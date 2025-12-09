@@ -157,14 +157,58 @@ interface SavedAttachment {
 /**
  * Extract file URLs from detail page
  * Finds HWP, HWPX, PDF attachment links
- * Specifically handles 기업마당 (bizinfo.go.kr) HTML structure
+ * Supports both 기업마당 (bizinfo.go.kr) and K-Startup (k-startup.go.kr)
  */
 function extractFileUrls(
-  $: ReturnType<typeof import("cheerio")["load"]>
+  $: ReturnType<typeof import("cheerio")["load"]>,
+  detailUrl?: string
 ): string[] {
   const fileUrls: string[] = [];
 
-  // 기업마당 specific pattern: Find "첨부파일" or "본문출력파일" sections
+  // Detect site type from URL
+  const isKStartup = detailUrl?.includes('k-startup.go.kr') || false;
+
+  // ===== K-Startup specific pattern =====
+  // HTML 구조:
+  // <div class="board_file">
+  //   <a class="file_bg" title="[첨부파일] 파일명.pdf">...</a>
+  //   <a href="/afile/fileDownload/gT8Ln" class="btn_down">
+  // </div>
+  if (isKStartup) {
+    console.log(`    → Using K-Startup file extractor`);
+
+    // Method 1: Find .btn_down links (download buttons)
+    $('a.btn_down').each((_, element) => {
+      const href = $(element).attr('href');
+      if (href && !fileUrls.includes(href)) {
+        fileUrls.push(href);
+      }
+    });
+
+    // Method 2: Find links in board_file container
+    $('.board_file a[href*="/afile/"]').each((_, element) => {
+      const href = $(element).attr('href');
+      if (href && !fileUrls.includes(href)) {
+        fileUrls.push(href);
+      }
+    });
+
+    // Method 3: Find any /afile/fileDownload/ links
+    $('a[href*="/afile/fileDownload/"]').each((_, element) => {
+      const href = $(element).attr('href');
+      if (href && !fileUrls.includes(href)) {
+        fileUrls.push(href);
+      }
+    });
+
+    if (fileUrls.length > 0) {
+      console.log(`    → Found ${fileUrls.length} K-Startup file(s)`);
+      return fileUrls;
+    }
+  }
+
+  // ===== 기업마당 specific pattern =====
+  // Find "첨부파일" or "본문출력파일" sections
   $('h3').each((_, heading) => {
     const headingText = $(heading).text().trim();
 
@@ -249,7 +293,7 @@ async function fetchDetailPage(
     });
 
     const $ = load(response.data);
-    const fileUrls = extractFileUrls($);
+    const fileUrls = extractFileUrls($, detailUrl);
 
     // Convert relative URLs to absolute
     const absoluteUrls = fileUrls.map((url) => {
@@ -283,9 +327,9 @@ interface DownloadResult {
 
 /**
  * Extract filename from Content-Disposition header
- * Handles both ASCII and UTF-8 encoded filenames
+ * Handles ASCII, UTF-8, and EUC-KR encoded filenames (common in Korean government sites)
  */
-function extractFileNameFromHeader(contentDisposition: string | undefined): string | null {
+async function extractFileNameFromHeader(contentDisposition: string | undefined): Promise<string | null> {
   if (!contentDisposition) return null;
 
   // Try filename*=UTF-8''encoded_name (RFC 5987)
@@ -307,54 +351,54 @@ function extractFileNameFromHeader(contentDisposition: string | undefined): stri
     // 1. URL-encoded (e.g., %ED%95%9C%EA%B8%80)
     try {
       const decoded = decodeURIComponent(fileName);
-      if (decoded !== fileName) {
+      if (decoded !== fileName && /[\uAC00-\uD7AF]/.test(decoded)) {
         return decoded;
       }
     } catch {
       // Not URL encoded
     }
 
-    // 2. Double-encoded UTF-8 (common issue with Korean government sites)
-    // Problem: Server sends UTF-8 bytes (EC A7 80 for "지")
-    //          Node.js HTTP parser interprets as Latin-1 → chars ì § \x80
-    //          Then encodes to UTF-8 for JS string → bytes C3 AC C2 A7 C2 80
-    // Solution: Decode twice - first to Latin-1 chars, then their code points as UTF-8 bytes
-    try {
-      // Check if all characters are in Latin-1 range (0-255)
-      let isLatin1 = true;
-      for (let i = 0; i < fileName.length; i++) {
-        if (fileName.charCodeAt(i) > 255) {
-          isLatin1 = false;
-          break;
-        }
+    // Check if all characters are in Latin-1 range (0-255)
+    // This indicates the filename bytes were interpreted as Latin-1
+    let isLatin1 = true;
+    for (let i = 0; i < fileName.length; i++) {
+      if (fileName.charCodeAt(i) > 255) {
+        isLatin1 = false;
+        break;
       }
-
-      if (isLatin1) {
-        // Step 1: Convert current string's char codes to bytes, decode as UTF-8
-        // This undoes the Node.js UTF-8 encoding of Latin-1 characters
-        const bytes1 = new Uint8Array(fileName.length);
-        for (let i = 0; i < fileName.length; i++) {
-          bytes1[i] = fileName.charCodeAt(i);
-        }
-        const intermediate = new TextDecoder('utf-8').decode(bytes1);
-
-        // Step 2: Now we have Latin-1 chars (their code points = original UTF-8 bytes)
-        // Take those code points as bytes and decode as UTF-8 again
-        const bytes2 = new Uint8Array(intermediate.length);
-        for (let i = 0; i < intermediate.length; i++) {
-          bytes2[i] = intermediate.charCodeAt(i);
-        }
-        const finalDecoded = new TextDecoder('utf-8').decode(bytes2);
-
-        // Check if it looks like valid Korean
-        if (/[\uAC00-\uD7AF]/.test(finalDecoded)) {
-          return finalDecoded;
-        }
-      }
-    } catch {
-      // Decoding failed
     }
 
+    if (isLatin1) {
+      // Convert string to byte array (Latin-1 code points = original bytes)
+      const bytes = Buffer.from(fileName, 'latin1');
+
+      // 2. Try EUC-KR decoding first (common in Korean government sites like K-Startup)
+      try {
+        const iconv = (await import('iconv-lite')).default;
+        const eucKrDecoded = iconv.decode(bytes, 'euc-kr');
+
+        // Check if it looks like valid Korean
+        if (/[\uAC00-\uD7AF]/.test(eucKrDecoded) && !eucKrDecoded.includes('�')) {
+          return eucKrDecoded;
+        }
+      } catch {
+        // EUC-KR decoding failed
+      }
+
+      // 3. Try UTF-8 decoding (double-encoded UTF-8 case)
+      try {
+        const utf8Decoded = bytes.toString('utf-8');
+
+        // Check if it looks like valid Korean
+        if (/[\uAC00-\uD7AF]/.test(utf8Decoded) && !utf8Decoded.includes('�')) {
+          return utf8Decoded;
+        }
+      } catch {
+        // UTF-8 decoding failed
+      }
+    }
+
+    // Return original if no decoding worked
     return fileName;
   }
 
@@ -386,7 +430,7 @@ async function downloadFile(url: string): Promise<DownloadResult | null> {
 
     // Extract actual filename from Content-Disposition header
     const contentDisposition = response.headers['content-disposition'];
-    const fileName = extractFileNameFromHeader(contentDisposition);
+    const fileName = await extractFileNameFromHeader(contentDisposition);
 
     if (fileName) {
       console.log(`    ✓ Downloaded ${sizeInMB}MB - "${fileName}"`);
@@ -612,6 +656,7 @@ async function extractFileText(buffer: Buffer): Promise<string | null> {
  * Step 4: Analyze document with Gemini AI
  */
 async function analyzeWithGemini(text: string): Promise<{
+  summary?: string;
   description?: string;
   eligibility?: string;
   applicationProcess?: string;
@@ -638,18 +683,20 @@ async function analyzeWithGemini(text: string): Promise<{
 
     const prompt = `다음은 정부 지원사업 공고문입니다. 아래 정보를 JSON 형식으로 추출해주세요:
 
-1. description: 사업의 목적과 개요 (2-3문장, 핵심만)
-2. eligibility: 신청 자격 요건 (핵심만, 있는 경우)
-3. applicationProcess: 신청 방법 및 절차 (간단히, 있는 경우)
-4. evaluationCriteria: 평가 기준 (있는 경우)
-5. fundingSummary: 지원 금액을 한 줄로 간결하게 요약 (예: "최대 400만원", "업체당 500만원 이내", "최대 1억원 (전액 무상)", "70% 보조금 지원"). 반드시 10~30자 이내로 핵심만 작성.
-6. amountDescription: 지원 금액에 대한 상세 설명. 세부 항목별 금액, 지원 조건, 자부담 비율 등 상세 내용을 포함.
-7. deadline: 신청 마감일 (YYYY-MM-DD 형식, 있는 경우)
-8. startDate: 사업/접수 시작일 (YYYY-MM-DD 형식, 있는 경우)
-9. endDate: 사업/접수 종료일 (YYYY-MM-DD 형식, 있는 경우)
+1. summary: 사업 요약 (1문장, 30~50자, 핵심 내용만. 예: "창업 3년 이내 기업 대상 최대 1억원 지원")
+2. description: 사업의 목적과 개요 (2-3문장, 핵심만)
+3. eligibility: 신청 자격 요건 (핵심만, 있는 경우)
+4. applicationProcess: 신청 방법 및 절차 (간단히, 있는 경우)
+5. evaluationCriteria: 평가 기준 (있는 경우)
+6. fundingSummary: 지원 금액을 한 줄로 간결하게 요약 (예: "최대 400만원", "업체당 500만원 이내", "최대 1억원 (전액 무상)", "70% 보조금 지원"). 반드시 10~30자 이내로 핵심만 작성.
+7. amountDescription: 지원 금액에 대한 상세 설명. 세부 항목별 금액, 지원 조건, 자부담 비율 등 상세 내용을 포함.
+8. deadline: 신청 마감일 (YYYY-MM-DD 형식, 있는 경우)
+9. startDate: 사업/접수 시작일 (YYYY-MM-DD 형식, 있는 경우)
+10. endDate: 사업/접수 종료일 (YYYY-MM-DD 형식, 있는 경우)
 
 응답은 반드시 다음 JSON 형식으로만 작성해주세요:
 {
+  "summary": "...",
   "description": "...",
   "eligibility": "...",
   "applicationProcess": "...",
@@ -729,6 +776,7 @@ async function processProjectFiles(
 ): Promise<{
   attachments: SavedAttachment[];
   aiAnalysis?: {
+    summary?: string;
     description?: string;
     eligibility?: string;
     applicationProcess?: string;
@@ -742,6 +790,7 @@ async function processProjectFiles(
 }> {
   const attachments: SavedAttachment[] = [];
   let aiAnalysis: {
+    summary?: string;
     description?: string;
     eligibility?: string;
     applicationProcess?: string;
@@ -1640,6 +1689,8 @@ async function saveProjects(
             await prisma.supportProject.update({
               where: { id: projectId },
               data: {
+                // AI 분석 결과로 모든 상세 필드 업데이트
+                summary: aiAnalysis.summary || undefined,
                 description: aiAnalysis.description || undefined,
                 eligibility: aiAnalysis.eligibility || undefined,
                 applicationProcess: aiAnalysis.applicationProcess || undefined,
@@ -1651,7 +1702,7 @@ async function saveProjects(
                 endDate: parseDate(aiAnalysis.endDate),
               },
             });
-            console.log(`  ✓ Updated project with AI analysis`);
+            console.log(`  ✓ Updated project with AI analysis (summary, description, eligibility, etc.)`);
           }
         } catch (fileError) {
           console.error(`  ✗ Error processing attachments:`, fileError);

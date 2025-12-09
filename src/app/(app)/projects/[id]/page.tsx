@@ -3,8 +3,10 @@ import { prisma } from "@/lib/prisma";
 import { redirect, notFound } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { ProjectFiles } from "@/components/project/project-files";
 import { PageHeader } from "@/components/common";
+import { ExternalLink } from "lucide-react";
 
 interface ProjectDetailPageProps {
   params: Promise<{ id: string }>;
@@ -88,6 +90,18 @@ export default async function ProjectDetailPage({
             <Badge variant={statusVariant as "default" | "destructive" | "outline"}>
               {statusLabel}
             </Badge>
+            {project.detailUrl && (
+              <Button variant="outline" size="sm" asChild>
+                <a
+                  href={project.detailUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <ExternalLink className="h-4 w-4 mr-1" />
+                  원본 공고
+                </a>
+              </Button>
+            )}
           </div>
         }
       />
