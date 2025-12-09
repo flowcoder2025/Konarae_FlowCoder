@@ -7,6 +7,8 @@
  */
 
 import { prisma } from "@/lib/prisma";
+import http from "http";
+import https from "https";
 import {
   uploadFile,
   getFileTypeFromName,
@@ -14,6 +16,76 @@ import {
   sortByParsingPriority,
   type FileType,
 } from "@/lib/supabase-storage";
+
+/**
+ * HTTP Agents with Keep-Alive for connection reuse
+ * Critical for serverless environments to reduce connection overhead
+ */
+const httpAgent = new http.Agent({
+  keepAlive: true,
+  keepAliveMsecs: 10000,
+  maxSockets: 5,
+  timeout: 20000,
+});
+
+const httpsAgent = new https.Agent({
+  keepAlive: true,
+  keepAliveMsecs: 10000,
+  maxSockets: 5,
+  timeout: 20000,
+});
+
+/**
+ * Sleep utility for delays
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Fetch with retry and exponential backoff
+ * Handles transient network errors common in serverless environments
+ */
+async function fetchWithRetry<T>(
+  fetchFn: () => Promise<T>,
+  options: {
+    retries?: number;
+    initialDelayMs?: number;
+    maxDelayMs?: number;
+    shouldRetry?: (error: any) => boolean;
+  } = {}
+): Promise<T> {
+  const {
+    retries = 3,
+    initialDelayMs = 1000,
+    maxDelayMs = 8000,
+    shouldRetry = (error: any) => {
+      // Retry on common transient errors
+      const retryableCodes = ['EPIPE', 'ECONNRESET', 'ETIMEDOUT', 'ECONNABORTED', 'ERR_BAD_RESPONSE'];
+      return retryableCodes.includes(error?.code) ||
+             error?.message?.includes('timeout') ||
+             error?.message?.includes('EPIPE');
+    }
+  } = options;
+
+  let lastError: any;
+
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      return await fetchFn();
+    } catch (error: any) {
+      lastError = error;
+
+      if (attempt < retries - 1 && shouldRetry(error)) {
+        const delay = Math.min(initialDelayMs * Math.pow(2, attempt), maxDelayMs);
+        console.log(`    ⚠ Attempt ${attempt + 1} failed (${error.code || error.message}), retrying in ${delay}ms...`);
+        await sleep(delay);
+      }
+    }
+  }
+
+  throw lastError;
+}
 
 /**
  * Process a single crawl job
@@ -273,6 +345,7 @@ function extractFileUrls(
 
 /**
  * Fetch detail page and extract file URLs
+ * Enhanced with retry logic and HTTP agents for Vercel compatibility
  */
 async function fetchDetailPage(
   detailUrl: string,
@@ -284,13 +357,21 @@ async function fetchDetailPage(
 
     console.log(`  → Fetching detail page: ${detailUrl}`);
 
-    const response = await axios.get(detailUrl, {
-      timeout: 30000,
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (compatible; KonaraeBot/1.0; +https://konarae.com)",
-      },
-    });
+    const response = await fetchWithRetry(
+      () => axios.get(detailUrl, {
+        timeout: CRAWLER_CONFIG.REQUEST_TIMEOUT,
+        httpAgent,
+        httpsAgent,
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+          "Connection": "keep-alive",
+        },
+      }),
+      { retries: 2, initialDelayMs: 1000 }
+    );
 
     const $ = load(response.data);
     const fileUrls = extractFileUrls($, detailUrl);
@@ -311,8 +392,8 @@ async function fetchDetailPage(
 
     console.log(`  → Found ${absoluteUrls.length} file(s)`);
     return absoluteUrls;
-  } catch (error) {
-    console.error(`  ✗ Failed to fetch detail page ${detailUrl}:`, error);
+  } catch (error: any) {
+    console.error(`  ✗ Failed to fetch detail page ${detailUrl}: ${error.code || error.message}`);
     return [];
   }
 }
@@ -408,6 +489,7 @@ async function extractFileNameFromHeader(contentDisposition: string | undefined)
 /**
  * Step 3: Download file from URL
  * Returns buffer and actual filename from Content-Disposition header
+ * Enhanced with retry logic and HTTP agents for Vercel compatibility
  */
 async function downloadFile(url: string): Promise<DownloadResult | null> {
   try {
@@ -415,15 +497,22 @@ async function downloadFile(url: string): Promise<DownloadResult | null> {
 
     console.log(`    → Downloading file...`);
 
-    const response = await axios.get(url, {
-      responseType: 'arraybuffer',
-      timeout: 60000, // 60 seconds for file download
-      maxContentLength: 10 * 1024 * 1024, // 10MB limit
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (compatible; KonaraeBot/1.0; +https://konarae.com)",
-      },
-    });
+    const response = await fetchWithRetry(
+      () => axios.get(url, {
+        responseType: 'arraybuffer',
+        timeout: CRAWLER_CONFIG.FILE_TIMEOUT,
+        maxContentLength: 10 * 1024 * 1024, // 10MB limit
+        httpAgent,
+        httpsAgent,
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "Accept": "*/*",
+          "Connection": "keep-alive",
+        },
+      }),
+      { retries: 2, initialDelayMs: 2000 }
+    );
 
     const buffer = Buffer.from(response.data);
     const sizeInMB = (buffer.length / 1024 / 1024).toFixed(2);
@@ -1052,21 +1141,27 @@ async function processProjectFiles(
 
 /**
  * Crawler configuration
- * 성수기 시즌(100+ 지원사업/일) 대응을 위한 설정
+ * Vercel serverless 환경 최적화 (maxDuration: 60초)
+ *
+ * 성수기 대응 시 Railway 서비스로 분리 권장
  */
 const CRAWLER_CONFIG = {
-  // 페이지네이션 설정
-  MAX_PAGES: 10,           // 최대 페이지 수 (15개/페이지 × 10 = 150개)
+  // 페이지네이션 설정 (Vercel 60초 타임아웃 대응)
+  MAX_PAGES: 3,            // 10 → 3 (약 45개 항목)
   PAGE_SIZE: 15,           // 기업마당 기본 페이지 크기
-  MAX_PROJECTS: 150,       // 최대 수집 프로젝트 수
+  MAX_PROJECTS: 30,        // 150 → 30 (Vercel 타임아웃 내 처리 가능)
 
   // 시간 필터 설정
   HOURS_FILTER: 28,        // N시간 이내 등록된 공고만 수집
 
-  // 요청 간격 (rate limiting)
-  PAGE_DELAY_MS: 500,      // 페이지 간 딜레이
-  DETAIL_DELAY_MS: 500,    // 상세 페이지 요청 간 딜레이
+  // 요청 간격 (rate limiting - 증가시켜 안정성 향상)
+  PAGE_DELAY_MS: 1000,     // 500 → 1000 (서버 부하 감소)
+  DETAIL_DELAY_MS: 1500,   // 500 → 1500 (연결 안정성)
   FILE_DELAY_MS: 2000,     // 파일 처리 간 딜레이
+
+  // 타임아웃 설정 (Vercel 환경 최적화)
+  REQUEST_TIMEOUT: 15000,  // 30초 → 15초 (빠른 실패 & 재시도)
+  FILE_TIMEOUT: 30000,     // 파일 다운로드는 30초 유지
 };
 
 /**
@@ -1128,13 +1223,20 @@ async function crawlAndParse(
 
     if (type === "api") {
       // API response parsing (JSON) - 단일 요청
-      const response = await axios.get(url, {
-        timeout: 30000,
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (compatible; KonaraeBot/1.0; +https://konarae.com)",
-        },
-      });
+      const response = await fetchWithRetry(
+        () => axios.get(url, {
+          timeout: CRAWLER_CONFIG.REQUEST_TIMEOUT,
+          httpAgent,
+          httpsAgent,
+          headers: {
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/json,*/*",
+            "Connection": "keep-alive",
+          },
+        }),
+        { retries: 2 }
+      );
       allProjects = parseApiResponse(response.data, url);
     } else {
       // Web scraping (HTML) - 페이지네이션 지원
@@ -1152,13 +1254,21 @@ async function crawlAndParse(
         console.log(`\n[Page ${pageIndex}/${CRAWLER_CONFIG.MAX_PAGES}] ${pageUrl}`);
 
         try {
-          const response = await axios.get(pageUrl, {
-            timeout: 30000,
-            headers: {
-              "User-Agent":
-                "Mozilla/5.0 (compatible; KonaraeBot/1.0; +https://konarae.com)",
-            },
-          });
+          const response = await fetchWithRetry(
+            () => axios.get(pageUrl, {
+              timeout: CRAWLER_CONFIG.REQUEST_TIMEOUT,
+              httpAgent,
+              httpsAgent,
+              headers: {
+                "User-Agent":
+                  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+                "Connection": "keep-alive",
+              },
+            }),
+            { retries: 2, initialDelayMs: 1000 }
+          );
 
           const $ = load(response.data);
           const pageProjects = parseHtmlContentWithDateFilter($, url, CRAWLER_CONFIG.HOURS_FILTER);
@@ -1187,12 +1297,14 @@ async function crawlAndParse(
 
           pageIndex++;
 
-          // Rate limiting
+          // Rate limiting (increased for stability)
           if (pageIndex <= CRAWLER_CONFIG.MAX_PAGES) {
-            await new Promise(resolve => setTimeout(resolve, CRAWLER_CONFIG.PAGE_DELAY_MS));
+            await sleep(CRAWLER_CONFIG.PAGE_DELAY_MS);
           }
-        } catch (pageError) {
-          console.error(`  ✗ Error fetching page ${pageIndex}:`, pageError);
+        } catch (pageError: any) {
+          console.error(`  ✗ Error fetching page ${pageIndex}: ${pageError.code || pageError.message}`);
+          // Continue with collected projects instead of breaking
+          console.log(`  → Continuing with ${allProjects.length} projects collected so far`);
           break;
         }
       }
@@ -1222,12 +1334,12 @@ async function crawlAndParse(
               console.log(`    ${idx + 1}. ${fileName}`);
             });
           }
-        } catch (error) {
-          console.error(`  ✗ Error fetching detail page:`, error);
+        } catch (error: any) {
+          console.error(`  ✗ Error fetching detail page: ${error.code || error.message}`);
         }
 
-        // Add delay to avoid rate limiting (500ms between requests)
-        await new Promise(resolve => setTimeout(resolve, 500));
+        // Add delay to avoid rate limiting (increased for stability)
+        await sleep(CRAWLER_CONFIG.DETAIL_DELAY_MS);
       } else {
         console.log(`[${i + 1}/${projects.length}] ${project.name} - No detail URL found`);
       }
