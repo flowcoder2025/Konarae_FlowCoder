@@ -1,20 +1,29 @@
 /**
  * Deadline Alerts Cron Job (PRD Phase 7)
- * GET /api/cron/deadline-alerts - Check and send deadline alerts
+ * POST /api/cron/deadline-alerts - Check and send deadline alerts
  *
- * This endpoint should be called by a cron service (e.g., Vercel Cron, Upstash QStash)
- * to check for upcoming deadlines and send notifications.
+ * Triggered by Upstash QStash at 9:00 AM KST (00:00 UTC)
+ * QStash Schedule ID: deadline-alerts-daily
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { sendDeadlineAlert } from "@/lib/notifications";
+import { verifyQStashSignature } from "@/lib/qstash";
 
-export async function GET(req: NextRequest) {
+export const maxDuration = 60;
+export const dynamic = "force-dynamic";
+
+// QStash sends POST requests
+export async function POST(req: NextRequest) {
   try {
-    // Verify cron authorization (optional but recommended)
-    const authHeader = req.headers.get("authorization");
-    if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+    // Verify QStash signature
+    const signature = req.headers.get("upstash-signature");
+    const body = await req.text();
+
+    const isValid = await verifyQStashSignature(signature, body);
+    if (!isValid) {
+      console.error("[Cron] Invalid QStash signature");
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 

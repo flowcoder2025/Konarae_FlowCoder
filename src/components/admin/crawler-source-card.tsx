@@ -80,7 +80,7 @@ export function CrawlerSourceCard({ source }: Props) {
           onClick={handleStartCrawl}
         >
           <Play className="mr-2 h-4 w-4" />
-          {isLoading ? "시작 중..." : "크롤링 시작"}
+          {isLoading ? "시작 중..." : "크롤링"}
         </Button>
       </div>
     </Card>

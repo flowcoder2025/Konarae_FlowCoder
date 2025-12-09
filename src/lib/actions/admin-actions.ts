@@ -284,3 +284,105 @@ export async function toggleSourceActive(
     };
   }
 }
+
+/**
+ * Start crawling for ALL active sources
+ */
+export async function startAllCrawl(): Promise<ActionResult & { jobCount?: number }> {
+  try {
+    await requireAdmin();
+
+    // Get all active sources
+    const activeSources = await prisma.crawlSource.findMany({
+      where: { isActive: true },
+    });
+
+    if (activeSources.length === 0) {
+      return {
+        success: false,
+        message: "활성화된 크롤링 소스가 없습니다",
+        error: "NO_ACTIVE_SOURCES",
+      };
+    }
+
+    // Create jobs for all active sources
+    const jobs = await Promise.all(
+      activeSources.map(async (source) => {
+        const job = await prisma.crawlJob.create({
+          data: {
+            sourceId: source.id,
+            status: "pending",
+          },
+        });
+
+        // Update source lastCrawled
+        await prisma.crawlSource.update({
+          where: { id: source.id },
+          data: { lastCrawled: new Date() },
+        });
+
+        return job;
+      })
+    );
+
+    // Process jobs asynchronously (don't await)
+    jobs.forEach((job) => {
+      processCrawlJob(job.id).catch((error) => {
+        console.error(`Background crawl job ${job.id} failed:`, error);
+      });
+    });
+
+    revalidatePath("/admin/crawler");
+
+    return {
+      success: true,
+      message: `${jobs.length}개 소스의 크롤링 작업이 시작되었습니다`,
+      jobCount: jobs.length,
+    };
+  } catch (error) {
+    console.error("Start all crawl error:", error);
+    return {
+      success: false,
+      message: "전체 크롤링 시작 중 오류가 발생했습니다",
+      error: error instanceof Error ? error.message : "UNKNOWN_ERROR",
+    };
+  }
+}
+
+/**
+ * Get crawl statistics
+ */
+export async function getCrawlStats() {
+  try {
+    await requireAdmin();
+
+    const [totalSources, activeSources, totalJobs, runningJobs, recentJobs] = await Promise.all([
+      prisma.crawlSource.count(),
+      prisma.crawlSource.count({ where: { isActive: true } }),
+      prisma.crawlJob.count(),
+      prisma.crawlJob.count({ where: { status: "running" } }),
+      prisma.crawlJob.findMany({
+        take: 5,
+        orderBy: { createdAt: "desc" },
+        include: { source: { select: { name: true } } },
+      }),
+    ]);
+
+    return {
+      success: true,
+      stats: {
+        totalSources,
+        activeSources,
+        totalJobs,
+        runningJobs,
+        recentJobs,
+      },
+    };
+  } catch (error) {
+    console.error("Get crawl stats error:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "UNKNOWN_ERROR",
+    };
+  }
+}
