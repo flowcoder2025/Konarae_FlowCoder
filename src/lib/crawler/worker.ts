@@ -1089,13 +1089,17 @@ async function crawlAndParse(
       allProjects = parseApiResponse(response.data, url);
     } else {
       // Web scraping (HTML) - 페이지네이션 지원
-      console.log(`\n=== Step 1: Crawling with pagination (max ${CRAWLER_CONFIG.MAX_PAGES} pages) ===`);
+      const siteType = detectSiteType(url);
+      console.log(`\n=== Step 1: Crawling ${siteType} with pagination (max ${CRAWLER_CONFIG.MAX_PAGES} pages) ===`);
 
       let pageIndex = 1;
       let consecutiveEmptyPages = 0;
 
       while (pageIndex <= CRAWLER_CONFIG.MAX_PAGES && allProjects.length < CRAWLER_CONFIG.MAX_PROJECTS) {
-        const pageUrl = buildPaginatedUrl(url, pageIndex);
+        // 사이트별 페이지네이션 URL 생성
+        const pageUrl = siteType === 'kstartup'
+          ? buildKStartupPaginatedUrl(url, pageIndex)
+          : buildPaginatedUrl(url, pageIndex);
         console.log(`\n[Page ${pageIndex}/${CRAWLER_CONFIG.MAX_PAGES}] ${pageUrl}`);
 
         try {
@@ -1202,10 +1206,187 @@ async function crawlAndParse(
 }
 
 /**
+ * Parse K-Startup HTML content
+ * K-Startup 사업공고 페이지 파서 (k-startup.go.kr)
+ *
+ * HTML 구조:
+ * - Container: <div class="board_list-wrap" id="bizPbancList">
+ * - Items: <li class="notice">
+ * - Title: <p class="tit">제목</p> inside <a href='javascript:go_view(ID);'>
+ * - Category: <span class="flag type05">행사ㆍ네트워크</span>
+ * - Dates: <span class="list">등록일자 YYYY-MM-DD</span>
+ */
+function parseKStartupHtml(
+  $: ReturnType<typeof import("cheerio")["load"]>,
+  sourceUrl: string,
+  hoursFilter: number,
+  pbancClssCd: string
+): CrawledProject[] {
+  const projects: CrawledProject[] = [];
+
+  // K-Startup 리스트 아이템 선택
+  const listItems = $('#bizPbancList ul li.notice');
+  console.log(`  → K-Startup parser: Found ${listItems.length} items`);
+
+  listItems.each((_idx, element) => {
+    const $item = $(element);
+
+    // 제목 추출
+    const $titleLink = $item.find('a[href*="go_view"]');
+    const $title = $item.find('p.tit');
+    const name = $title.text().trim();
+
+    // pbancSn 추출 (go_view(ID) 패턴에서)
+    let pbancSn = "";
+    const hrefAttr = $titleLink.attr('href') || '';
+    const idMatch = hrefAttr.match(/go_view\((\d+)\)/);
+    if (idMatch) {
+      pbancSn = idMatch[1];
+    }
+
+    // 카테고리 추출
+    const category = $item.find('.flag').not('.day').not('.flag_agency').first().text().trim() || "기타";
+
+    // 기관유형 추출 (민간, 공공 등)
+    const agencyType = $item.find('.flag_agency').text().trim() || "";
+
+    // 날짜 정보 추출
+    let uploadDate = "";
+    let deadline = "";
+    let startDate = "";
+
+    $item.find('.list').each((_i, infoElem) => {
+      const infoText = $(infoElem).text().trim();
+
+      // 등록일자
+      if (infoText.includes('등록일자')) {
+        const dateMatch = infoText.match(/(\d{4}-\d{2}-\d{2})/);
+        if (dateMatch) uploadDate = dateMatch[1];
+      }
+      // 마감일자
+      if (infoText.includes('마감일자')) {
+        const dateMatch = infoText.match(/(\d{4}-\d{2}-\d{2})/);
+        if (dateMatch) deadline = dateMatch[1];
+      }
+      // 시작일자
+      if (infoText.includes('시작일자')) {
+        const dateMatch = infoText.match(/(\d{4}-\d{2}-\d{2})/);
+        if (dateMatch) startDate = dateMatch[1];
+      }
+    });
+
+    // 기관명 추출 (보통 두 번째 .list 항목)
+    let organization = "";
+    const listItems = $item.find('.list');
+    if (listItems.length >= 2) {
+      const orgText = $(listItems[1]).text().trim();
+      // "주관기관명" 형식에서 기관명만 추출
+      organization = orgText.replace(/^.*?pr5"><\/i>/, '').trim();
+    }
+
+    // 등록일 기반 필터링
+    if (uploadDate && !isWithinTimeFilter(uploadDate, hoursFilter)) {
+      return; // 시간 필터 밖이면 스킵
+    }
+
+    // 유효성 검사
+    if (!name || name.length < 3) {
+      return;
+    }
+
+    // 상세 페이지 URL 구성
+    // 패턴: ?schM=view&pbancSn={ID}&pbancClssCd={CODE}&pbancEndYn=N
+    let detailUrl = "";
+    if (pbancSn) {
+      const baseUrl = new URL(sourceUrl);
+      baseUrl.searchParams.set('schM', 'view');
+      baseUrl.searchParams.set('pbancSn', pbancSn);
+      baseUrl.searchParams.set('pbancClssCd', pbancClssCd);
+      baseUrl.searchParams.set('pbancEndYn', 'N');
+      detailUrl = baseUrl.toString();
+    }
+
+    const project: CrawledProject = {
+      externalId: pbancSn ? `kstartup_${pbancSn}` : undefined,
+      name,
+      organization: organization || agencyType || "K-Startup",
+      category,
+      target: "창업기업",
+      region: "전국",
+      summary: name,
+      sourceUrl,
+      detailUrl: detailUrl || undefined,
+      deadline: deadline ? new Date(deadline) : undefined,
+      startDate: startDate ? new Date(startDate) : undefined,
+      isPermanent: false,
+    };
+
+    projects.push(project);
+  });
+
+  return projects;
+}
+
+/**
+ * Detect site type from URL
+ */
+function detectSiteType(url: string): 'bizinfo' | 'kstartup' | 'unknown' {
+  if (url.includes('bizinfo.go.kr')) return 'bizinfo';
+  if (url.includes('k-startup.go.kr')) return 'kstartup';
+  return 'unknown';
+}
+
+/**
+ * Extract pbancClssCd from K-Startup URL
+ * PBC010: 중앙부처·지자체·공공기관
+ * PBC020: 민간기관·교육기관
+ */
+function extractKStartupPbancClssCd(url: string): string {
+  try {
+    const urlObj = new URL(url);
+    return urlObj.searchParams.get('pbancClssCd') || 'PBC010';
+  } catch {
+    return 'PBC010';
+  }
+}
+
+/**
+ * Build paginated URL for K-Startup
+ * K-Startup URL 패턴: ?page=N&pbancClssCd=PBC010
+ */
+function buildKStartupPaginatedUrl(baseUrl: string, pageIndex: number): string {
+  const url = new URL(baseUrl);
+  url.searchParams.set('page', pageIndex.toString());
+  return url.toString();
+}
+
+/**
  * Parse HTML content with date filtering (기업마당, K-Startup 등)
  * Enhanced: 28시간 이내 등록된 공고만 필터링
+ * Auto-detects site type and uses appropriate parser
  */
 function parseHtmlContentWithDateFilter(
+  $: ReturnType<typeof import("cheerio")["load"]>,
+  sourceUrl: string,
+  hoursFilter: number
+): CrawledProject[] {
+  const siteType = detectSiteType(sourceUrl);
+
+  // K-Startup 전용 파서
+  if (siteType === 'kstartup') {
+    const pbancClssCd = extractKStartupPbancClssCd(sourceUrl);
+    return parseKStartupHtml($, sourceUrl, hoursFilter, pbancClssCd);
+  }
+
+  // 기업마당 파서 (기본)
+  return parseBizinfoHtml($, sourceUrl, hoursFilter);
+}
+
+/**
+ * Parse 기업마당 HTML content
+ * 기업마당 테이블 구조 파서 (bizinfo.go.kr)
+ */
+function parseBizinfoHtml(
   $: ReturnType<typeof import("cheerio")["load"]>,
   sourceUrl: string,
   hoursFilter: number
@@ -1226,7 +1407,7 @@ function parseHtmlContentWithDateFilter(
     const rows = $(selector);
     if (rows.length > 0) {
       // Parse each row
-      rows.each((idx, element) => {
+      rows.each((_idx, element) => {
         // Skip header row
         const headerText = $(element).text().toLowerCase();
         if (headerText.includes('번호') && headerText.includes('제목')) {
