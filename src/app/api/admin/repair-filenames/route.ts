@@ -38,11 +38,17 @@ function isCorruptedFileName(fileName: string): boolean {
   // Pattern E: Check for "챘", "쨋" type characters (specific corruption pattern)
   const specificCorruptionPattern = /[챘쨋혲혷혙혢혻짼짯혵혶]{2,}/;
 
+  // Pattern F: Uncommon Korean syllables (UTF-8 misread as EUC-KR/CP949)
+  // Characters like 챗, 쩻, 햇 etc. appearing in unusual combinations
+  const rareKoreanSyllables = /[챗쩻햇챙멜헐긟럛뷁뫃믃샻쐓쏳췃츣킧팣핣횣]/;
+  const hasMultipleRare = (fileName.match(rareKoreanSyllables) || []).length >= 2;
+
   return jamoPattern.test(fileName) ||
          latin1Pattern.test(fileName) ||
          replacementPattern.test(fileName) ||
          suspiciousChinesePattern.test(fileName) ||
-         specificCorruptionPattern.test(fileName);
+         specificCorruptionPattern.test(fileName) ||
+         hasMultipleRare;
 }
 
 /**
@@ -119,6 +125,29 @@ function repairCorruptedFileName(fileName: string): string {
     const eucKrDecoded = iconv.decode(utf8Bytes, 'euc-kr');
     if (hasValidKorean(eucKrDecoded) && !isCorruptedFileName(eucKrDecoded)) {
       return eucKrDecoded;
+    }
+  } catch {
+    // Continue
+  }
+
+  // Strategy 5: CP949 → UTF-8 reverse (for 챗쩻햇챙멜헐 type corruption)
+  // When UTF-8 Korean text is wrongly decoded as CP949
+  try {
+    const cp949Bytes = iconv.encode(fileName, 'cp949');
+    const utf8Decoded = cp949Bytes.toString('utf-8');
+    if (hasValidKorean(utf8Decoded) && !isCorruptedFileName(utf8Decoded)) {
+      return utf8Decoded;
+    }
+  } catch {
+    // Continue
+  }
+
+  // Strategy 6: EUC-KR → UTF-8 reverse
+  try {
+    const eucKrBytes = iconv.encode(fileName, 'euc-kr');
+    const utf8Decoded = eucKrBytes.toString('utf-8');
+    if (hasValidKorean(utf8Decoded) && !isCorruptedFileName(utf8Decoded)) {
+      return utf8Decoded;
     }
   } catch {
     // Continue

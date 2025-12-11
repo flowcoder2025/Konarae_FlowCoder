@@ -433,10 +433,24 @@ function isCorruptedFileName(fileName: string): boolean {
   // (Often result of wrong encoding interpretation)
   const suspiciousChinesePattern = /[\u4E00-\u9FFF]{3,}/;
 
+  // Pattern E: Uncommon Korean syllables (UTF-8 misread as EUC-KR/CP949)
+  // Characters like 챗, 쩻, 햇 etc. appearing in unusual combinations
+  // These are valid Unicode but appear when UTF-8 bytes are wrongly decoded as CP949
+  // Check for rare Korean syllables that shouldn't appear frequently in normal text
+  const rareKoreanSyllables = /[챗쩻햇챙멜헐긟럛뷁뫃믃샻쐓쏳췃츣킧팣핣횣]/;
+  const hasMultipleRare = (fileName.match(rareKoreanSyllables) || []).length >= 2;
+
+  // Pattern F: Mixed encoding artifacts - unusual character sequences
+  // Korean text with special chars like (챗쩻햇챙멜헐2) is suspicious
+  const mixedArtifactPattern = /\([가-힣]+\d+\)|\d+[가-힣]+\d+/;
+  const hasArtifact = mixedArtifactPattern.test(fileName) && hasMultipleRare;
+
   return jamoPattern.test(fileName) ||
          latin1Pattern.test(fileName) ||
          replacementPattern.test(fileName) ||
-         suspiciousChinesePattern.test(fileName);
+         suspiciousChinesePattern.test(fileName) ||
+         hasMultipleRare ||
+         hasArtifact;
 }
 
 /**
@@ -527,6 +541,33 @@ async function repairCorruptedFileName(fileName: string): Promise<string> {
       if (hasValidKorean(cp949Decoded) && !isCorruptedFileName(cp949Decoded)) {
         return cp949Decoded;
       }
+    }
+  } catch {
+    // Continue
+  }
+
+  // Strategy 5: CP949 → UTF-8 reverse (for 챗쩻햇챙멜헐 type corruption)
+  // When UTF-8 Korean text is wrongly decoded as CP949, we need to:
+  // 1. Encode the corrupted string back to CP949 bytes
+  // 2. Decode those bytes as UTF-8
+  try {
+    const cp949Bytes = iconv.encode(fileName, 'cp949');
+    const utf8Decoded = cp949Bytes.toString('utf-8');
+    if (hasValidKorean(utf8Decoded) && !isCorruptedFileName(utf8Decoded)) {
+      console.log(`    ✓ Repaired filename (CP949→UTF-8): "${fileName}" → "${utf8Decoded}"`);
+      return utf8Decoded;
+    }
+  } catch {
+    // Continue
+  }
+
+  // Strategy 6: EUC-KR → UTF-8 reverse (similar to Strategy 5 but for EUC-KR)
+  try {
+    const eucKrBytes = iconv.encode(fileName, 'euc-kr');
+    const utf8Decoded = eucKrBytes.toString('utf-8');
+    if (hasValidKorean(utf8Decoded) && !isCorruptedFileName(utf8Decoded)) {
+      console.log(`    ✓ Repaired filename (EUC-KR→UTF-8): "${fileName}" → "${utf8Decoded}"`);
+      return utf8Decoded;
     }
   } catch {
     // Continue
@@ -1923,6 +1964,16 @@ async function saveProjects(
         console.log(`  → Processing ${attachmentUrls.length} attachment(s)...`);
 
         try {
+          // 기존 프로젝트 업데이트 시, 기존 attachments 삭제 (중복 방지)
+          if (existing) {
+            const deletedCount = await prisma.projectAttachment.deleteMany({
+              where: { projectId },
+            });
+            if (deletedCount.count > 0) {
+              console.log(`  → Removed ${deletedCount.count} existing attachment(s)`);
+            }
+          }
+
           const { attachments, aiAnalysis } = await processProjectFiles(
             projectId,
             attachmentUrls
