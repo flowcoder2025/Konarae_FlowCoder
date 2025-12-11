@@ -5,16 +5,29 @@
 
 import { Client, Receiver } from "@upstash/qstash";
 
+// Check if QStash is configured
+export const isQStashConfigured = Boolean(process.env.QSTASH_TOKEN);
+
 // QStash client for publishing messages and managing schedules
-export const qstashClient = new Client({
-  token: process.env.QSTASH_TOKEN!,
-});
+// Only create client if token is available
+export const qstashClient = isQStashConfigured
+  ? new Client({
+      token: process.env.QSTASH_TOKEN!,
+    })
+  : null;
 
 // QStash receiver for verifying incoming webhook signatures
-export const qstashReceiver = new Receiver({
-  currentSigningKey: process.env.QSTASH_CURRENT_SIGNING_KEY!,
-  nextSigningKey: process.env.QSTASH_NEXT_SIGNING_KEY!,
-});
+// Only create receiver if signing keys are available
+const hasSigningKeys = Boolean(
+  process.env.QSTASH_CURRENT_SIGNING_KEY && process.env.QSTASH_NEXT_SIGNING_KEY
+);
+
+export const qstashReceiver = hasSigningKeys
+  ? new Receiver({
+      currentSigningKey: process.env.QSTASH_CURRENT_SIGNING_KEY!,
+      nextSigningKey: process.env.QSTASH_NEXT_SIGNING_KEY!,
+    })
+  : null;
 
 /**
  * Verify QStash signature from incoming request
@@ -24,6 +37,10 @@ export async function verifyQStashSignature(
   body: string
 ): Promise<boolean> {
   if (!signature) return false;
+  if (!qstashReceiver) {
+    console.warn("[QStash] Receiver not configured, skipping signature verification");
+    return false;
+  }
 
   try {
     await qstashReceiver.verify({
@@ -48,6 +65,11 @@ export async function createSchedule(
   cron: string,
   scheduleId?: string
 ) {
+  if (!qstashClient) {
+    console.warn("[QStash] Client not configured, cannot create schedule");
+    return { success: false, error: "QStash not configured" };
+  }
+
   try {
     const result = await qstashClient.schedules.create({
       destination,
@@ -67,6 +89,11 @@ export async function createSchedule(
  * Delete a QStash schedule
  */
 export async function deleteSchedule(scheduleId: string) {
+  if (!qstashClient) {
+    console.warn("[QStash] Client not configured, cannot delete schedule");
+    return { success: false, error: "QStash not configured" };
+  }
+
   try {
     await qstashClient.schedules.delete(scheduleId);
     console.log(`[QStash] Schedule deleted: ${scheduleId}`);
@@ -81,6 +108,11 @@ export async function deleteSchedule(scheduleId: string) {
  * List all QStash schedules
  */
 export async function listSchedules() {
+  if (!qstashClient) {
+    // Not an error - just not configured
+    return { success: true, schedules: [], notConfigured: true };
+  }
+
   try {
     const schedules = await qstashClient.schedules.list();
     return { success: true, schedules };
@@ -94,6 +126,11 @@ export async function listSchedules() {
  * Get a specific schedule
  */
 export async function getSchedule(scheduleId: string) {
+  if (!qstashClient) {
+    console.warn("[QStash] Client not configured, cannot get schedule");
+    return { success: false, error: "QStash not configured" };
+  }
+
   try {
     const schedule = await qstashClient.schedules.get(scheduleId);
     return { success: true, schedule };

@@ -12,7 +12,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getParserServiceInfo } from "@/lib/document-parser";
-import { listSchedules } from "@/lib/qstash";
+import { listSchedules, isQStashConfigured } from "@/lib/qstash";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -103,6 +103,21 @@ async function checkTextParser(): Promise<ServiceStatus> {
  */
 async function checkQStash(): Promise<{ status: ServiceStatus; scheduleCount: number }> {
   const start = Date.now();
+
+  // If QStash is not configured, return "not configured" status (not an error)
+  if (!isQStashConfigured) {
+    return {
+      status: {
+        name: "QStash Scheduler",
+        status: "unknown",
+        latency: 0,
+        message: "Not configured (using Vercel Cron instead)",
+        lastChecked: new Date().toISOString(),
+      },
+      scheduleCount: 0,
+    };
+  }
+
   try {
     const result = await listSchedules();
     if (result.success && result.schedules) {
@@ -216,13 +231,14 @@ export async function GET(_req: NextRequest) {
 
     const services = [textParser, qstash.status];
 
-    // Determine overall status
+    // Determine overall status (ignore "unknown" status for services not configured)
     const allStatuses = [database.status, ...services.map((s) => s.status)];
+    const criticalStatuses = allStatuses.filter((s) => s !== "unknown");
     let overallStatus: "healthy" | "degraded" | "down" = "healthy";
 
-    if (allStatuses.includes("down")) {
+    if (criticalStatuses.includes("down")) {
       overallStatus = database.status === "down" ? "down" : "degraded";
-    } else if (allStatuses.includes("degraded")) {
+    } else if (criticalStatuses.includes("degraded")) {
       overallStatus = "degraded";
     }
 
