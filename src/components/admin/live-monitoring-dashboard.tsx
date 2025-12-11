@@ -24,6 +24,9 @@ import {
   Pause,
   Wifi,
   WifiOff,
+  Trash2,
+  StopCircle,
+  AlertTriangle,
 } from "lucide-react";
 
 // Types
@@ -205,20 +208,51 @@ function ServiceStatusRow({ service }: { service: ServiceStatus }) {
   );
 }
 
-function RunningJobCard({ job }: { job: RunningJob }) {
+function RunningJobCard({
+  job,
+  onCancel,
+  isCancelling,
+}: {
+  job: RunningJob;
+  onCancel: (jobId: string) => void;
+  isCancelling: boolean;
+}) {
+  const isStuck = job.duration !== null && job.duration > 60 * 60; // 1시간 이상
+
   return (
-    <Card className="p-4 border-yellow-500/20 bg-yellow-500/5">
+    <Card className={`p-4 ${isStuck ? "border-red-500/30 bg-red-500/5" : "border-yellow-500/20 bg-yellow-500/5"}`}>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Loader2 className="h-4 w-4 animate-spin text-yellow-500" />
+          <Loader2 className={`h-4 w-4 animate-spin ${isStuck ? "text-red-500" : "text-yellow-500"}`} />
           <span className="font-medium">{job.sourceName}</span>
+          {isStuck && (
+            <Badge variant="destructive" className="text-xs">
+              <AlertTriangle className="h-3 w-3 mr-1" />
+              멈춤
+            </Badge>
+          )}
         </div>
-        <Badge variant="secondary">실행 중</Badge>
+        <div className="flex items-center gap-2">
+          <Badge variant="secondary">실행 중</Badge>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-red-500 hover:text-red-600 hover:bg-red-500/10"
+            onClick={() => onCancel(job.id)}
+            disabled={isCancelling}
+          >
+            {isCancelling ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <StopCircle className="h-3 w-3" />
+            )}
+          </Button>
+        </div>
       </div>
       <div className="mt-2 grid grid-cols-4 gap-2 text-sm">
         <div>
           <span className="text-muted-foreground">경과:</span>{" "}
-          <span className="font-medium">{formatDuration(job.duration)}</span>
+          <span className={`font-medium ${isStuck ? "text-red-500" : ""}`}>{formatDuration(job.duration)}</span>
         </div>
         <div>
           <span className="text-muted-foreground">발견:</span>{" "}
@@ -271,6 +305,103 @@ export function LiveMonitoringDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [isAutoRefresh, setIsAutoRefresh] = useState(true);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+  const [cancellingJobs, setCancellingJobs] = useState<Set<string>>(new Set());
+  const [isCancellingAll, setIsCancellingAll] = useState(false);
+  const [isCleaningUp, setIsCleaningUp] = useState(false);
+  const [actionMessage, setActionMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  // Cancel a single job
+  const handleCancelJob = useCallback(async (jobId: string) => {
+    setCancellingJobs((prev) => new Set(prev).add(jobId));
+    setActionMessage(null);
+
+    try {
+      const res = await fetch(`/api/admin/crawler/jobs?jobId=${jobId}`, {
+        method: "DELETE",
+      });
+
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        setActionMessage({ type: "success", text: `작업이 취소되었습니다` });
+        // Refresh data
+        setTimeout(() => fetchData(), 500);
+      } else {
+        setActionMessage({ type: "error", text: data.error || "취소 실패" });
+      }
+    } catch (err) {
+      setActionMessage({ type: "error", text: "취소 요청 실패" });
+    } finally {
+      setCancellingJobs((prev) => {
+        const next = new Set(prev);
+        next.delete(jobId);
+        return next;
+      });
+    }
+  }, []);
+
+  // Cancel all running jobs
+  const handleCancelAll = useCallback(async () => {
+    if (!confirm("정말 모든 실행 중인 작업을 취소하시겠습니까?")) return;
+
+    setIsCancellingAll(true);
+    setActionMessage(null);
+
+    try {
+      const res = await fetch("/api/admin/crawler/jobs?all=true", {
+        method: "DELETE",
+      });
+
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        setActionMessage({ type: "success", text: `${data.cancelledCount}개 작업이 취소되었습니다` });
+        setTimeout(() => fetchData(), 500);
+      } else {
+        setActionMessage({ type: "error", text: data.error || "취소 실패" });
+      }
+    } catch (err) {
+      setActionMessage({ type: "error", text: "취소 요청 실패" });
+    } finally {
+      setIsCancellingAll(false);
+    }
+  }, []);
+
+  // Cleanup old stuck jobs
+  const handleCleanup = useCallback(async () => {
+    if (!confirm("60분 이상 멈춰있는 작업을 모두 정리하시겠습니까?")) return;
+
+    setIsCleaningUp(true);
+    setActionMessage(null);
+
+    try {
+      const res = await fetch("/api/admin/crawler/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "cleanup",
+          stuckMinutes: 60,
+          resetPending: true,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        setActionMessage({
+          type: "success",
+          text: `정리 완료: ${data.stuckJobsCancelled}개 멈춤 + ${data.pendingJobsCancelled}개 대기 작업 취소`,
+        });
+        setTimeout(() => fetchData(), 500);
+      } else {
+        setActionMessage({ type: "error", text: data.error || "정리 실패" });
+      }
+    } catch (err) {
+      setActionMessage({ type: "error", text: "정리 요청 실패" });
+    } finally {
+      setIsCleaningUp(false);
+    }
+  }, []);
 
   const fetchData = useCallback(async () => {
     try {
@@ -450,19 +581,109 @@ export function LiveMonitoringDashboard() {
         </>
       )}
 
+      {/* Action Message */}
+      {actionMessage && (
+        <Card
+          className={`p-3 ${
+            actionMessage.type === "success"
+              ? "border-green-500/20 bg-green-500/5"
+              : "border-red-500/20 bg-red-500/5"
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            {actionMessage.type === "success" ? (
+              <CheckCircle className="h-4 w-4 text-green-500" />
+            ) : (
+              <XCircle className="h-4 w-4 text-red-500" />
+            )}
+            <span className="text-sm">{actionMessage.text}</span>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2 ml-auto"
+              onClick={() => setActionMessage(null)}
+            >
+              <XCircle className="h-3 w-3" />
+            </Button>
+          </div>
+        </Card>
+      )}
+
       {/* Running Jobs */}
       {liveStatus && liveStatus.runningJobs.length > 0 && (
         <div>
-          <h3 className="font-semibold mb-4 flex items-center gap-2">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            실행 중인 크롤링 작업
-          </h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-semibold flex items-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              실행 중인 크롤링 작업 ({liveStatus.runningJobs.length}개)
+            </h3>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleCleanup}
+                disabled={isCleaningUp}
+                className="text-yellow-600 hover:text-yellow-700"
+              >
+                {isCleaningUp ? (
+                  <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                ) : (
+                  <Trash2 className="h-4 w-4 mr-1" />
+                )}
+                멈춤 작업 정리
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleCancelAll}
+                disabled={isCancellingAll}
+                className="text-red-600 hover:text-red-700"
+              >
+                {isCancellingAll ? (
+                  <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                ) : (
+                  <StopCircle className="h-4 w-4 mr-1" />
+                )}
+                전체 취소
+              </Button>
+            </div>
+          </div>
           <div className="grid gap-4 md:grid-cols-2">
             {liveStatus.runningJobs.map((job) => (
-              <RunningJobCard key={job.id} job={job} />
+              <RunningJobCard
+                key={job.id}
+                job={job}
+                onCancel={handleCancelJob}
+                isCancelling={cancellingJobs.has(job.id)}
+              />
             ))}
           </div>
         </div>
+      )}
+
+      {/* No Running Jobs - Show Cleanup Option */}
+      {liveStatus && liveStatus.runningJobs.length === 0 && liveStatus.summary.pendingJobs > 0 && (
+        <Card className="p-4 border-blue-500/20 bg-blue-500/5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Clock className="h-4 w-4 text-blue-500" />
+              <span>대기 중인 작업이 {liveStatus.summary.pendingJobs}개 있습니다</span>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleCleanup}
+              disabled={isCleaningUp}
+            >
+              {isCleaningUp ? (
+                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+              ) : (
+                <Trash2 className="h-4 w-4 mr-1" />
+              )}
+              오래된 작업 정리
+            </Button>
+          </div>
+        </Card>
       )}
 
       {/* Today's Summary */}
