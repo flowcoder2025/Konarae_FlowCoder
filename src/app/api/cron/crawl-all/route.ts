@@ -1,9 +1,11 @@
 /**
  * Crawl All Cron Job
- * POST /api/cron/crawl-all - Start crawling for all active sources
+ * GET/POST /api/cron/crawl-all - Start crawling for all active sources
  *
- * Triggered by Upstash QStash at 6:00 AM KST (21:00 UTC)
- * QStash Schedule ID: crawl-all-daily
+ * Supports:
+ * - Vercel Cron (GET with CRON_SECRET) - KST 06:00 = UTC 21:00
+ * - Upstash QStash (POST with signature)
+ * - Manual trigger (with ADMIN_API_KEY)
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -14,20 +16,42 @@ import { verifyQStashSignature } from "@/lib/qstash";
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
-// QStash sends POST requests
-export async function POST(req: NextRequest) {
-  try {
-    // Verify QStash signature
-    const signature = req.headers.get("upstash-signature");
-    const body = await req.text();
+/**
+ * Verify request authorization
+ * Supports: Vercel Cron, QStash, or manual admin trigger
+ */
+async function verifyAuthorization(req: NextRequest): Promise<{ valid: boolean; source: string }> {
+  // 1. Check Vercel Cron secret (GET requests)
+  const authHeader = req.headers.get("authorization");
+  if (authHeader === `Bearer ${process.env.CRON_SECRET}`) {
+    return { valid: true, source: "vercel-cron" };
+  }
 
-    const isValid = await verifyQStashSignature(signature, body);
-    if (!isValid) {
-      console.error("[Cron] Invalid QStash signature");
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // 2. Check QStash signature (POST requests)
+  const qstashSignature = req.headers.get("upstash-signature");
+  if (qstashSignature) {
+    const body = await req.clone().text();
+    const isValid = await verifyQStashSignature(qstashSignature, body);
+    if (isValid) {
+      return { valid: true, source: "qstash" };
     }
+  }
 
-    console.log("[Cron] Crawl all started at", new Date().toISOString());
+  // 3. Check for manual admin trigger (with API key)
+  const apiKey = req.headers.get("x-api-key");
+  if (apiKey === process.env.ADMIN_API_KEY) {
+    return { valid: true, source: "admin" };
+  }
+
+  return { valid: false, source: "unknown" };
+}
+
+/**
+ * Execute the crawl all operation
+ */
+async function executeCrawlAll(source: string): Promise<NextResponse> {
+  try {
+    console.log(`[Cron] Crawl all started via ${source} at`, new Date().toISOString());
 
     // Get all active sources
     const activeSources = await prisma.crawlSource.findMany({
@@ -40,6 +64,7 @@ export async function POST(req: NextRequest) {
         success: true,
         message: "No active sources",
         jobsCreated: 0,
+        triggeredBy: source,
       });
     }
 
@@ -47,28 +72,28 @@ export async function POST(req: NextRequest) {
 
     // Create jobs for all active sources
     const jobs = await Promise.all(
-      activeSources.map(async (source) => {
+      activeSources.map(async (crawlSource) => {
         const job = await prisma.crawlJob.create({
           data: {
-            sourceId: source.id,
+            sourceId: crawlSource.id,
             status: "pending",
           },
         });
 
         // Update source lastCrawled
         await prisma.crawlSource.update({
-          where: { id: source.id },
+          where: { id: crawlSource.id },
           data: { lastCrawled: new Date() },
         });
 
-        return { jobId: job.id, sourceName: source.name };
+        return { jobId: job.id, sourceName: crawlSource.name };
       })
     );
 
     console.log(`[Cron] Created ${jobs.length} crawl job(s)`);
 
     // Process jobs (fire and forget - cron has time limit)
-    // For longer processing, consider using a queue service
+    // Jobs are processed in background, status tracked in DB
     for (const job of jobs) {
       processCrawlJob(job.jobId).catch((error) => {
         console.error(`[Cron] Job ${job.jobId} (${job.sourceName}) failed:`, error);
@@ -80,12 +105,41 @@ export async function POST(req: NextRequest) {
       message: `Started ${jobs.length} crawl job(s)`,
       jobsCreated: jobs.length,
       sources: jobs.map((j) => j.sourceName),
+      triggeredBy: source,
+      timestamp: new Date().toISOString(),
     });
   } catch (error) {
     console.error("[Cron] Crawl all error:", error);
     return NextResponse.json(
-      { error: "Failed to start crawl jobs" },
+      {
+        error: "Failed to start crawl jobs",
+        details: error instanceof Error ? error.message : "Unknown error",
+      },
       { status: 500 }
     );
   }
+}
+
+// Vercel Cron sends GET requests
+export async function GET(req: NextRequest) {
+  const { valid, source } = await verifyAuthorization(req);
+
+  if (!valid) {
+    console.error("[Cron] Unauthorized GET request");
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  return executeCrawlAll(source);
+}
+
+// QStash sends POST requests
+export async function POST(req: NextRequest) {
+  const { valid, source } = await verifyAuthorization(req);
+
+  if (!valid) {
+    console.error("[Cron] Unauthorized POST request");
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  return executeCrawlAll(source);
 }

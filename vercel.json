@@ -1,1 +1,16 @@
-{}
+{
+  "crons": [
+    {
+      "path": "/api/cron/crawl-all",
+      "schedule": "0 21 * * *"
+    },
+    {
+      "path": "/api/cron/deadline-alerts",
+      "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/cron/matching-refresh",
+      "schedule": "0 3 * * *"
+    }
+  ]
+}
