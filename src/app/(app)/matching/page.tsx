@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { formatDateKST } from "@/lib/utils";
 import { redirect } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -154,7 +155,7 @@ export default async function MatchingPage() {
                       </p>
                     </div>
                     <div className="text-right text-xs text-muted-foreground">
-                      {new Date(result.createdAt).toLocaleDateString()}
+                      {formatDateKST(result.createdAt)}
                     </div>
                   </div>
                 </Card>

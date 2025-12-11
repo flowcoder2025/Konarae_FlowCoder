@@ -7,6 +7,7 @@
 
 import jsPDF from "jspdf";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType } from "docx";
+import { formatDateKST } from "@/lib/utils";
 
 export type ExportFormat = "pdf" | "docx" | "hwp";
 
@@ -208,7 +209,7 @@ export async function exportToDOCX(
             new Paragraph({
               children: [
                 new TextRun({
-                  text: `생성일: ${data.createdAt.toLocaleDateString("ko-KR")}`,
+                  text: `생성일: ${formatDateKST(data.createdAt)}`,
                   italics: true,
                   size: 20,
                 }),

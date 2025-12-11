@@ -4,6 +4,7 @@
  */
 
 import { prisma } from "@/lib/prisma";
+import { formatDateKST } from "@/lib/utils";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ProjectActionButtons } from "@/components/admin/project-action-buttons";
@@ -111,9 +112,7 @@ export default async function AdminProjectsPage() {
                   <td className="p-4 text-sm text-muted-foreground">
                     {project.isPermanent
                       ? "상시모집"
-                      : project.deadline
-                      ? new Date(project.deadline).toLocaleDateString("ko-KR")
-                      : "-"}
+                      : formatDateKST(project.deadline)}
                   </td>
                   <td className="p-4 text-center text-sm text-muted-foreground">
                     {project.viewCount} / {project.bookmarkCount}

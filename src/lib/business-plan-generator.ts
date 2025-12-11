@@ -7,6 +7,7 @@ import { generateText } from "ai";
 import { google } from "@ai-sdk/google";
 import { hybridSearch } from "./rag";
 import { prisma } from "./prisma";
+import { formatDateKST } from "./utils";
 
 // Token limits (PRD 12.6) - Reserved for future optimization
 const _CONTEXT_TOKEN_LIMIT = 8000;
@@ -118,7 +119,7 @@ export async function generateBusinessPlanSections(
 
 **기업 정보**:
 - 기업명: ${company.name}
-- 설립일: ${company.establishedDate.toLocaleDateString()}
+- 설립일: ${formatDateKST(company.establishedDate)}
 - 기업 형태: ${company.companyType}
 - 종업원 수: ${company.employeeCount || "미정"}명
 - 자본금: ${company.capitalAmount ? Number(company.capitalAmount).toLocaleString() + "원" : "미정"}
@@ -176,7 +177,7 @@ ${company.isVenture ? "- 벤처기업 인증\n" : ""}${company.isInnoBiz ? "- �
         ragContext,
         prompt: `사업 추진 계획을 작성해주세요:
 
-**사업 기간**: ${project.startDate && project.endDate ? `${project.startDate.toLocaleDateString()} ~ ${project.endDate.toLocaleDateString()}` : "프로젝트 일정에 따름"}
+**사업 기간**: ${project.startDate && project.endDate ? `${formatDateKST(project.startDate)} ~ ${formatDateKST(project.endDate)}` : "프로젝트 일정에 따름"}
 
 다음 내용을 포함해주세요:
 1. 단계별 추진 일정 (월별 또는 분기별)

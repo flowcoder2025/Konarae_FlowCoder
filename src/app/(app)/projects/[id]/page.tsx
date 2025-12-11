@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { formatDateKST } from "@/lib/utils";
 import { redirect, notFound } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -129,11 +130,7 @@ export default async function ProjectDetailPage({
               <dt className="text-sm text-muted-foreground mb-1">사업 기간</dt>
               <dd className="font-medium">
                 {project.startDate && project.endDate
-                  ? `${new Date(
-                      project.startDate
-                    ).toLocaleDateString()} ~ ${new Date(
-                      project.endDate
-                    ).toLocaleDateString()}`
+                  ? `${formatDateKST(project.startDate)} ~ ${formatDateKST(project.endDate)}`
                   : "미정"}
               </dd>
             </div>
@@ -142,9 +139,7 @@ export default async function ProjectDetailPage({
               <dd className="font-medium">
                 {project.isPermanent
                   ? "상시모집"
-                  : project.deadline
-                  ? new Date(project.deadline).toLocaleDateString()
-                  : "미정"}
+                  : formatDateKST(project.deadline)}
               </dd>
             </div>
           </dl>

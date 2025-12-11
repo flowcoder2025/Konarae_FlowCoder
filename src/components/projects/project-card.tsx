@@ -2,6 +2,7 @@
 
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { formatDateKST } from "@/lib/utils";
 import Link from "next/link";
 
 interface ProjectCardProps {
@@ -109,7 +110,7 @@ export function ProjectCard({ project }: ProjectCardProps) {
               <span className="text-xs">상시모집</span>
             ) : project.deadline ? (
               <span className="text-xs">
-                ~{new Date(project.deadline).toLocaleDateString()}
+                ~{formatDateKST(project.deadline)}
               </span>
             ) : (
               <span className="text-xs">기한 미정</span>

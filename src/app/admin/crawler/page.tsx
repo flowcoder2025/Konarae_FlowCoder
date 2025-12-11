@@ -4,6 +4,7 @@
  */
 
 import { prisma } from "@/lib/prisma";
+import { formatDateTimeKST } from "@/lib/utils";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle, XCircle, Clock, AlertCircle, Play, Calendar } from "lucide-react";
@@ -147,10 +148,10 @@ export default async function AdminCrawlerPage() {
                         </Badge>
                       </td>
                       <td className="p-4 text-sm text-muted-foreground">
-                        {job.startedAt ? new Date(job.startedAt).toLocaleString("ko-KR") : "-"}
+                        {formatDateTimeKST(job.startedAt)}
                       </td>
                       <td className="p-4 text-sm text-muted-foreground">
-                        {job.completedAt ? new Date(job.completedAt).toLocaleString("ko-KR") : "-"}
+                        {formatDateTimeKST(job.completedAt)}
                       </td>
                       <td className="p-4 text-right text-sm">
                         {job.projectsFound > 0 ? (

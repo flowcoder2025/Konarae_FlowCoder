@@ -11,3 +11,42 @@ import { twMerge } from "tailwind-merge"
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
+
+/**
+ * 서울 타임존(KST) 날짜 포맷 유틸리티
+ * 서버/클라이언트 환경에 관계없이 항상 Asia/Seoul 타임존으로 표시합니다.
+ */
+const SEOUL_TIMEZONE = "Asia/Seoul"
+
+/**
+ * 날짜를 서울 시간으로 포맷합니다. (예: 2025. 12. 11.)
+ */
+export function formatDateKST(date: Date | string | null): string {
+  if (!date) return "-"
+  const d = typeof date === "string" ? new Date(date) : date
+  return d.toLocaleDateString("ko-KR", { timeZone: SEOUL_TIMEZONE })
+}
+
+/**
+ * 날짜와 시간을 서울 시간으로 포맷합니다. (예: 2025. 12. 11. 오후 3:30:00)
+ */
+export function formatDateTimeKST(date: Date | string | null): string {
+  if (!date) return "-"
+  const d = typeof date === "string" ? new Date(date) : date
+  return d.toLocaleString("ko-KR", { timeZone: SEOUL_TIMEZONE })
+}
+
+/**
+ * 날짜와 시간을 짧은 형식으로 서울 시간으로 포맷합니다. (예: 12/11 15:30)
+ */
+export function formatDateTimeShortKST(date: Date | string | null): string {
+  if (!date) return "-"
+  const d = typeof date === "string" ? new Date(date) : date
+  return d.toLocaleString("ko-KR", {
+    timeZone: SEOUL_TIMEZONE,
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  })
+}

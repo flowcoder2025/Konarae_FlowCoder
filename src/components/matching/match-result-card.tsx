@@ -3,6 +3,7 @@
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { formatDateKST } from "@/lib/utils";
 import Link from "next/link";
 
 interface MatchResultCardProps {
@@ -147,7 +148,7 @@ export function MatchResultCard({ result }: MatchResultCardProps) {
               <span>상시모집</span>
             ) : result.project.deadline ? (
               <span>
-                ~{new Date(result.project.deadline).toLocaleDateString()}
+                ~{formatDateKST(result.project.deadline)}
               </span>
             ) : (
               <span>기한 미정</span>

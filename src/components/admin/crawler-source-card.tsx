@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Play } from "lucide-react";
 import { toast } from "sonner";
 import { startCrawl } from "@/lib/actions/admin-actions";
+import { formatDateTimeKST } from "@/lib/utils";
 
 type CrawlSource = {
   id: string;
@@ -69,7 +70,7 @@ export function CrawlerSourceCard({ source }: Props) {
 
         {source.lastCrawled && (
           <div className="text-xs text-muted-foreground">
-            마지막 크롤링: {new Date(source.lastCrawled).toLocaleString("ko-KR")}
+            마지막 크롤링: {formatDateTimeKST(source.lastCrawled)}
           </div>
         )}
 

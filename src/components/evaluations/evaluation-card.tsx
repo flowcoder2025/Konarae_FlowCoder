@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { formatDateKST } from "@/lib/utils";
 
 interface EvaluationCardProps {
   evaluation: {
@@ -91,7 +92,7 @@ export function EvaluationCard({ evaluation }: EvaluationCardProps) {
             피드백: {evaluation._count?.feedbacks || 0}개
           </span>
           <span>
-            {new Date(evaluation.createdAt).toLocaleDateString("ko-KR")}
+            {formatDateKST(evaluation.createdAt)}
           </span>
         </div>
       </Card>

@@ -4,6 +4,7 @@
  */
 
 import { prisma } from "@/lib/prisma";
+import { formatDateKST } from "@/lib/utils";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { User, Mail } from "lucide-react";
@@ -114,7 +115,7 @@ export default async function AdminUsersPage() {
                     {user._count.companies} / {user._count.businessPlans}
                   </td>
                   <td className="p-4 text-sm text-muted-foreground">
-                    {new Date(user.createdAt).toLocaleDateString("ko-KR")}
+                    {formatDateKST(user.createdAt)}
                   </td>
                   <td className="p-4">
                     <div className="flex justify-end gap-2">

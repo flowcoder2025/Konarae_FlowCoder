@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { formatDateKST } from "@/lib/utils";
 
 interface BusinessPlanCardProps {
   businessPlan: {
@@ -74,7 +75,7 @@ export function BusinessPlanCard({ businessPlan }: BusinessPlanCardProps) {
             섹션: {businessPlan._count?.sections || 0}개
           </span>
           <span>
-            수정: {new Date(businessPlan.updatedAt).toLocaleDateString("ko-KR")}
+            수정: {formatDateKST(businessPlan.updatedAt)}
           </span>
         </div>
       </Card>
