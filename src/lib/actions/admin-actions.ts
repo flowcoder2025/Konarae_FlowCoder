@@ -58,10 +58,41 @@ export async function startCrawl(sourceId: string): Promise<ActionResult> {
       data: { lastCrawled: new Date() },
     });
 
-    // Process job asynchronously (don't await)
-    processCrawlJob(job.id).catch((error) => {
-      console.error("Background crawl job failed:", error);
-    });
+    // Send job to Railway worker
+    let RAILWAY_URL = process.env.RAILWAY_CRAWLER_URL;
+    const WORKER_API_KEY = process.env.WORKER_API_KEY;
+
+    if (!RAILWAY_URL || !WORKER_API_KEY) {
+      console.error("[Admin] Railway configuration missing");
+      // Fallback to direct execution if Railway not configured
+      processCrawlJob(job.id).catch((error) => {
+        console.error("Background crawl job failed:", error);
+      });
+    } else {
+      // Ensure RAILWAY_URL has https:// protocol
+      if (!RAILWAY_URL.startsWith('http://') && !RAILWAY_URL.startsWith('https://')) {
+        RAILWAY_URL = `https://${RAILWAY_URL}`;
+      }
+
+      try {
+        const response = await fetch(`${RAILWAY_URL}/crawl`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${WORKER_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ jobId: job.id }),
+        });
+
+        if (response.ok) {
+          console.log(`[Admin] Job ${job.id} queued to Railway worker`);
+        } else {
+          console.error(`[Admin] Failed to queue job ${job.id}: ${response.status}`);
+        }
+      } catch (error) {
+        console.error(`[Admin] Error sending job ${job.id} to Railway:`, error);
+      }
+    }
 
     revalidatePath("/admin/crawler");
 
@@ -325,12 +356,54 @@ export async function startAllCrawl(): Promise<ActionResult & { jobCount?: numbe
       })
     );
 
-    // Process jobs asynchronously (don't await)
-    jobs.forEach((job) => {
-      processCrawlJob(job.id).catch((error) => {
-        console.error(`Background crawl job ${job.id} failed:`, error);
+    // Send jobs to Railway worker
+    let RAILWAY_URL = process.env.RAILWAY_CRAWLER_URL;
+    const WORKER_API_KEY = process.env.WORKER_API_KEY;
+
+    if (!RAILWAY_URL || !WORKER_API_KEY) {
+      console.error("[Admin] Railway configuration missing");
+      // Fallback to direct execution if Railway not configured
+      jobs.forEach((job) => {
+        processCrawlJob(job.id).catch((error) => {
+          console.error(`Background crawl job ${job.id} failed:`, error);
+        });
       });
-    });
+    } else {
+      // Ensure RAILWAY_URL has https:// protocol
+      if (!RAILWAY_URL.startsWith('http://') && !RAILWAY_URL.startsWith('https://')) {
+        RAILWAY_URL = `https://${RAILWAY_URL}`;
+      }
+
+      // Send jobs to Railway worker
+      let successCount = 0;
+      let failCount = 0;
+
+      for (const job of jobs) {
+        try {
+          const response = await fetch(`${RAILWAY_URL}/crawl`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${WORKER_API_KEY}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ jobId: job.id }),
+          });
+
+          if (response.ok) {
+            console.log(`[Admin] Job ${job.id} queued to Railway worker`);
+            successCount++;
+          } else {
+            console.error(`[Admin] Failed to queue job ${job.id}: ${response.status}`);
+            failCount++;
+          }
+        } catch (error) {
+          console.error(`[Admin] Error sending job ${job.id} to Railway:`, error);
+          failCount++;
+        }
+      }
+
+      console.log(`[Admin] Railway delegation complete: ${successCount} queued, ${failCount} failed`);
+    }
 
     revalidatePath("/admin/crawler");
 
