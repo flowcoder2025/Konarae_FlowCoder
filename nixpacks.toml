@@ -1,0 +1,18 @@
+# Nixpacks Configuration for Railway Worker
+# https://nixpacks.com/docs/configuration/file
+
+[phases.setup]
+nixPkgs = ["nodejs-18_x", "pnpm"]
+
+[phases.install]
+cmds = [
+  "pnpm install --frozen-lockfile --prod=false"
+]
+
+[phases.build]
+# Skip Next.js build - worker doesn't need it
+# Only install dependencies and keep tsx for runtime
+cmds = []
+
+[start]
+cmd = "npm run worker"

@@ -3,6 +3,8 @@
 
 [build]
 builder = "NIXPACKS"
+# Skip Next.js build - worker only needs dependencies installed
+nixpacksConfigPath = "nixpacks.toml"
 
 [deploy]
 startCommand = "npm run worker"
