@@ -93,7 +93,7 @@ async function executeCrawlAll(source: string): Promise<NextResponse> {
 
     // Delegate jobs to Railway worker
     // Railway has no time limit, can process all jobs in background
-    const RAILWAY_URL = process.env.RAILWAY_CRAWLER_URL;
+    let RAILWAY_URL = process.env.RAILWAY_CRAWLER_URL;
     const WORKER_API_KEY = process.env.WORKER_API_KEY;
 
     if (!RAILWAY_URL || !WORKER_API_KEY) {
@@ -105,6 +105,12 @@ async function executeCrawlAll(source: string): Promise<NextResponse> {
         },
         { status: 500 }
       );
+    }
+
+    // Ensure RAILWAY_URL has https:// protocol
+    if (!RAILWAY_URL.startsWith('http://') && !RAILWAY_URL.startsWith('https://')) {
+      RAILWAY_URL = `https://${RAILWAY_URL}`;
+      console.log(`[Cron] Added https:// protocol to RAILWAY_URL: ${RAILWAY_URL}`);
     }
 
     // Send jobs to Railway worker
