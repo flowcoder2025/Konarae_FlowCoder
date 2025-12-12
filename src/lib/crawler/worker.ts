@@ -24,15 +24,15 @@ import {
 const httpAgent = new http.Agent({
   keepAlive: true,
   keepAliveMsecs: 10000,
-  maxSockets: 5,
-  timeout: 20000,
+  maxSockets: 10,  // Railway 환경 고려 증가
+  timeout: 60000,   // 60초로 증가
 });
 
 const httpsAgent = new https.Agent({
   keepAlive: true,
   keepAliveMsecs: 10000,
-  maxSockets: 5,
-  timeout: 20000,
+  maxSockets: 10,  // Railway 환경 고려 증가
+  timeout: 60000,   // 60초로 증가
 });
 
 /**
@@ -1362,8 +1362,8 @@ const CRAWLER_CONFIG = {
   FILE_DELAY_MS: 2000,     // 파일 처리 간 딜레이
 
   // 타임아웃 설정 (Vercel 환경 최적화)
-  REQUEST_TIMEOUT: 15000,  // 30초 → 15초 (빠른 실패 & 재시도)
-  FILE_TIMEOUT: 30000,     // 파일 다운로드는 30초 유지
+  REQUEST_TIMEOUT: 30000,  // Railway 환경 고려 30초로 증가
+  FILE_TIMEOUT: 60000,     // 파일 다운로드는 60초로 증가
 };
 
 /**
