@@ -1,0 +1,37 @@
+# Railway Ignore File
+# Files and directories to exclude from Railway deployment
+
+# Next.js build output (not needed for worker)
+.next/
+out/
+
+# Development files
+.env.local
+.env.development
+*.log
+
+# Testing
+coverage/
+.jest/
+
+# IDE
+.vscode/
+.idea/
+
+# macOS
+.DS_Store
+
+# Node modules (Railway will install from package.json)
+node_modules/
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Tests (not needed in production)
+__tests__/
+*.test.ts
+*.test.tsx
+*.spec.ts
+*.spec.tsx

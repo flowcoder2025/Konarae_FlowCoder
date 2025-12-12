@@ -1,0 +1,25 @@
+# Railway Configuration for Crawler Worker
+# https://docs.railway.app/deploy/config-as-code
+
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+startCommand = "npm run worker"
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+
+[env]
+# Node.js 환경 설정
+NODE_ENV = "production"
+
+# Railway가 자동으로 PORT 환경변수 제공
+# 추가 환경변수는 Railway Dashboard에서 설정:
+# - DATABASE_URL
+# - DIRECT_URL
+# - GOOGLE_GENERATIVE_AI_API_KEY
+# - WORKER_API_KEY
+# - SUPABASE_URL
+# - SUPABASE_ANON_KEY

@@ -10,7 +10,6 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { processCrawlJob } from "@/lib/crawler/worker";
 import { verifyQStashSignature } from "@/lib/qstash";
 
 export const maxDuration = 60;
@@ -92,13 +91,51 @@ async function executeCrawlAll(source: string): Promise<NextResponse> {
 
     console.log(`[Cron] Created ${jobs.length} crawl job(s)`);
 
-    // Process jobs (fire and forget - cron has time limit)
-    // Jobs are processed in background, status tracked in DB
-    for (const job of jobs) {
-      processCrawlJob(job.jobId).catch((error) => {
-        console.error(`[Cron] Job ${job.jobId} (${job.sourceName}) failed:`, error);
-      });
+    // Delegate jobs to Railway worker
+    // Railway has no time limit, can process all jobs in background
+    const RAILWAY_URL = process.env.RAILWAY_CRAWLER_URL;
+    const WORKER_API_KEY = process.env.WORKER_API_KEY;
+
+    if (!RAILWAY_URL || !WORKER_API_KEY) {
+      console.error("[Cron] Railway configuration missing (RAILWAY_CRAWLER_URL or WORKER_API_KEY)");
+      return NextResponse.json(
+        {
+          error: "Server configuration error",
+          message: "Railway worker not configured",
+        },
+        { status: 500 }
+      );
     }
+
+    // Send jobs to Railway worker
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const job of jobs) {
+      try {
+        const response = await fetch(`${RAILWAY_URL}/crawl`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${WORKER_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ jobId: job.jobId }),
+        });
+
+        if (response.ok) {
+          console.log(`[Cron] Job ${job.jobId} (${job.sourceName}) queued to Railway worker`);
+          successCount++;
+        } else {
+          console.error(`[Cron] Failed to queue job ${job.jobId}: ${response.status} ${response.statusText}`);
+          failCount++;
+        }
+      } catch (error) {
+        console.error(`[Cron] Error sending job ${job.jobId} to Railway:`, error);
+        failCount++;
+      }
+    }
+
+    console.log(`[Cron] Railway delegation complete: ${successCount} queued, ${failCount} failed`);
 
     return NextResponse.json({
       success: true,
