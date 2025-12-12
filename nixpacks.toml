@@ -1,8 +1,6 @@
 # Nixpacks Configuration for Railway Worker
 # https://nixpacks.com/docs/configuration/file
-
-[phases.setup]
-nixPkgs = ["nodejs-20_x", "pnpm"]
+# Node.js version is auto-detected from .node-version file
 
 [phases.install]
 cmds = [
