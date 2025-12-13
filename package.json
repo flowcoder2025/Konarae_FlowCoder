@@ -58,7 +58,7 @@
     "jspdf": "^3.0.4",
     "jszip": "^3.10.1",
     "lucide-react": "^0.468.0",
-    "next": "^15.1.0",
+    "next": "^15.5.9",
     "next-auth": "^5.0.0-beta.25",
     "node-hwp": "0.1.0-alpha",
     "pdf-parse": "^2.4.5",
