@@ -53,33 +53,42 @@ export interface MatchingResultData extends MatchingScore {
 }
 
 /**
- * Calculate semantic score using RAG hybrid search
+ * Calculate semantic scores for all projects in batch using RAG hybrid search
+ * Optimized: Single API call instead of N calls
  */
-async function calculateSemanticScore(
+async function calculateSemanticScoresBatch(
   companyProfile: string,
-  projectId: string
-): Promise<number> {
+  projectIds: string[]
+): Promise<Map<string, number>> {
   try {
+    // Batch search with matchCount limited to reasonable size
+    const matchCount = Math.min(projectIds.length, 100);
+
     const results = await hybridSearch({
       queryText: companyProfile,
       sourceType: "support_project",
       matchThreshold: 0.5,
-      matchCount: 50,
+      matchCount,
       semanticWeight: 0.8,
     });
 
-    // Find match for this project
-    const projectMatch = results.find((r) => r.sourceId === projectId);
+    // Create Map for O(1) lookup
+    const scoreMap = new Map<string, number>();
 
-    if (projectMatch) {
-      // Normalize combined score to 0-100
-      return Math.round(projectMatch.combinedScore * 100);
+    for (const result of results) {
+      // Only include projects we're interested in
+      if (projectIds.includes(result.sourceId)) {
+        scoreMap.set(
+          result.sourceId,
+          Math.round(result.combinedScore * 100)
+        );
+      }
     }
 
-    return 0;
+    return scoreMap;
   } catch (error) {
-    console.error("[Matching] Semantic score error:", error);
-    return 0;
+    console.error("[Matching] Batch semantic score error:", error);
+    return new Map(); // Return empty map on error
   }
 }
 
@@ -387,12 +396,16 @@ export async function executeMatching(
     // Calculate scores for each project
     const results: MatchingResultData[] = [];
 
+    // Batch semantic score calculation (optimized)
+    const projectIds = projects.map((p) => p.id);
+    const semanticScoreMap = await calculateSemanticScoresBatch(
+      companyProfile,
+      projectIds
+    );
+
     for (const project of projects) {
-      // Semantic score
-      const semanticScore = await calculateSemanticScore(
-        companyProfile,
-        project.id
-      );
+      // Semantic score (from batch results)
+      const semanticScore = semanticScoreMap.get(project.id) || 0;
 
       // Category score
       const categoryScore = calculateCategoryScore(

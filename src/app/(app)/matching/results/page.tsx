@@ -2,12 +2,14 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { redirect } from "next/navigation";
 import { MatchResultCard } from "@/components/matching/match-result-card";
+import { MatchFilters } from "@/components/matching/match-filters";
 
 interface MatchingResultsPageProps {
   searchParams: Promise<{
     page?: string;
     companyId?: string;
     confidence?: string;
+    sort?: string;
   }>;
 }
 
@@ -37,12 +39,30 @@ export default async function MatchingResultsPage({
     where.confidence = params.confidence;
   }
 
-  const [rawResults, total] = await Promise.all([
+  // Build orderBy clause based on sort parameter
+  const sort = params.sort || "score";
+  let orderBy: any = { totalScore: "desc" }; // default
+
+  switch (sort) {
+    case "score_asc":
+      orderBy = { totalScore: "asc" };
+      break;
+    case "date":
+      orderBy = { createdAt: "desc" };
+      break;
+    case "deadline":
+      orderBy = { project: { deadline: "asc" } };
+      break;
+    default:
+      orderBy = { totalScore: "desc" };
+  }
+
+  const [rawResults, total, userCompanies] = await Promise.all([
     prisma.matchingResult.findMany({
       where,
       skip,
       take: pageSize,
-      orderBy: { totalScore: "desc" },
+      orderBy,
       include: {
         project: {
           select: {
@@ -67,6 +87,20 @@ export default async function MatchingResultsPage({
       },
     }),
     prisma.matchingResult.count({ where }),
+    // Get user's companies for filter
+    prisma.company.findMany({
+      where: {
+        members: {
+          some: { userId: session.user.id },
+        },
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        name: true,
+      },
+      orderBy: { name: "asc" },
+    }),
   ]);
 
   // Type-safe confidence mapping
@@ -99,7 +133,7 @@ export default async function MatchingResultsPage({
 
       {/* Filters */}
       <div className="mb-6">
-        {/* TODO: Add filter components */}
+        <MatchFilters companies={userCompanies} />
       </div>
 
       {/* Results */}
