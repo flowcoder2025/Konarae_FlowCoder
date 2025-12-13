@@ -12,7 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
-import { Lightbulb, Loader2, ArrowLeft } from "lucide-react";
+import { Lightbulb, Loader2, ArrowLeft, FolderOpen } from "lucide-react";
 import Link from "next/link";
 import { use } from "react";
 
@@ -365,6 +365,36 @@ export default function CompanyEditPage({
                     checked={watch("isDisabled")}
                     onCheckedChange={(checked) => setValue("isDisabled", checked)}
                   />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <FolderOpen className="h-5 w-5" />
+                기업 문서 관리
+              </CardTitle>
+              <CardDescription>
+                각종 서류를 업로드하면 AI가 자동으로 분석하여 매칭 및 사업계획서 작성에 활용합니다
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="rounded-lg bg-muted/50 p-4">
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <Lightbulb className="h-4 w-4 text-amber-500 flex-shrink-0" />
+                    <p className="text-sm text-muted-foreground">
+                      <span className="font-medium text-foreground">사업자등록증, 재무제표, 인증서 등</span> 10종류의 문서를 업로드할 수 있습니다
+                    </p>
+                  </div>
+                  <Link href={`/companies/${id}/documents`}>
+                    <Button variant="outline" className="w-full">
+                      <FolderOpen className="h-4 w-4 mr-2" />
+                      문서 관리 페이지로 이동
+                    </Button>
+                  </Link>
                 </div>
               </div>
             </CardContent>

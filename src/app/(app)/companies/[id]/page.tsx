@@ -5,7 +5,7 @@ import { checkCompanyPermission } from "@/lib/rebac";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Building2, Mail, Phone, MapPin, Users, Calendar, Briefcase, Lightbulb, Pencil, Factory, FileText, Tag, Target, Eye } from "lucide-react";
+import { Building2, Mail, Phone, MapPin, Users, Calendar, Briefcase, Lightbulb, Pencil, Factory, FileText, Tag, Target, Eye, FolderOpen } from "lucide-react";
 import { format } from "date-fns";
 import { PageHeader } from "@/components/common";
 import Link from "next/link";
@@ -65,6 +65,7 @@ export default async function CompanyDetailPage({
         select: {
           businessPlans: true,
           matchingResults: true,
+          documents: true,
         },
       },
     },
@@ -204,6 +205,39 @@ export default async function CompanyDetailPage({
             <div className="flex justify-between text-sm">
               <span className="text-muted-foreground">매칭 결과</span>
               <span className="font-medium">{company._count.matchingResults}개</span>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* 문서 관리 섹션 */}
+      <div className="mt-6">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <FolderOpen className="h-5 w-5" />
+              기업 문서 관리
+            </CardTitle>
+            <CardDescription>
+              각종 서류를 업로드하면 AI가 자동으로 분석하여 매칭 및 사업계획서 작성에 활용합니다
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center justify-between">
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">
+                  업로드된 문서: <span className="font-medium text-foreground">{company._count.documents}개</span>
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  사업자등록증, 재무제표, 인증서 등 10종류의 문서 관리 가능
+                </p>
+              </div>
+              <Link href={`/companies/${id}/documents`}>
+                <Button>
+                  <FolderOpen className="h-4 w-4 mr-2" />
+                  문서 관리
+                </Button>
+              </Link>
             </div>
           </CardContent>
         </Card>
