@@ -33,6 +33,9 @@ const httpsAgent = new https.Agent({
   keepAliveMsecs: 10000,
   maxSockets: 10,  // Railway 환경 고려 증가
   timeout: 60000,   // 60초로 증가
+  // Development: SSL 검증 우회 (일부 사이트의 인증서 문제 해결)
+  // Production: 환경변수로 제어 가능
+  rejectUnauthorized: process.env.NODE_ENV === 'production' ? true : false,
 });
 
 /**
