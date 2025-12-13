@@ -126,9 +126,17 @@ export async function processCrawlJob(jobId: string) {
 
     console.log(`Found ${crawledProjects.length} projects`);
 
+    // Test mode: Limit to sample projects if TEST_MAX_PROJECTS is set
+    const maxProjects = process.env.TEST_MAX_PROJECTS ? parseInt(process.env.TEST_MAX_PROJECTS, 10) : undefined;
+    const projectsToProcess = maxProjects ? crawledProjects.slice(0, maxProjects) : crawledProjects;
+
+    if (maxProjects && crawledProjects.length > maxProjects) {
+      console.log(`\n⚠️  TEST MODE: Processing only first ${maxProjects} projects (total: ${crawledProjects.length})`);
+    }
+
     // Save projects to database (includes file processing)
     console.log(`\n=== Step 3+4: Saving projects and processing files ===`);
-    const { newCount, updatedCount, filesProcessed } = await saveProjects(crawledProjects);
+    const { newCount, updatedCount, filesProcessed } = await saveProjects(projectsToProcess);
 
     console.log(`\n=== Crawl Summary ===`);
     console.log(`Projects: ${newCount} new, ${updatedCount} updated`);
@@ -212,6 +220,8 @@ interface CrawledProject {
   attachmentUrls?: string[];
   // 저장된 첨부파일 정보
   savedAttachments?: SavedAttachment[];
+  // 세션 쿠키 (파일 다운로드용)
+  cookies?: string;
 }
 
 /**
@@ -242,6 +252,7 @@ function extractFileUrls(
 
   // Detect site type from URL
   const isKStartup = detailUrl?.includes('k-startup.go.kr') || false;
+  const isTechnopark = detailUrl?.includes('technopark.kr') || false;
 
   // ===== K-Startup specific pattern =====
   // HTML 구조:
@@ -278,6 +289,38 @@ function extractFileUrls(
 
     if (fileUrls.length > 0) {
       console.log(`    → Found ${fileUrls.length} K-Startup file(s)`);
+      return fileUrls;
+    }
+  }
+
+  // ===== Technopark specific pattern =====
+  // HTML 구조:
+  // <div>첨부파일</div>
+  // <ul>
+  //   <li><a href="/?module=file&act=procFileDownload&file_srl=...">파일명.pdf</a></li>
+  // </ul>
+  if (isTechnopark) {
+    console.log(`    → Using Technopark file extractor`);
+
+    // Extract base URL from detailUrl
+    const baseUrl = detailUrl ? new URL(detailUrl).origin : 'https://www.technopark.kr';
+
+    // Find links with procFileDownload pattern
+    $('a[href*="procFileDownload"]').each((_, element) => {
+      let href = $(element).attr('href');
+      if (href) {
+        // Convert relative URL to absolute URL
+        if (href.startsWith('?') || href.startsWith('/')) {
+          href = href.startsWith('?') ? `${baseUrl}/${href}` : `${baseUrl}${href}`;
+        }
+        if (!fileUrls.includes(href)) {
+          fileUrls.push(href);
+        }
+      }
+    });
+
+    if (fileUrls.length > 0) {
+      console.log(`    → Found ${fileUrls.length} Technopark file(s)`);
       return fileUrls;
     }
   }
@@ -353,7 +396,7 @@ function extractFileUrls(
 async function fetchDetailPage(
   detailUrl: string,
   baseUrl: string
-): Promise<string[]> {
+): Promise<{ fileUrls: string[]; cookies?: string }> {
   try {
     const axios = (await import("axios")).default;
     const { load } = await import("cheerio");
@@ -379,6 +422,16 @@ async function fetchDetailPage(
     const $ = load(response.data);
     const fileUrls = extractFileUrls($, detailUrl);
 
+    // Extract cookies from Set-Cookie header
+    let cookies: string | undefined;
+    const setCookieHeader = response.headers['set-cookie'];
+    if (setCookieHeader && Array.isArray(setCookieHeader)) {
+      // Convert Set-Cookie array to Cookie header format
+      // Example: ['PHPSESSID=xxx; path=/; HttpOnly', 'other=yyy'] → 'PHPSESSID=xxx; other=yyy'
+      cookies = setCookieHeader.map(cookie => cookie.split(';')[0]).join('; ');
+      console.log(`  → Saved session cookies for file download`);
+    }
+
     // Convert relative URLs to absolute
     const absoluteUrls = fileUrls.map((url) => {
       if (url.startsWith("http")) {
@@ -394,10 +447,10 @@ async function fetchDetailPage(
     });
 
     console.log(`  → Found ${absoluteUrls.length} file(s)`);
-    return absoluteUrls;
+    return { fileUrls: absoluteUrls, cookies };
   } catch (error: any) {
     console.error(`  ✗ Failed to fetch detail page ${detailUrl}: ${error.code || error.message}`);
-    return [];
+    return { fileUrls: [], cookies: undefined };
   }
 }
 
@@ -696,7 +749,7 @@ export { repairCorruptedFileName, isCorruptedFileName, hasValidKorean };
  * Returns buffer and actual filename from Content-Disposition header
  * Enhanced with retry logic and HTTP agents for Vercel compatibility
  */
-async function downloadFile(url: string): Promise<DownloadResult | null> {
+async function downloadFile(url: string, cookies?: string): Promise<DownloadResult | null> {
   try {
     const axios = (await import("axios")).default;
 
@@ -714,6 +767,7 @@ async function downloadFile(url: string): Promise<DownloadResult | null> {
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
           "Accept": "*/*",
           "Connection": "keep-alive",
+          ...(cookies ? { "Cookie": cookies } : {}),
         },
       }),
       { retries: 2, initialDelayMs: 2000 }
@@ -1066,7 +1120,8 @@ function extractFileName(url: string): string {
  */
 async function processProjectFiles(
   projectId: string,
-  attachmentUrls: string[]
+  attachmentUrls: string[],
+  cookies?: string
 ): Promise<{
   attachments: SavedAttachment[];
   aiAnalysis?: {
@@ -1122,7 +1177,7 @@ async function processProjectFiles(
     if (needsDownloadToCheck) {
       console.log(`    → Type unknown, downloading to check...`);
 
-      const downloadResult = await downloadFile(url);
+      const downloadResult = await downloadFile(url, cookies);
       if (!downloadResult) {
         console.log(`    ✗ Download failed, recording URL only`);
         attachments.push({
@@ -1244,7 +1299,7 @@ async function processProjectFiles(
     // ===== 파싱 대상: 다운로드 → Storage 저장 → 텍스트 추출 =====
 
     // Step 1: 파일 다운로드 + Content-Disposition 파일명 추출
-    const downloadResult = await downloadFile(url);
+    const downloadResult = await downloadFile(url, cookies);
     if (!downloadResult) {
       console.log(`    ✗ Download failed, recording URL only`);
       // 다운로드 실패해도 URL은 기록
@@ -1529,8 +1584,9 @@ async function crawlAndParse(
         console.log(`[${i + 1}/${projects.length}] ${project.name}`);
 
         try {
-          const attachmentUrls = await fetchDetailPage(project.detailUrl, url);
+          const { fileUrls: attachmentUrls, cookies } = await fetchDetailPage(project.detailUrl, url);
           projects[i].attachmentUrls = attachmentUrls;
+          projects[i].cookies = cookies;
 
           if (attachmentUrls.length > 0) {
             console.log(`  ✓ Files found:`);
@@ -1930,8 +1986,8 @@ async function saveProjects(
             },
           });
 
-      // Prepare project data (exclude savedAttachments which is not in schema)
-      const { savedAttachments: _savedAttachments, attachmentUrls, ...projectData } = project;
+      // Prepare project data (exclude savedAttachments and cookies which are not in schema)
+      const { savedAttachments: _savedAttachments, attachmentUrls, cookies, ...projectData } = project;
 
       let projectId: string;
 
@@ -1979,7 +2035,8 @@ async function saveProjects(
 
           const { attachments, aiAnalysis } = await processProjectFiles(
             projectId,
-            attachmentUrls
+            attachmentUrls,
+            project.cookies
           );
 
           // Save attachments to database

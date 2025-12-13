@@ -77,9 +77,12 @@ async function main() {
       data: { lastCrawled: new Date() },
     });
 
-    // 4. Process job
-    console.log("\n📋 Step 3: Starting crawl...");
+    // 4. Process job (샘플 5개로 제한)
+    console.log("\n📋 Step 3: Starting crawl (샘플 5개)...");
     console.log("=".repeat(60) + "\n");
+
+    // Set environment variable to limit to 5 projects
+    process.env.TEST_MAX_PROJECTS = "5";
 
     const startTime = Date.now();
     const stats = await processCrawlJob(job.id);
