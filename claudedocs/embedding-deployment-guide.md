@@ -94,20 +94,20 @@ ADMIN_API_KEY=<수동 트리거용 관리자 키>
   "crons": [
     {
       "path": "/api/cron/generate-embeddings",
-      "schedule": "0 17 * * *"
+      "schedule": "0 20 * * *"
     }
   ]
 }
 ```
 
-> **Note**: `0 17 * * *` = 매일 17:00 UTC = 02:00 KST (다음날)
+> **Note**: `0 20 * * *` = 매일 20:00 UTC = 05:00 KST (다음날)
 
 또는 **Upstash QStash** 사용:
 
 ```bash
 # QStash 대시보드에서 스케줄 생성
 URL: https://your-vercel-app.vercel.app/api/cron/generate-embeddings
-Schedule: 0 17 * * *
+Schedule: 0 20 * * *
 Method: POST
 Headers:
   - upstash-signature: <자동 생성>

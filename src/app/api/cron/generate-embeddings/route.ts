@@ -5,7 +5,7 @@
  * Triggers Railway worker to generate embeddings for projects with needsEmbedding=true
  * Runs daily to process crawled projects asynchronously
  *
- * Schedule: Daily at 02:00 KST (17:00 UTC previous day)
+ * Schedule: Daily at 05:00 KST (20:00 UTC previous day)
  */
 
 import { NextRequest, NextResponse } from "next/server";

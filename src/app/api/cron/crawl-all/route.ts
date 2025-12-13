@@ -3,7 +3,7 @@
  * GET/POST /api/cron/crawl-all - Start crawling for all active sources
  *
  * Supports:
- * - Vercel Cron (GET with CRON_SECRET) - KST 06:00 = UTC 21:00
+ * - Vercel Cron (GET with CRON_SECRET) - KST 01:00 = UTC 16:00 (previous day)
  * - Upstash QStash (POST with signature)
  * - Manual trigger (with ADMIN_API_KEY)
  */
