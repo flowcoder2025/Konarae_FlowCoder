@@ -8,7 +8,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
-import { DocumentUploadCard } from "@/components/documents/document-upload-card";
+import { DocumentListCard } from "@/components/documents/document-list-card";
 import {
   DOCUMENT_TYPES,
   DOCUMENT_METADATA,
@@ -44,8 +44,8 @@ export function CompanyDocumentsPageClient({
     }
   };
 
-  const getExistingDocument = (docType: DocumentType) => {
-    return documents.find((doc) => doc.documentType === docType);
+  const getExistingDocuments = (docType: DocumentType) => {
+    return documents.filter((doc) => doc.documentType === docType);
   };
 
   if (loading) {
@@ -75,14 +75,14 @@ export function CompanyDocumentsPageClient({
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {Object.values(DOCUMENT_TYPES).map((docType) => {
           const metadata = DOCUMENT_METADATA[docType];
-          const existingDoc = getExistingDocument(docType);
+          const existingDocs = getExistingDocuments(docType);
 
           return (
-            <DocumentUploadCard
+            <DocumentListCard
               key={docType}
               metadata={metadata}
               companyId={companyId}
-              existingDocument={existingDoc}
+              existingDocuments={existingDocs}
               onUploadComplete={fetchDocuments}
             />
           );
