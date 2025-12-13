@@ -1999,6 +1999,7 @@ async function saveProjects(
             ...projectData,
             crawledAt: new Date(),
             updatedAt: new Date(),
+            needsEmbedding: true, // Re-queue for embedding update
           },
         });
         projectId = existing.id;
@@ -2011,6 +2012,7 @@ async function saveProjects(
             ...projectData,
             crawledAt: new Date(),
             status: "active",
+            needsEmbedding: true, // Queue for async embedding generation
           },
         });
         projectId = created.id;

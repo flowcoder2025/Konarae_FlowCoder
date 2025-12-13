@@ -311,6 +311,9 @@ model SupportProject {
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
+  // Embedding queue flag
+  needsEmbedding Boolean @default(true) // Flag for async embedding generation
+
   embeddings      SupportProjectEmbedding[]
   matchingResults MatchingResult[]
   businessPlans   BusinessPlan[]
