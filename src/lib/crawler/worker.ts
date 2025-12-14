@@ -16,6 +16,7 @@ import {
   sortByParsingPriority,
   type FileType,
 } from "@/lib/supabase-storage";
+import { validateProject } from "@/lib/crawler/validators";
 
 /**
  * HTTP Agents with Keep-Alive for connection reuse
@@ -1728,7 +1729,7 @@ function parseKStartupHtml(
       detailUrl = baseUrl.toString();
     }
 
-    const project: CrawledProject = {
+    const rawProject: CrawledProject = {
       externalId: pbancSn ? `kstartup_${pbancSn}` : undefined,
       name,
       organization: organization || agencyType || "K-Startup",
@@ -1743,7 +1744,9 @@ function parseKStartupHtml(
       isPermanent: false,
     };
 
-    projects.push(project);
+    // Validate and normalize category/region
+    const validatedProject = validateProject(rawProject);
+    projects.push(validatedProject);
   });
 
   return projects;
@@ -1905,7 +1908,7 @@ function parseBizinfoHtml(
           return;
         }
 
-        const project: CrawledProject = {
+        const rawProject: CrawledProject = {
           name,
           organization: organization || "미분류",
           category: category || "기타",
@@ -1917,7 +1920,9 @@ function parseBizinfoHtml(
           isPermanent: false,
         };
 
-        projects.push(project);
+        // Validate and normalize category/region
+        const validatedProject = validateProject(rawProject);
+        projects.push(validatedProject);
       });
 
       if (projects.length > 0) {
@@ -1939,7 +1944,7 @@ function parseApiResponse(data: any, sourceUrl: string): CrawledProject[] {
   const items = Array.isArray(data) ? data : data.items || data.data || [];
 
   items.forEach((item: any) => {
-    const project: CrawledProject = {
+    const rawProject: CrawledProject = {
       externalId: item.id?.toString(),
       name: item.name || item.title || "정보 없음",
       organization: item.organization || item.agency || "미상",
@@ -1955,7 +1960,9 @@ function parseApiResponse(data: any, sourceUrl: string): CrawledProject[] {
       websiteUrl: item.url,
     };
 
-    projects.push(project);
+    // Validate and normalize category/region
+    const validatedProject = validateProject(rawProject);
+    projects.push(validatedProject);
   });
 
   return projects;

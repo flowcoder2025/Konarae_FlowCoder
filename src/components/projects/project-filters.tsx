@@ -5,7 +5,7 @@ import { useState, useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Search, X, Calendar } from "lucide-react";
+import { Search, X, Calendar, ArrowUpDown } from "lucide-react";
 
 interface ProjectFiltersProps {
   categories: { value: string; count: number }[];
@@ -14,8 +14,15 @@ interface ProjectFiltersProps {
   currentRegion?: string;
   currentSearch?: string;
   currentDeadline?: string;
+  currentSort?: string;
   total: number;
 }
+
+const SORT_OPTIONS = [
+  { value: "latest", label: "최신순" },
+  { value: "deadline", label: "마감일순" },
+  { value: "views", label: "조회순" },
+];
 
 const DEADLINE_OPTIONS = [
   { value: "7", label: "1주일 이내" },
@@ -32,6 +39,7 @@ export function ProjectFilters({
   currentRegion,
   currentSearch,
   currentDeadline,
+  currentSort,
   total,
 }: ProjectFiltersProps) {
   const router = useRouter();
@@ -84,13 +92,23 @@ export function ProjectFilters({
     router.push(`/projects${query ? `?${query}` : ""}`);
   };
 
+  const handleSortClick = (sort: string) => {
+    const newSort = currentSort === sort ? undefined : sort;
+    const query = createQueryString({ sort: newSort });
+    router.push(`/projects${query ? `?${query}` : ""}`);
+  };
+
   const clearFilters = () => {
     setSearchInput("");
     router.push("/projects");
   };
 
   const hasActiveFilters =
-    currentCategory || currentRegion || currentSearch || currentDeadline;
+    currentCategory ||
+    currentRegion ||
+    currentSearch ||
+    currentDeadline ||
+    (currentSort && currentSort !== "latest");
 
   // 카테고리별 색상 (ProjectCard와 동일)
   const getCategoryColor = (cat: string, isActive: boolean) => {
@@ -111,20 +129,43 @@ export function ProjectFilters({
 
   return (
     <div className="mb-6 space-y-4">
-      {/* Search Bar */}
-      <form onSubmit={handleSearch} className="flex gap-2">
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            type="text"
-            placeholder="지원사업 검색..."
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            className="pl-10"
-          />
+      {/* Search Bar & Sort */}
+      <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
+        <form onSubmit={handleSearch} className="flex gap-2 flex-1 w-full sm:w-auto">
+          <div className="relative flex-1 max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              type="text"
+              placeholder="지원사업 검색..."
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              className="pl-10"
+            />
+          </div>
+          <Button type="submit">검색</Button>
+        </form>
+
+        {/* Sort Options */}
+        <div className="flex gap-2 items-center flex-wrap">
+          <span className="text-sm text-muted-foreground flex items-center gap-1">
+            <ArrowUpDown className="h-3.5 w-3.5" />
+            정렬:
+          </span>
+          {SORT_OPTIONS.map((option) => (
+            <button
+              key={option.value}
+              onClick={() => handleSortClick(option.value)}
+              className={`px-3 py-1 text-sm rounded-full border transition-[background-color,border-color,color] duration-150 ${
+                (currentSort || "latest") === option.value
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-background text-foreground border-border hover:bg-muted"
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
         </div>
-        <Button type="submit">검색</Button>
-      </form>
+      </div>
 
       {/* Category Filters */}
       {categories.length > 0 && (
@@ -136,7 +177,7 @@ export function ProjectFilters({
             <button
               key={cat.value}
               onClick={() => handleCategoryClick(cat.value)}
-              className={`px-3 py-1 text-sm rounded-full border transition-colors ${getCategoryColor(
+              className={`px-3 py-1 text-sm rounded-full border transition-[background-color,border-color,color] duration-150 ${getCategoryColor(
                 cat.value,
                 currentCategory === cat.value
               )}`}
@@ -157,7 +198,7 @@ export function ProjectFilters({
             <button
               key={region.value}
               onClick={() => handleRegionClick(region.value)}
-              className={`px-3 py-1 text-sm rounded-full border transition-colors ${
+              className={`px-3 py-1 text-sm rounded-full border transition-[background-color,border-color,color] duration-150 ${
                 currentRegion === region.value
                   ? "bg-primary/10 text-primary border-primary/30"
                   : "bg-muted text-muted-foreground hover:bg-muted/80"
@@ -179,7 +220,7 @@ export function ProjectFilters({
           <button
             key={option.value}
             onClick={() => handleDeadlineClick(option.value)}
-            className={`px-3 py-1 text-sm rounded-full border transition-colors ${
+            className={`px-3 py-1 text-sm rounded-full border transition-[background-color,border-color,color] duration-150 ${
               currentDeadline === option.value
                 ? "bg-primary/10 text-primary border-primary/30"
                 : "bg-muted text-muted-foreground hover:bg-muted/80"

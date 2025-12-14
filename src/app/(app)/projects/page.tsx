@@ -12,6 +12,7 @@ interface ProjectsPageProps {
     region?: string;
     search?: string;
     deadline?: string;
+    sort?: string;
   }>;
 }
 
@@ -68,17 +69,37 @@ export default async function ProjectsPage({
     }
   }
 
+  // Build orderBy based on sort parameter
+  const sort = params.sort || "latest"; // 기본값: 최신순
+  let orderBy: any[];
+
+  switch (sort) {
+    case "deadline":
+      // 마감일순: 상시모집 아닌 것 먼저 → 마감일 빠른 순
+      orderBy = [
+        { isPermanent: "asc" },
+        { deadline: "asc" },
+        { createdAt: "desc" },
+      ];
+      break;
+    case "views":
+      // 조회순: 조회수 많은 순
+      orderBy = [{ viewCount: "desc" }, { createdAt: "desc" }];
+      break;
+    case "latest":
+    default:
+      // 최신순: 등록일 최신 순
+      orderBy = [{ createdAt: "desc" }];
+      break;
+  }
+
   // Get categories and regions for filters
   const [projects, total, categories, regions] = await Promise.all([
     prisma.supportProject.findMany({
       where,
       skip,
       take: pageSize,
-      orderBy: [
-        { isPermanent: "asc" }, // 마감있는것 먼저
-        { deadline: "asc" },
-        { createdAt: "desc" },
-      ],
+      orderBy,
       select: {
         id: true,
         name: true,
@@ -134,6 +155,7 @@ export default async function ProjectsPage({
         currentRegion={params.region}
         currentSearch={params.search}
         currentDeadline={params.deadline}
+        currentSort={params.sort}
         total={total}
       />
 
