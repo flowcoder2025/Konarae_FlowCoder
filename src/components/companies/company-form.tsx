@@ -10,8 +10,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
-import { Lightbulb } from "lucide-react";
+import { Lightbulb, Upload, FileText, CheckCircle2, Sparkles } from "lucide-react";
 
 const companyFormSchema = z.object({
   // 기본 정보
@@ -44,13 +45,115 @@ export function CompanyForm() {
   const router = useRouter();
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // 사업자등록증 업로드 관련 state
+  const [businessRegFile, setBusinessRegFile] = useState<File | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analyzeProgress, setAnalyzeProgress] = useState(0);
+  const [analyzed, setAnalyzed] = useState(false);
+
   const {
     register,
     handleSubmit,
+    setValue,
     formState: { errors },
   } = useForm<CompanyFormValues>({
     resolver: zodResolver(companyFormSchema),
   });
+
+  // 사업자등록증 분석 함수
+  const handleFileAnalyze = async (file: File) => {
+    try {
+      setAnalyzing(true);
+      setAnalyzeProgress(10);
+      setBusinessRegFile(file);
+
+      const formData = new FormData();
+      formData.append("file", file);
+
+      setAnalyzeProgress(30);
+
+      const response = await fetch("/api/documents/analyze-temp", {
+        method: "POST",
+        body: formData,
+      });
+
+      setAnalyzeProgress(60);
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || "분석 실패");
+      }
+
+      const result = await response.json();
+      setAnalyzeProgress(80);
+
+      // 추출된 정보를 폼 필드에 자동 입력
+      if (result.data) {
+        const data = result.data;
+
+        if (data.상호 || data.company_name) {
+          setValue("name", data.상호 || data.company_name);
+        }
+        if (data.사업자등록번호 || data.business_number) {
+          const bizNum = (data.사업자등록번호 || data.business_number).replace(/[^0-9]/g, "");
+          setValue("businessNumber", bizNum);
+        }
+        if (data.대표자 || data.representative) {
+          setValue("representativeName", data.대표자 || data.representative);
+        }
+        if (data.개업연월일 || data.established_date) {
+          const dateStr = data.개업연월일 || data.established_date;
+          // YYYYMMDD 형식을 YYYY-MM-DD로 변환
+          if (dateStr.length === 8) {
+            const formatted = `${dateStr.substring(0, 4)}-${dateStr.substring(4, 6)}-${dateStr.substring(6, 8)}`;
+            setValue("establishedDate", formatted);
+          }
+        }
+        if (data.사업장소재지 || data.address) {
+          setValue("address", data.사업장소재지 || data.address);
+        }
+        if (data.업태 || data.business_category) {
+          setValue("businessCategory", data.업태 || data.business_category);
+        }
+        if (data.종목 || data.business_items) {
+          setValue("mainBusiness", data.종목 || data.business_items);
+        }
+
+        toast.success("사업자등록증 정보가 자동으로 입력되었습니다!");
+        setAnalyzed(true);
+      }
+
+      setAnalyzeProgress(100);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "분석 실패");
+      setBusinessRegFile(null);
+    } finally {
+      setTimeout(() => {
+        setAnalyzing(false);
+        setAnalyzeProgress(0);
+      }, 500);
+    }
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // 파일 타입 검증
+    const allowedTypes = ["application/pdf", "image/jpeg", "image/jpg", "image/png", "image/webp"];
+    if (!allowedTypes.includes(file.type)) {
+      toast.error("PDF 또는 이미지 파일만 업로드 가능합니다.");
+      return;
+    }
+
+    // 파일 크기 검증 (10MB)
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error("파일 크기는 10MB 이하여야 합니다.");
+      return;
+    }
+
+    handleFileAnalyze(file);
+  };
 
   const onSubmit = async (data: CompanyFormValues) => {
     setIsSubmitting(true);
@@ -75,7 +178,28 @@ export function CompanyForm() {
       }
 
       const company = await response.json();
-      toast.success("기업이 성공적으로 등록되었습니다");
+
+      // 사업자등록증 파일이 있으면 문서로 저장
+      if (businessRegFile) {
+        try {
+          const docFormData = new FormData();
+          docFormData.append("file", businessRegFile);
+          docFormData.append("documentType", "business_registration");
+
+          await fetch(`/api/companies/${company.id}/documents/upload`, {
+            method: "POST",
+            body: docFormData,
+          });
+
+          toast.success("기업이 등록되고 사업자등록증이 저장되었습니다");
+        } catch (docError) {
+          console.error("Document save error:", docError);
+          toast.success("기업이 등록되었습니다 (문서 저장 실패)");
+        }
+      } else {
+        toast.success("기업이 성공적으로 등록되었습니다");
+      }
+
       router.push(`/companies/${company.id}`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "오류가 발생했습니다");
@@ -87,6 +211,98 @@ export function CompanyForm() {
   return (
     <form onSubmit={handleSubmit(onSubmit)}>
       <div className="space-y-6">
+        {/* 사업자등록증 업로드 카드 */}
+        <Card className="border-primary/20">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-primary" />
+              사업자등록증 자동 입력
+              <span className="text-xs font-normal text-muted-foreground bg-primary/10 text-primary px-2 py-0.5 rounded-full">
+                선택사항
+              </span>
+            </CardTitle>
+            <CardDescription>
+              사업자등록증을 업로드하면 AI가 자동으로 정보를 분석하여 아래 양식에 입력합니다
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {!businessRegFile ? (
+              <div className="flex flex-col items-center justify-center p-8 border-2 border-dashed border-muted-foreground/25 rounded-lg bg-muted/50">
+                <FileText className="h-12 w-12 text-muted-foreground mb-4" />
+                <p className="text-sm text-muted-foreground mb-4 text-center">
+                  PDF 또는 이미지 파일을 업로드하세요
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => document.getElementById("business-reg-file")?.click()}
+                  disabled={analyzing}
+                >
+                  <Upload className="h-4 w-4 mr-2" />
+                  파일 선택
+                </Button>
+                <input
+                  id="business-reg-file"
+                  type="file"
+                  accept=".pdf,.jpg,.jpeg,.png,.webp"
+                  onChange={handleFileSelect}
+                  className="hidden"
+                />
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="p-4 bg-muted rounded-lg">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-start gap-3 flex-1">
+                      {analyzed ? (
+                        <CheckCircle2 className="h-5 w-5 text-green-600 mt-0.5" />
+                      ) : (
+                        <FileText className="h-5 w-5 text-muted-foreground mt-0.5" />
+                      )}
+                      <div className="flex-1">
+                        <p className="text-sm font-medium">{businessRegFile.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {(businessRegFile.size / 1024 / 1024).toFixed(2)} MB
+                        </p>
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setBusinessRegFile(null);
+                        setAnalyzed(false);
+                      }}
+                      disabled={analyzing}
+                    >
+                      변경
+                    </Button>
+                  </div>
+                </div>
+
+                {analyzing && (
+                  <div>
+                    <Progress value={analyzeProgress} className="h-2" />
+                    <p className="text-xs text-muted-foreground mt-2 text-center">
+                      AI가 문서를 분석하고 있습니다... {analyzeProgress}%
+                    </p>
+                  </div>
+                )}
+
+                {analyzed && (
+                  <div className="p-3 bg-green-50 text-green-700 rounded-md text-sm flex items-start gap-2">
+                    <CheckCircle2 className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                    <p>
+                      정보가 자동으로 입력되었습니다. 내용을 확인하고 필요시 수정해주세요.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
         <Card>
           <CardHeader>
             <CardTitle>기본 정보</CardTitle>
