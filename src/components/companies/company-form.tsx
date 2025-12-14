@@ -89,34 +89,48 @@ export function CompanyForm() {
 
       // 추출된 정보를 폼 필드에 자동 입력
       if (result.data) {
-        const data = result.data;
+        const data = result.data as any;
 
-        if (data.상호 || data.company_name) {
-          setValue("name", data.상호 || data.company_name);
-        }
-        if (data.사업자등록번호 || data.business_number) {
-          const bizNum = (data.사업자등록번호 || data.business_number).replace(/[^0-9]/g, "");
-          setValue("businessNumber", bizNum);
-        }
-        if (data.대표자 || data.representative) {
-          setValue("representativeName", data.대표자 || data.representative);
-        }
-        if (data.개업연월일 || data.established_date) {
-          const dateStr = data.개업연월일 || data.established_date;
-          // YYYYMMDD 형식을 YYYY-MM-DD로 변환
-          if (dateStr.length === 8) {
-            const formatted = `${dateStr.substring(0, 4)}-${dateStr.substring(4, 6)}-${dateStr.substring(6, 8)}`;
-            setValue("establishedDate", formatted);
+        // 상호/기업명 (businessName)
+        if (data.businessName) {
+          setValue("name", data.businessName);
+
+          // 기업 형태 추출 (주식회사, 유한회사 등)
+          const companyTypeMatch = data.businessName.match(/(주식회사|유한회사|합자회사|합명회사|유한책임회사)/);
+          if (companyTypeMatch) {
+            setValue("companyType", companyTypeMatch[1]);
           }
         }
-        if (data.사업장소재지 || data.address) {
-          setValue("address", data.사업장소재지 || data.address);
+
+        // 사업자등록번호 (businessNumber - 숫자만 추출)
+        if (data.businessNumber) {
+          const bizNum = data.businessNumber.replace(/[^0-9]/g, "");
+          setValue("businessNumber", bizNum);
         }
-        if (data.업태 || data.business_category) {
-          setValue("businessCategory", data.업태 || data.business_category);
+
+        // 대표자명 (representativeName)
+        if (data.representativeName) {
+          setValue("representativeName", data.representativeName);
         }
-        if (data.종목 || data.business_items) {
-          setValue("mainBusiness", data.종목 || data.business_items);
+
+        // 개업일 (openingDate)
+        if (data.openingDate) {
+          setValue("establishedDate", data.openingDate);
+        }
+
+        // 주소 (address)
+        if (data.address) {
+          setValue("address", data.address);
+        }
+
+        // 업태 (businessType)
+        if (data.businessType) {
+          setValue("businessCategory", data.businessType);
+        }
+
+        // 종목 (businessItem)
+        if (data.businessItem) {
+          setValue("mainBusiness", data.businessItem);
         }
 
         toast.success("사업자등록증 정보가 자동으로 입력되었습니다!");
