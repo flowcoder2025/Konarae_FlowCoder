@@ -4,6 +4,7 @@
  */
 
 import { createClient } from "@/lib/supabase/client";
+import { createServerClient } from "@/lib/supabase/server";
 import {
   ALLOWED_MIME_TYPES,
   ALLOWED_FILE_EXTENSIONS,
@@ -92,7 +93,8 @@ export async function uploadToStorage({
   }
 
   try {
-    const supabase = createClient();
+    // 서버 사이드에서는 Service Role 키 사용 (RLS 우회)
+    const supabase = createServerClient();
 
     // 파일 경로 생성
     const timestamp = Date.now();
@@ -152,7 +154,7 @@ export async function createSignedUrl(
   filePath: string
 ): Promise<SignedUrlResult> {
   try {
-    const supabase = createClient();
+    const supabase = createServerClient();
 
     const { data, error } = await supabase.storage
       .from("company-documents")
@@ -195,7 +197,7 @@ export async function deleteFromStorage(
   filePath: string
 ): Promise<DeleteResult> {
   try {
-    const supabase = createClient();
+    const supabase = createServerClient();
 
     const { error } = await supabase.storage
       .from("company-documents")
@@ -248,7 +250,7 @@ export async function getStorageFileAsBase64(
   filePath: string
 ): Promise<string | null> {
   try {
-    const supabase = createClient();
+    const supabase = createServerClient();
 
     const { data, error } = await supabase.storage
       .from("company-documents")

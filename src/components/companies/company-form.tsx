@@ -196,21 +196,34 @@ export function CompanyForm() {
       // 사업자등록증 파일이 있으면 문서로 저장
       if (businessRegFile) {
         try {
+          console.log("[CompanyForm] Uploading document for company:", company.id);
+          console.log("[CompanyForm] File:", businessRegFile.name, businessRegFile.size);
+
           const docFormData = new FormData();
           docFormData.append("file", businessRegFile);
           docFormData.append("documentType", "business_registration");
 
-          await fetch(`/api/companies/${company.id}/documents/upload`, {
+          const docResponse = await fetch(`/api/companies/${company.id}/documents/upload`, {
             method: "POST",
             body: docFormData,
           });
 
+          if (!docResponse.ok) {
+            const docError = await docResponse.json();
+            console.error("[CompanyForm] Document upload failed:", docError);
+            throw new Error(docError.error || "문서 업로드 실패");
+          }
+
+          const docResult = await docResponse.json();
+          console.log("[CompanyForm] Document uploaded successfully:", docResult);
+
           toast.success("기업이 등록되고 사업자등록증이 저장되었습니다");
         } catch (docError) {
-          console.error("Document save error:", docError);
-          toast.success("기업이 등록되었습니다 (문서 저장 실패)");
+          console.error("[CompanyForm] Document save error:", docError);
+          toast.warning("기업이 등록되었지만 문서 저장에 실패했습니다");
         }
       } else {
+        console.log("[CompanyForm] No business registration file to upload");
         toast.success("기업이 성공적으로 등록되었습니다");
       }
 
