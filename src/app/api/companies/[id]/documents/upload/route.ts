@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { checkCompanyPermission } from "@/lib/rebac";
-import { uploadToStorage, getFileAsBase64 } from "@/lib/documents/upload";
+import { uploadToStorage, getStorageFileAsBase64 } from "@/lib/documents/upload";
 import { analyzeDocument } from "@/lib/documents/analyze";
 import { processDocumentEmbeddings } from "@/lib/documents/embedding";
 import { DocumentType } from "@/lib/documents/types";
@@ -81,7 +81,7 @@ export async function POST(
     // 6. 비동기 분석 트리거 (백그라운드)
     // 실제 환경에서는 QStash나 Railway Worker 사용
     // 여기서는 즉시 분석 (간단한 구현)
-    processDocumentAnalysis(document.id, file, documentType).catch((err) => {
+    processDocumentAnalysis(document.id, uploadResult.filePath!, documentType, file.type).catch((err) => {
       console.error("[POST /documents/upload] Analysis error:", err);
     });
 
@@ -105,8 +105,9 @@ export async function POST(
 
 async function processDocumentAnalysis(
   documentId: string,
-  file: File,
-  documentType: DocumentType
+  filePath: string,
+  documentType: DocumentType,
+  mimeType: string
 ) {
   try {
     // 1. 상태 업데이트: analyzing
@@ -115,14 +116,18 @@ async function processDocumentAnalysis(
       data: { status: "analyzing" },
     });
 
-    // 2. 파일 → Base64 변환
-    const fileBase64 = await getFileAsBase64(file);
+    // 2. Supabase Storage에서 파일 다운로드 → Base64 변환
+    const fileBase64 = await getStorageFileAsBase64(filePath);
+
+    if (!fileBase64) {
+      throw new Error("파일을 Base64로 변환하는데 실패했습니다.");
+    }
 
     // 3. Gemini Vision 분석
     const analysisResult = await analyzeDocument(
       documentType,
       fileBase64,
-      file.type
+      mimeType
     );
 
     if (!analysisResult.success) {

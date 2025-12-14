@@ -245,6 +245,7 @@ export async function getFileAsBase64(file: File): Promise<string> {
 
 /**
  * Supabase Storage URL → Blob → Base64 변환
+ * Node.js 서버 환경에서 사용 (Buffer 사용)
  */
 export async function getStorageFileAsBase64(
   filePath: string
@@ -261,17 +262,12 @@ export async function getStorageFileAsBase64(
       return null;
     }
 
-    // Blob → Base64
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const base64 = reader.result as string;
-        const base64Data = base64.split(",")[1];
-        resolve(base64Data);
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(data);
-    });
+    // Blob → Base64 (Node.js Buffer 사용)
+    const arrayBuffer = await data.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    const base64Data = buffer.toString("base64");
+
+    return base64Data;
   } catch (error) {
     console.error("[getStorageFileAsBase64] Error:", error);
     return null;

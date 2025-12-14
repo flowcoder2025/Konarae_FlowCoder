@@ -6,11 +6,11 @@
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_KEY!;
 
 export function createServerClient() {
   if (!supabaseServiceRoleKey) {
-    throw new Error("SUPABASE_SERVICE_ROLE_KEY is not set");
+    throw new Error("SUPABASE_SERVICE_KEY is not set");
   }
 
   return createSupabaseClient(supabaseUrl, supabaseServiceRoleKey, {
