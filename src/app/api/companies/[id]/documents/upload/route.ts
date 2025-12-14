@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { checkCompanyPermission } from "@/lib/rebac";
 import { uploadToStorage, getFileAsBase64 } from "@/lib/documents/upload";
 import { analyzeDocument } from "@/lib/documents/analyze";
 import { processDocumentEmbeddings } from "@/lib/documents/embedding";
@@ -25,17 +26,14 @@ export async function POST(
     const { id: companyId } = await params;
     const userId = session.user.id;
 
-    // 2. 회사 권한 확인 (최소 member 이상)
-    const membership = await prisma.companyMember.findUnique({
-      where: {
-        companyId_userId: {
-          companyId,
-          userId,
-        },
-      },
-    });
+    // 2. 회사 권한 확인 (ReBAC - 최소 member 이상)
+    const hasPermission = await checkCompanyPermission(
+      userId,
+      companyId,
+      "member"
+    );
 
-    if (!membership || membership.role === "viewer") {
+    if (!hasPermission) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
