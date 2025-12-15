@@ -482,7 +482,8 @@ ${params.ragContext}`;
       system: systemPrompt,
       prompt: params.prompt,
       // Temperature: Keep default 1.0 (recommended for Gemini 3)
-      maxOutputTokens: 2000,
+      // 정부 지원사업 사업계획서 섹션은 보통 4000~8000 토큰이 필요
+      maxOutputTokens: 8000,
       providerOptions: {
         google: {
           thinkingConfig: {
