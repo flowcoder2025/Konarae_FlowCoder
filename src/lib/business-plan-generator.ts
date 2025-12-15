@@ -497,17 +497,25 @@ ${params.otherSectionsContext}`
 8. **다른 섹션과의 일관성 유지** - 용어, 수치, 계획이 서로 일치하도록 작성
 9. **중복 최소화** - 다른 섹션에서 이미 상세히 다룬 내용은 간략히 참조만
 
-**Mermaid 도식 작성법** (중요: 반드시 코드 블록으로 감싸세요):
+**Mermaid 문법 규칙** (중요 - 파싱 에러 방지):
+1. 반드시 \`\`\`mermaid 코드 블록으로 감싸기
+2. 노드 라벨에 괄호() 사용 금지 - 대괄호[]만 사용
+3. subgraph 라벨은 따옴표로 감싸기: subgraph SG1["라벨 텍스트"]
+4. 특수문자(<br>, &, :, /) 대신 일반 텍스트 사용
+5. mindmap은 스페이스 2칸씩 들여쓰기, 한 줄에 한 항목만
+
+**올바른 예시**:
 \`\`\`mermaid
 flowchart TD
-    A[시작] --> B[끝]
+    A[회사명] --> B[부서1]
+    A --> C[부서2]
+    subgraph SG1["지원 체계"]
+        D[항목1]
+        E[항목2]
+    end
 \`\`\`
 
-활용 가능한 도식 유형:
-- flowchart TD/LR: 프로세스, 조직도, 추진체계
-- timeline: 일정 계획
-- pie: 비율, 점유율
-- mindmap: 핵심 개념 정리
+활용 도식: flowchart TD/LR, pie, timeline
 ${evaluationSection}
 ${otherSectionsSection}
 
