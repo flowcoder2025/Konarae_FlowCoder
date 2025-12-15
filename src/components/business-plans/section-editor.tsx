@@ -7,6 +7,7 @@ import remarkBreaks from "remark-breaks";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card } from "@/components/ui/card";
+import { MermaidRenderer } from "@/components/ui/mermaid-renderer";
 
 interface SectionEditorProps {
   section: {
@@ -173,9 +174,36 @@ export function SectionEditor({
               em: ({ children }) => (
                 <em className="italic">{children}</em>
               ),
-              // 코드 스타일링
-              code: ({ children }) => (
-                <code className="bg-muted px-1.5 py-0.5 rounded text-sm font-mono">{children}</code>
+              // 코드 스타일링 (Mermaid 다이어그램 지원)
+              code: ({ className, children, ...props }) => {
+                const match = /language-(\w+)/.exec(className || "");
+                const language = match ? match[1] : null;
+
+                // Mermaid 코드 블록은 MermaidRenderer로 렌더링
+                if (language === "mermaid") {
+                  const chart = String(children).replace(/\n$/, "");
+                  return <MermaidRenderer chart={chart} />;
+                }
+
+                // 코드 블록 (pre > code)
+                if (language) {
+                  return (
+                    <code className={`block bg-muted p-3 rounded text-sm font-mono overflow-x-auto ${className}`} {...props}>
+                      {children}
+                    </code>
+                  );
+                }
+
+                // 인라인 코드
+                return (
+                  <code className="bg-muted px-1.5 py-0.5 rounded text-sm font-mono" {...props}>
+                    {children}
+                  </code>
+                );
+              },
+              // pre 태그는 단순 래퍼로 처리 (code에서 스타일링)
+              pre: ({ children }) => (
+                <pre className="my-3">{children}</pre>
               ),
               // 인용 스타일링
               blockquote: ({ children }) => (
