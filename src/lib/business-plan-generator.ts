@@ -66,20 +66,18 @@ async function extractFormStructure(projectId: string): Promise<FormSection[]> {
     // Use Gemini to extract section structure from the form
     const { text } = await generateText({
       model: google("gemini-2.5-flash"),
-      system: `당신은 정부 지원사업 신청서/사업계획서 양식을 분석하는 전문가입니다.
-주어진 양식 내용에서 작성해야 하는 섹션(항목)들을 추출해주세요.
+      system: `정부 지원사업 신청서 양식에서 작성 섹션을 추출하세요.
 
-응답 형식 (JSON만, 다른 텍스트 없이):
-[{"title":"섹션제목","promptHint":"작성힌트"}]
+규칙:
+1. 작성이 필요한 섹션만 (안내문, 표지, 서약서 제외)
+2. title: 섹션 제목 (20자 이내)
+3. promptHint: 작성 힌트 (30자 이내, 간결하게)
+4. 최대 10개 섹션만
 
-주의사항:
-- 작성이 필요한 섹션만 추출 (단순 안내문, 표지, 서약서 등 제외)
-- promptHint는 50자 이내로 간결하게
-- JSON만 출력, 설명 없이`,
-      prompt: `다음 양식에서 작성 섹션을 추출하세요:
-
-${formContent.slice(0, 6000)}`,
-      maxOutputTokens: 1000,
+JSON 배열만 출력 (설명 없이):
+[{"title":"제목","promptHint":"힌트"}]`,
+      prompt: `양식에서 섹션 추출:\n\n${formContent.slice(0, 5000)}`,
+      maxOutputTokens: 2000,
     });
 
     // Parse the AI response
