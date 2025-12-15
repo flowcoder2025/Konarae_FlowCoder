@@ -46,8 +46,8 @@ async function extractFormStructure(projectId: string): Promise<FormSection[]> {
       },
     });
 
-    // Filter for form files (신청서, 양식, 사업계획서)
-    const formKeywords = ["신청서", "양식", "사업계획서", "작성서식", "서식"];
+    // Filter for form files (신청서, 양식, 사업계획서, 공고문)
+    const formKeywords = ["신청서", "양식", "사업계획서", "작성서식", "서식", "공고문", "공고"];
     const formAttachments = attachments.filter((a) =>
       formKeywords.some((keyword) => a.fileName.includes(keyword))
     );
