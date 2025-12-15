@@ -69,29 +69,41 @@ async function extractFormStructure(projectId: string): Promise<FormSection[]> {
       system: `당신은 정부 지원사업 신청서/사업계획서 양식을 분석하는 전문가입니다.
 주어진 양식 내용에서 작성해야 하는 섹션(항목)들을 추출해주세요.
 
-응답 형식 (JSON):
-[
-  { "title": "섹션 제목", "promptHint": "이 섹션에서 작성해야 할 내용 힌트" },
-  ...
-]
+응답 형식 (JSON만, 다른 텍스트 없이):
+[{"title":"섹션제목","promptHint":"작성힌트"}]
 
 주의사항:
 - 작성이 필요한 섹션만 추출 (단순 안내문, 표지, 서약서 등 제외)
-- 각 섹션의 작성 가이드라인을 promptHint에 포함
-- 반드시 유효한 JSON 배열로만 응답`,
-      prompt: `다음 신청서/양식 내용에서 작성 섹션을 추출해주세요:
+- promptHint는 50자 이내로 간결하게
+- JSON만 출력, 설명 없이`,
+      prompt: `다음 양식에서 작성 섹션을 추출하세요:
 
-${formContent.slice(0, 8000)}`, // Limit to avoid token overflow
-      maxOutputTokens: 2000,
+${formContent.slice(0, 6000)}`,
+      maxOutputTokens: 1000,
     });
 
     // Parse the AI response
     try {
       // Extract JSON from response (handle markdown code blocks)
       let jsonStr = text.trim();
-      if (jsonStr.startsWith("```")) {
-        jsonStr = jsonStr.replace(/```json?\n?/g, "").replace(/```$/g, "").trim();
+
+      // Remove markdown code blocks
+      if (jsonStr.includes("```")) {
+        const match = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+        if (match) {
+          jsonStr = match[1].trim();
+        } else {
+          jsonStr = jsonStr.replace(/```json?\n?/g, "").replace(/```\s*$/g, "").trim();
+        }
       }
+
+      // Try to find JSON array in response
+      const arrayMatch = jsonStr.match(/\[[\s\S]*\]/);
+      if (arrayMatch) {
+        jsonStr = arrayMatch[0];
+      }
+
+      console.log(`[BusinessPlan] AI response for form extraction: ${jsonStr.slice(0, 200)}...`);
 
       const sections = JSON.parse(jsonStr) as FormSection[];
 
@@ -101,6 +113,7 @@ ${formContent.slice(0, 8000)}`, // Limit to avoid token overflow
       }
     } catch (parseError) {
       console.error("[BusinessPlan] Failed to parse AI response:", parseError);
+      console.error("[BusinessPlan] Raw response:", text.slice(0, 500));
     }
 
     return [...DEFAULT_SECTIONS];
