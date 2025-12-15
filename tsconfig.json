@@ -38,6 +38,7 @@
     "node_modules",
     "__tests__",
     "scripts",
-    "railway-embedding-endpoint.ts"
+    "railway-embedding-endpoint.ts",
+    "src/worker-server.ts"
   ]
 }

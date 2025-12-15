@@ -4,7 +4,7 @@
  *
  * Returns comprehensive system health status including:
  * - Database connection
- * - External services (text_parser, QStash)
+ * - External services (text_parser, QStash, Railway worker)
  * - Recent crawl job statistics
  * - System metrics
  */
@@ -13,6 +13,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getParserServiceInfo } from "@/lib/document-parser";
 import { listSchedules, isQStashConfigured } from "@/lib/qstash";
+
+// Vercel Cron schedules defined in vercel.json
+// These are static and known at build time
+const VERCEL_CRON_SCHEDULES = [
+  { path: "/api/cron/crawl-all", schedule: "0 16 * * *", description: "KST 01:00 - 전체 크롤링" },
+  { path: "/api/cron/deadline-alerts", schedule: "0 0 * * *", description: "KST 09:00 - 마감일 알림" },
+  { path: "/api/cron/matching-refresh", schedule: "0 3 * * *", description: "KST 12:00 - 매칭 갱신" },
+  { path: "/api/cron/generate-embeddings", schedule: "0 20 * * *", description: "KST 05:00 - 임베딩 생성" },
+];
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -157,6 +166,79 @@ async function checkQStash(): Promise<{ status: ServiceStatus; scheduleCount: nu
 }
 
 /**
+ * Check Railway Worker status
+ */
+async function checkRailwayWorker(): Promise<ServiceStatus> {
+  const start = Date.now();
+
+  let railwayUrl = process.env.RAILWAY_CRAWLER_URL;
+  const workerApiKey = process.env.WORKER_API_KEY;
+
+  // Check if Railway is configured
+  if (!railwayUrl || !workerApiKey) {
+    return {
+      name: "Railway Worker",
+      status: "down",
+      latency: 0,
+      message: !railwayUrl
+        ? "RAILWAY_CRAWLER_URL not configured"
+        : "WORKER_API_KEY not configured",
+      lastChecked: new Date().toISOString(),
+    };
+  }
+
+  // Ensure URL has protocol
+  if (!railwayUrl.startsWith('http://') && !railwayUrl.startsWith('https://')) {
+    railwayUrl = `https://${railwayUrl}`;
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+
+    const response = await fetch(`${railwayUrl}/health`, {
+      method: 'GET',
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (response.ok) {
+      const data = await response.json();
+      return {
+        name: "Railway Worker",
+        status: "healthy",
+        latency: Date.now() - start,
+        url: railwayUrl,
+        message: `Uptime: ${Math.floor(data.uptime || 0)}s`,
+        lastChecked: new Date().toISOString(),
+      };
+    } else {
+      return {
+        name: "Railway Worker",
+        status: "degraded",
+        latency: Date.now() - start,
+        url: railwayUrl,
+        message: `HTTP ${response.status}: ${response.statusText}`,
+        lastChecked: new Date().toISOString(),
+      };
+    }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Connection failed";
+    const isTimeout = errorMessage.includes('abort');
+
+    return {
+      name: "Railway Worker",
+      status: "down",
+      latency: Date.now() - start,
+      url: railwayUrl,
+      message: isTimeout ? "Connection timeout (10s)" : errorMessage,
+      lastChecked: new Date().toISOString(),
+    };
+  }
+}
+
+/**
  * Get crawler statistics
  */
 async function getCrawlerStats(): Promise<CrawlStats> {
@@ -222,14 +304,15 @@ async function getCrawlerStats(): Promise<CrawlStats> {
 export async function GET(_req: NextRequest) {
   try {
     // Run all checks in parallel
-    const [database, textParser, qstash, crawlerStats] = await Promise.all([
+    const [database, textParser, qstash, railwayWorker, crawlerStats] = await Promise.all([
       checkDatabase(),
       checkTextParser(),
       checkQStash(),
+      checkRailwayWorker(),
       getCrawlerStats(),
     ]);
 
-    const services = [textParser, qstash.status];
+    const services = [textParser, qstash.status, railwayWorker];
 
     // Determine overall status (ignore "unknown" status for services not configured)
     const allStatuses = [database.status, ...services.map((s) => s.status)];
@@ -237,13 +320,35 @@ export async function GET(_req: NextRequest) {
     let overallStatus: "healthy" | "degraded" | "down" = "healthy";
 
     if (criticalStatuses.includes("down")) {
-      overallStatus = database.status === "down" ? "down" : "degraded";
+      // Railway worker down is critical for crawling
+      overallStatus = database.status === "down" || railwayWorker.status === "down" ? "down" : "degraded";
     } else if (criticalStatuses.includes("degraded")) {
       overallStatus = "degraded";
     }
 
     // Check if Vercel Cron is configured
     const hasVercelCron = process.env.CRON_SECRET ? true : false;
+
+    // Determine scheduler type and schedule count
+    let schedulerType: "vercel-cron" | "qstash" | "none" = "none";
+    let scheduleCount = 0;
+    let schedulerStatus: "active" | "inactive" | "error" = "inactive";
+
+    if (hasVercelCron) {
+      schedulerType = "vercel-cron";
+      scheduleCount = VERCEL_CRON_SCHEDULES.length; // Use actual count from vercel.json
+      // Vercel Cron is active if CRON_SECRET is set, but we can't verify execution
+      schedulerStatus = "active";
+    } else if (qstash.scheduleCount > 0) {
+      schedulerType = "qstash";
+      scheduleCount = qstash.scheduleCount;
+      schedulerStatus = qstash.status.status === "healthy" ? "active" : "error";
+    }
+
+    // Additional check: if Railway is down, scheduler can't effectively run
+    if (railwayWorker.status === "down" && schedulerStatus === "active") {
+      schedulerStatus = "error";
+    }
 
     const response: SystemStatusResponse = {
       status: overallStatus,
@@ -252,9 +357,9 @@ export async function GET(_req: NextRequest) {
       database,
       crawler: crawlerStats,
       scheduler: {
-        type: hasVercelCron ? "vercel-cron" : qstash.scheduleCount > 0 ? "qstash" : "none",
-        schedules: qstash.scheduleCount,
-        status: hasVercelCron || qstash.scheduleCount > 0 ? "active" : "inactive",
+        type: schedulerType,
+        schedules: scheduleCount,
+        status: schedulerStatus,
       },
     };
 
