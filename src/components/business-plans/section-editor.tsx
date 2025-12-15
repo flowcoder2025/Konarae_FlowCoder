@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card } from "@/components/ui/card";
@@ -132,7 +134,35 @@ export function SectionEditor({
           className="min-h-[300px] font-mono text-sm"
         />
       ) : (
-        <div className="whitespace-pre-wrap text-sm">{content}</div>
+        <div className="prose prose-sm max-w-none dark:prose-invert">
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={{
+              // 이미지: placeholder로 대체
+              img: ({ src, alt }) => (
+                <span className="inline-flex items-center gap-1 px-2 py-1 bg-muted rounded text-xs">
+                  🖼️ {alt || "이미지"}
+                </span>
+              ),
+              // 테이블 스타일링
+              table: ({ children }) => (
+                <table className="border-collapse border border-border w-full">
+                  {children}
+                </table>
+              ),
+              th: ({ children }) => (
+                <th className="border border-border bg-muted px-3 py-2 text-left font-medium">
+                  {children}
+                </th>
+              ),
+              td: ({ children }) => (
+                <td className="border border-border px-3 py-2">{children}</td>
+              ),
+            }}
+          >
+            {content}
+          </ReactMarkdown>
+        </div>
       )}
     </Card>
   );
