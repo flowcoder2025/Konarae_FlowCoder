@@ -3,6 +3,7 @@
 import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkBreaks from "remark-breaks";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card } from "@/components/ui/card";
@@ -134,24 +135,77 @@ export function SectionEditor({
           className="min-h-[300px] font-mono text-sm"
         />
       ) : (
-        <div className="prose prose-sm max-w-none dark:prose-invert">
+        <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:font-bold prose-h1:text-xl prose-h2:text-lg prose-h3:text-base prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5">
           <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
+            remarkPlugins={[remarkGfm, remarkBreaks]}
             components={{
+              // 헤딩 스타일링
+              h1: ({ children }) => (
+                <h1 className="text-xl font-bold mt-6 mb-3 text-foreground border-b pb-2">{children}</h1>
+              ),
+              h2: ({ children }) => (
+                <h2 className="text-lg font-bold mt-5 mb-2 text-foreground">{children}</h2>
+              ),
+              h3: ({ children }) => (
+                <h3 className="text-base font-semibold mt-4 mb-2 text-foreground">{children}</h3>
+              ),
+              h4: ({ children }) => (
+                <h4 className="text-sm font-semibold mt-3 mb-1 text-foreground">{children}</h4>
+              ),
+              // 단락 스타일링
+              p: ({ children }) => (
+                <p className="my-2 leading-relaxed text-foreground/90">{children}</p>
+              ),
+              // 리스트 스타일링
+              ul: ({ children }) => (
+                <ul className="my-2 ml-4 list-disc space-y-1">{children}</ul>
+              ),
+              ol: ({ children }) => (
+                <ol className="my-2 ml-4 list-decimal space-y-1">{children}</ol>
+              ),
+              li: ({ children }) => (
+                <li className="text-foreground/90">{children}</li>
+              ),
+              // 강조 스타일링
+              strong: ({ children }) => (
+                <strong className="font-bold text-foreground">{children}</strong>
+              ),
+              em: ({ children }) => (
+                <em className="italic">{children}</em>
+              ),
+              // 코드 스타일링
+              code: ({ children }) => (
+                <code className="bg-muted px-1.5 py-0.5 rounded text-sm font-mono">{children}</code>
+              ),
+              // 인용 스타일링
+              blockquote: ({ children }) => (
+                <blockquote className="border-l-4 border-primary/50 pl-4 my-3 italic text-muted-foreground">
+                  {children}
+                </blockquote>
+              ),
+              // 구분선
+              hr: () => (
+                <hr className="my-4 border-border" />
+              ),
               // 이미지: placeholder로 대체
-              img: ({ src, alt }) => (
+              img: ({ alt }) => (
                 <span className="inline-flex items-center gap-1 px-2 py-1 bg-muted rounded text-xs">
                   🖼️ {alt || "이미지"}
                 </span>
               ),
               // 테이블 스타일링
               table: ({ children }) => (
-                <table className="border-collapse border border-border w-full">
-                  {children}
-                </table>
+                <div className="overflow-x-auto my-3">
+                  <table className="border-collapse border border-border w-full text-sm">
+                    {children}
+                  </table>
+                </div>
+              ),
+              thead: ({ children }) => (
+                <thead className="bg-muted">{children}</thead>
               ),
               th: ({ children }) => (
-                <th className="border border-border bg-muted px-3 py-2 text-left font-medium">
+                <th className="border border-border px-3 py-2 text-left font-medium">
                   {children}
                 </th>
               ),
