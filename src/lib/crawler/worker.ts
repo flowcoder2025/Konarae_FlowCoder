@@ -490,24 +490,23 @@ function isCorruptedFileName(fileName: string): boolean {
   // (Often result of wrong encoding interpretation)
   const suspiciousChinesePattern = /[\u4E00-\u9FFF]{3,}/;
 
-  // Pattern E: Uncommon Korean syllables (UTF-8 misread as EUC-KR/CP949)
-  // Characters like 챗, 쩻, 햇 etc. appearing in unusual combinations
-  // These are valid Unicode but appear when UTF-8 bytes are wrongly decoded as CP949
-  // Check for rare Korean syllables that shouldn't appear frequently in normal text
-  const rareKoreanSyllables = /[챗쩻햇챙멜헐긟럛뷁뫃믃샻쐓쏳췃츣킧팣핣횣]/;
-  const hasMultipleRare = (fileName.match(rareKoreanSyllables) || []).length >= 2;
+  // Pattern E: Extended corruption pattern - Korean syllables with rare vowel/consonant combinations
+  // Characters like 혚, 혞, 혱, 혗, 쨀, 혶, 쨉, 짠, 쨋, 혻, 혵 etc.
+  // These appear when UTF-8 bytes are decoded as CP949/EUC-KR
+  const extendedCorruptionPattern = /[혚혞혱혗쨀혶쨉짠쨋혻혵혲혷혙혢짼짯쨍혩혰혮쩍혳혬쨔쨈혡혛쨌쩌쨊쨁짢짧짜짧짤짭짖쩐쩔쩜혰혫혜혝혟혤혯혼횁횃횅횆횉횊횋횎횏횐횑횒횓횔횕횖횗횘횙횚횛횜혮혯]/g;
+  const hasExtendedCorruption = (fileName.match(extendedCorruptionPattern) || []).length >= 2;
 
-  // Pattern F: Mixed encoding artifacts - unusual character sequences
-  // Korean text with special chars like (챗쩻햇챙멜헐2) is suspicious
-  const mixedArtifactPattern = /\([가-힣]+\d+\)|\d+[가-힣]+\d+/;
-  const hasArtifact = mixedArtifactPattern.test(fileName) && hasMultipleRare;
+  // Pattern F: Common mojibake patterns - consecutive unusual syllables
+  // 챙혞, 챘혚, 챗쨀 type patterns (UTF-8 → CP949 misread)
+  const mojibakePattern = /[챘챙챗챠챨챵챶챷챸챹챺챻챼챽챾챿쨀쨁쨂쨃쨄쨅쨆쨇쨈쨉쨊쨋쨌쨍쨎쨏]/g;
+  const hasMojibake = (fileName.match(mojibakePattern) || []).length >= 2;
 
   return jamoPattern.test(fileName) ||
          latin1Pattern.test(fileName) ||
          replacementPattern.test(fileName) ||
          suspiciousChinesePattern.test(fileName) ||
-         hasMultipleRare ||
-         hasArtifact;
+         hasExtendedCorruption ||
+         hasMojibake;
 }
 
 /**
@@ -516,6 +515,22 @@ function isCorruptedFileName(fileName: string): boolean {
  */
 async function repairCorruptedFileName(fileName: string): Promise<string> {
   const iconv = (await import('iconv-lite')).default;
+
+  // Strategy 0 (PRIORITY): Double encoding - CP949 → UTF-8 → Latin-1 → UTF-8
+  // This handles the most common case: 챘혚혙 → 년 type corruption
+  // UTF-8 bytes were wrongly decoded as CP949, then displayed incorrectly
+  try {
+    const cp949Bytes = iconv.encode(fileName, "cp949");
+    const step1 = cp949Bytes.toString("utf-8");
+    const latin1Bytes = Buffer.from(step1, "latin1");
+    const final = latin1Bytes.toString("utf-8");
+    if (hasValidKorean(final) && !isCorruptedFileName(final)) {
+      console.log(`    ✓ Repaired filename (Double CP949): "${fileName}" → "${final}"`);
+      return final;
+    }
+  } catch {
+    // Continue to next strategy
+  }
 
   // Strategy 1: Latin-1 → UTF-8 (most common for Ã patterns)
   try {
@@ -549,6 +564,20 @@ async function repairCorruptedFileName(fileName: string): Promise<string> {
     }
   } catch {
     // Continue to next strategy
+  }
+
+  // Strategy 2.5: Double encoding recovery (EUC-KR variant)
+  try {
+    const eucKrBytes = iconv.encode(fileName, "euc-kr");
+    const step1 = eucKrBytes.toString("utf-8");
+    const latin1Bytes = Buffer.from(step1, "latin1");
+    const final = latin1Bytes.toString("utf-8");
+    if (hasValidKorean(final) && !isCorruptedFileName(final)) {
+      console.log(`    ✓ Repaired filename (Double EUC-KR): "${fileName}" → "${final}"`);
+      return final;
+    }
+  } catch {
+    // Continue
   }
 
   // Strategy 3: Double UTF-8 encoding recovery

@@ -1,38 +1,38 @@
 /**
- * Admin API: Repair Corrupted Filenames
- * POST /api/admin/repair-filenames
+ * DB Cleanup Script
+ * 1. 중복 파일 제거
+ * 2. 깨진 파일명 복원
  *
- * Scans ProjectAttachment table for corrupted Korean filenames
- * and attempts to repair them using multiple decoding strategies
+ * 실행: npx tsx scripts/cleanup-db.ts
  */
 
-import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
-import { requireAdmin } from "@/lib/auth-utils";
-import { handleAPIError } from "@/lib/api-error";
+import { config } from "dotenv";
+config({ path: ".env.local" });
+
+import { PrismaClient } from "@prisma/client";
 import iconv from "iconv-lite";
 
-/**
- * Check if a string contains valid Korean characters
- */
+const prisma = new PrismaClient();
+
+// ============================================
+// 파일명 복원 유틸리티
+// ============================================
+
 function hasValidKorean(str: string): boolean {
   return /[\uAC00-\uD7AF]/.test(str) && !str.includes('�');
 }
 
-/**
- * Check if filename appears corrupted
- */
 function isCorruptedFileName(fileName: string): boolean {
   // Pattern A: Separated Korean jamo
   const jamoPattern = /[\u3131-\u3163\u314F-\u3163]{2,}/;
 
-  // Pattern B: Latin-1 UTF-8 corruption (Ã, Â appearing together)
+  // Pattern B: Latin-1 UTF-8 corruption
   const latin1Pattern = /[ÃÂ]{2,}|Ã[\x80-\xBF]/;
 
   // Pattern C: Replacement character
   const replacementPattern = /\uFFFD/;
 
-  // Pattern D: Chinese-looking characters that shouldn't be in Korean filenames
+  // Pattern D: Chinese-looking characters
   const suspiciousChinesePattern = /[\u4E00-\u9FFF]{3,}/;
 
   // Pattern E: Extended corruption pattern - Korean syllables with rare vowel/consonant combinations
@@ -54,13 +54,9 @@ function isCorruptedFileName(fileName: string): boolean {
          hasMojibake;
 }
 
-/**
- * Attempt to repair a corrupted filename
- */
 function repairCorruptedFileName(fileName: string): string {
   // Strategy 0 (PRIORITY): Double encoding - CP949 → UTF-8 → Latin-1 → UTF-8
   // This handles the most common case: 챘혚혙 → 년 type corruption
-  // UTF-8 bytes were wrongly decoded as CP949, then displayed incorrectly
   try {
     const cp949Bytes = iconv.encode(fileName, "cp949");
     const step1 = cp949Bytes.toString("utf-8");
@@ -70,10 +66,10 @@ function repairCorruptedFileName(fileName: string): string {
       return final;
     }
   } catch {
-    // Continue to next strategy
+    // Continue
   }
 
-  // Strategy 1: Latin-1 → UTF-8 (most common for Ã patterns)
+  // Strategy 1: Latin-1 → UTF-8
   try {
     let isLatin1Range = true;
     for (let i = 0; i < fileName.length; i++) {
@@ -91,10 +87,10 @@ function repairCorruptedFileName(fileName: string): string {
       }
     }
   } catch {
-    // Continue to next strategy
+    // Continue
   }
 
-  // Strategy 2: Try to recover from EUC-KR misinterpretation
+  // Strategy 2: EUC-KR reverse
   try {
     const eucKrBytes = iconv.encode(fileName, 'euc-kr');
     const utf8Decoded = eucKrBytes.toString('utf-8');
@@ -102,7 +98,7 @@ function repairCorruptedFileName(fileName: string): string {
       return utf8Decoded;
     }
   } catch {
-    // Continue to next strategy
+    // Continue
   }
 
   // Strategy 3: Double encoding recovery (EUC-KR variant)
@@ -131,13 +127,11 @@ function repairCorruptedFileName(fileName: string): string {
     if (allInRange) {
       const bytes = Buffer.from(fileName, 'latin1');
 
-      // Try EUC-KR decode
       const eucKrDecoded = iconv.decode(bytes, 'euc-kr');
       if (hasValidKorean(eucKrDecoded) && !isCorruptedFileName(eucKrDecoded)) {
         return eucKrDecoded;
       }
 
-      // Try CP949 decode
       const cp949Decoded = iconv.decode(bytes, 'cp949');
       if (hasValidKorean(cp949Decoded) && !isCorruptedFileName(cp949Decoded)) {
         return cp949Decoded;
@@ -169,139 +163,139 @@ function repairCorruptedFileName(fileName: string): string {
     // Continue
   }
 
-  // No repair successful
   return fileName;
 }
 
-export async function POST(req: NextRequest) {
-  try {
-    await requireAdmin();
+// ============================================
+// 메인 실행
+// ============================================
 
-    const body = await req.json().catch(() => ({}));
-    const dryRun = body.dryRun !== false; // Default to dry run for safety
+async function main() {
+  console.log("=".repeat(60));
+  console.log("DB Cleanup Script");
+  console.log("=".repeat(60));
 
-    console.log(`[Repair Filenames] Starting ${dryRun ? 'DRY RUN' : 'ACTUAL REPAIR'}...`);
+  // ============================================
+  // Step 1: 중복 파일 확인 및 제거
+  // ============================================
+  console.log("\n📦 Step 1: 중복 파일 확인...");
 
-    // Get all attachments
-    const attachments = await prisma.projectAttachment.findMany({
-      select: {
-        id: true,
-        fileName: true,
-        projectId: true,
+  const attachments = await prisma.projectAttachment.findMany({
+    select: {
+      id: true,
+      projectId: true,
+      fileName: true,
+      sourceUrl: true,
+      createdAt: true,
+    },
+    orderBy: {
+      createdAt: 'desc',
+    },
+  });
+
+  console.log(`  총 첨부파일: ${attachments.length}개`);
+
+  // Group by (projectId, sourceUrl)
+  const groups = new Map<string, typeof attachments>();
+
+  for (const attachment of attachments) {
+    const key = `${attachment.projectId}:${attachment.sourceUrl}`;
+    if (!groups.has(key)) {
+      groups.set(key, []);
+    }
+    groups.get(key)!.push(attachment);
+  }
+
+  // Find duplicates
+  const idsToDelete: string[] = [];
+  let duplicateGroups = 0;
+
+  for (const [, group] of groups.entries()) {
+    if (group.length > 1) {
+      duplicateGroups++;
+      // Keep the most recent (first in array)
+      const deleteIds = group.slice(1).map(a => a.id);
+      idsToDelete.push(...deleteIds);
+    }
+  }
+
+  console.log(`  중복 그룹: ${duplicateGroups}개`);
+  console.log(`  삭제 대상: ${idsToDelete.length}개`);
+
+  if (idsToDelete.length > 0) {
+    console.log("\n  🗑️  중복 파일 삭제 중...");
+    const result = await prisma.projectAttachment.deleteMany({
+      where: {
+        id: { in: idsToDelete },
       },
     });
+    console.log(`  ✅ ${result.count}개 중복 파일 삭제 완료`);
+  } else {
+    console.log("  ✅ 중복 파일 없음");
+  }
 
-    console.log(`[Repair Filenames] Found ${attachments.length} attachments`);
+  // ============================================
+  // Step 2: 깨진 파일명 확인 및 복원
+  // ============================================
+  console.log("\n📝 Step 2: 깨진 파일명 확인...");
 
-    const results = {
-      total: attachments.length,
-      corrupted: 0,
-      repaired: 0,
-      failed: 0,
-      unchanged: 0,
-      details: [] as Array<{
-        id: string;
-        original: string;
-        repaired: string | null;
-        status: 'repaired' | 'failed' | 'unchanged';
-      }>,
-    };
+  // Reload attachments after deletion
+  const remainingAttachments = await prisma.projectAttachment.findMany({
+    select: {
+      id: true,
+      fileName: true,
+    },
+  });
 
-    for (const attachment of attachments) {
-      const { id, fileName } = attachment;
+  console.log(`  남은 첨부파일: ${remainingAttachments.length}개`);
 
-      if (isCorruptedFileName(fileName)) {
-        results.corrupted++;
+  const corrupted: Array<{ id: string; original: string; repaired: string }> = [];
 
-        const repaired = repairCorruptedFileName(fileName);
-
-        if (repaired !== fileName && hasValidKorean(repaired)) {
-          // Successfully repaired
-          if (!dryRun) {
-            await prisma.projectAttachment.update({
-              where: { id },
-              data: { fileName: repaired },
-            });
-          }
-
-          results.repaired++;
-          results.details.push({
-            id,
-            original: fileName,
-            repaired,
-            status: 'repaired',
-          });
-
-          console.log(`[Repair] ${fileName} → ${repaired}`);
-        } else {
-          // Could not repair
-          results.failed++;
-          results.details.push({
-            id,
-            original: fileName,
-            repaired: null,
-            status: 'failed',
-          });
-
-          console.log(`[Failed] ${fileName} - could not repair`);
-        }
-      } else {
-        results.unchanged++;
+  for (const attachment of remainingAttachments) {
+    if (isCorruptedFileName(attachment.fileName)) {
+      const repaired = repairCorruptedFileName(attachment.fileName);
+      if (repaired !== attachment.fileName && hasValidKorean(repaired)) {
+        corrupted.push({
+          id: attachment.id,
+          original: attachment.fileName,
+          repaired,
+        });
       }
     }
-
-    console.log(`[Repair Filenames] Complete:`, {
-      total: results.total,
-      corrupted: results.corrupted,
-      repaired: results.repaired,
-      failed: results.failed,
-      unchanged: results.unchanged,
-      dryRun,
-    });
-
-    return NextResponse.json({
-      success: true,
-      dryRun,
-      summary: {
-        total: results.total,
-        corrupted: results.corrupted,
-        repaired: results.repaired,
-        failed: results.failed,
-        unchanged: results.unchanged,
-      },
-      details: results.details,
-    });
-  } catch (error) {
-    return handleAPIError(error, req.url);
   }
+
+  console.log(`  깨진 파일명 (복원 가능): ${corrupted.length}개`);
+
+  if (corrupted.length > 0) {
+    console.log("\n  🔧 파일명 복원 중...");
+
+    for (const item of corrupted) {
+      console.log(`    "${item.original}" → "${item.repaired}"`);
+      await prisma.projectAttachment.update({
+        where: { id: item.id },
+        data: { fileName: item.repaired },
+      });
+    }
+
+    console.log(`  ✅ ${corrupted.length}개 파일명 복원 완료`);
+  } else {
+    console.log("  ✅ 복원 가능한 깨진 파일명 없음");
+  }
+
+  // ============================================
+  // 최종 결과
+  // ============================================
+  console.log("\n" + "=".repeat(60));
+  console.log("🎉 정리 완료!");
+  console.log("=".repeat(60));
+  console.log(`  중복 파일 삭제: ${idsToDelete.length}개`);
+  console.log(`  파일명 복원: ${corrupted.length}개`);
+
+  // 현재 상태 출력
+  const finalCount = await prisma.projectAttachment.count();
+  console.log(`  현재 총 첨부파일: ${finalCount}개`);
 }
 
-// GET endpoint to check corrupted filenames without modifying
-export async function GET(req: NextRequest) {
-  try {
-    await requireAdmin();
-
-    const attachments = await prisma.projectAttachment.findMany({
-      select: {
-        id: true,
-        fileName: true,
-        projectId: true,
-      },
-    });
-
-    const corrupted = attachments.filter(a => isCorruptedFileName(a.fileName));
-
-    return NextResponse.json({
-      total: attachments.length,
-      corrupted: corrupted.length,
-      corruptedFiles: corrupted.map(a => ({
-        id: a.id,
-        fileName: a.fileName,
-        projectId: a.projectId,
-        suggestedRepair: repairCorruptedFileName(a.fileName),
-      })),
-    });
-  } catch (error) {
-    return handleAPIError(error, req.url);
-  }
-}
+main()
+  .catch(console.error)
+  .finally(() => prisma.$disconnect());
