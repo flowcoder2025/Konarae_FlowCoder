@@ -194,36 +194,49 @@ export async function generateBusinessPlanSections(
     // Build company context for prompts
     const companyContext = buildCompanyContext(company);
 
-    // Generate sections dynamically
+    // Generate sections dynamically with context accumulation
+    // 이전에 생성된 섹션들을 누적해서 다음 섹션 생성 시 컨텍스트로 전달
     const sections: BusinessPlanSection[] = [];
+    const previousSectionsContent: string[] = [];
 
     for (let i = 0; i < formSections.length; i++) {
       const formSection = formSections[i];
 
+      // 이전에 생성된 섹션들을 컨텍스트로 구성
+      const otherSectionsContext = previousSectionsContent.length > 0
+        ? previousSectionsContent.join("\n\n---\n\n")
+        : undefined;
+
+      const content = await generateSection({
+        sectionTitle: formSection.title,
+        company,
+        project,
+        newBusinessDescription: input.newBusinessDescription,
+        ragContext,
+        evaluationCriteria,
+        prompt: buildDynamicPrompt({
+          sectionTitle: formSection.title,
+          promptHint: formSection.promptHint,
+          companyContext,
+          projectName: project.name,
+          projectOrganization: project.organization,
+          newBusinessDescription: input.newBusinessDescription,
+          projectDateRange: project.startDate && project.endDate
+            ? `${formatDateKST(project.startDate)} ~ ${formatDateKST(project.endDate)}`
+            : null,
+        }),
+        otherSectionsContext,
+      });
+
       sections.push({
         sectionIndex: i + 1,
         title: formSection.title,
-        content: await generateSection({
-          sectionTitle: formSection.title,
-          company,
-          project,
-          newBusinessDescription: input.newBusinessDescription,
-          ragContext,
-          evaluationCriteria,
-          prompt: buildDynamicPrompt({
-            sectionTitle: formSection.title,
-            promptHint: formSection.promptHint,
-            companyContext,
-            projectName: project.name,
-            projectOrganization: project.organization,
-            newBusinessDescription: input.newBusinessDescription,
-            projectDateRange: project.startDate && project.endDate
-              ? `${formatDateKST(project.startDate)} ~ ${formatDateKST(project.endDate)}`
-              : null,
-          }),
-        }),
+        content,
         isAiGenerated: true,
       });
+
+      // 다음 섹션 생성을 위해 현재 섹션 내용 누적
+      previousSectionsContent.push(`### ${formSection.title}\n${content}`);
     }
 
     return sections;
@@ -454,6 +467,7 @@ async function generateSection(params: {
   ragContext: string;
   evaluationCriteria?: string;
   prompt: string;
+  otherSectionsContext?: string; // 다른 섹션들의 내용 (전체 맥락 유지용)
 }): Promise<string> {
   try {
     const evaluationSection = params.evaluationCriteria
@@ -462,6 +476,14 @@ async function generateSection(params: {
 ${params.evaluationCriteria}
 
 평가 기준에 명시된 항목들을 충족하도록 내용을 구성하세요.`
+      : "";
+
+    // 다른 섹션 컨텍스트 (전체 맥락 유지)
+    const otherSectionsSection = params.otherSectionsContext
+      ? `
+## 사업계획서의 다른 섹션들 (반드시 참고하여 일관성 유지)
+아래는 이미 작성된 다른 섹션들입니다. 내용의 일관성을 유지하고, 중복을 피하며, 서로 보완되도록 작성하세요.
+${params.otherSectionsContext}`
       : "";
 
     const systemPrompt = `당신은 정부 지원사업 사업계획서 작성 전문가입니다.
@@ -474,6 +496,8 @@ ${params.evaluationCriteria}
 5. 전문적이고 설득력 있는 문체 사용
 6. 최대한 많은 인포그래픽/이미지 가이드를 포함 (시각적 이해도 향상)
 7. 인포그래픽은 Mermaid 도식으로 표현 (flowchart, timeline, pie, mindmap 등 활용)
+8. **다른 섹션과의 일관성 유지** - 용어, 수치, 계획이 서로 일치하도록 작성
+9. **중복 최소화** - 다른 섹션에서 이미 상세히 다룬 내용은 간략히 참조만
 
 **Mermaid 도식 활용 예시**:
 - 사업 추진 체계: flowchart TD
@@ -483,6 +507,7 @@ ${params.evaluationCriteria}
 - 기술 구조: flowchart LR
 - 핵심 개념 정리: mindmap
 ${evaluationSection}
+${otherSectionsSection}
 
 RAG 컨텍스트:
 ${params.ragContext}`;
@@ -523,7 +548,7 @@ export async function regenerateSection(
   sectionIndex: number
 ): Promise<string> {
   try {
-    // Get business plan with company data
+    // Get business plan with company data and ALL sections (for context)
     const businessPlan = await prisma.businessPlan.findUnique({
       where: { id: businessPlanId },
       include: {
@@ -536,16 +561,26 @@ export async function regenerateSection(
         },
         project: true,
         sections: {
-          where: { sectionIndex },
+          orderBy: { sectionIndex: "asc" }, // 모든 섹션 조회 (다른 섹션 컨텍스트용)
         },
       },
     });
 
-    if (!businessPlan || !businessPlan.sections[0]) {
-      throw new Error("Business plan or section not found");
+    if (!businessPlan) {
+      throw new Error("Business plan not found");
     }
 
-    const section = businessPlan.sections[0];
+    // Find the target section
+    const section = businessPlan.sections.find((s) => s.sectionIndex === sectionIndex);
+    if (!section) {
+      throw new Error("Section not found");
+    }
+
+    // Build context from OTHER sections (전체 맥락 유지)
+    const otherSectionsContext = businessPlan.sections
+      .filter((s) => s.sectionIndex !== sectionIndex)
+      .map((s) => `### ${s.title}\n${s.content}`)
+      .join("\n\n---\n\n");
 
     // Build RAG context with evaluation criteria
     const { context: ragContext, evaluationCriteria } = await buildRagContext({
@@ -561,7 +596,7 @@ export async function regenerateSection(
     // Build dynamic regeneration prompt
     const prompt = buildDynamicPrompt({
       sectionTitle: section.title,
-      promptHint: `이전 내용을 참고하여 더 개선된 버전으로 재작성해주세요. 더 구체적이고 설득력 있게 작성하세요.`,
+      promptHint: `이전 내용을 참고하여 더 개선된 버전으로 재작성해주세요. 더 구체적이고 설득력 있게 작성하세요. 다른 섹션들과의 일관성을 유지하고, 중복되는 내용은 피해주세요.`,
       companyContext,
       projectName: businessPlan.project?.name || "",
       projectOrganization: businessPlan.project?.organization || null,
@@ -579,6 +614,7 @@ export async function regenerateSection(
       ragContext,
       evaluationCriteria,
       prompt,
+      otherSectionsContext: otherSectionsContext || undefined, // 다른 섹션들 컨텍스트 전달
     });
 
     return content;
