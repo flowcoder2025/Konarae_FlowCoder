@@ -472,6 +472,16 @@ ${params.evaluationCriteria}
 3. 기업의 강점과 역량 강조
 4. 실현 가능하고 구체적인 계획 제시
 5. 전문적이고 설득력 있는 문체 사용
+6. 최대한 많은 인포그래픽/이미지 가이드를 포함 (시각적 이해도 향상)
+7. 인포그래픽은 Mermaid 도식으로 표현 (flowchart, timeline, pie, mindmap 등 활용)
+
+**Mermaid 도식 활용 예시**:
+- 사업 추진 체계: flowchart TD
+- 일정 계획: timeline 또는 gantt
+- 조직 구성: flowchart TB
+- 시장 점유율/비중: pie
+- 기술 구조: flowchart LR
+- 핵심 개념 정리: mindmap
 ${evaluationSection}
 
 RAG 컨텍스트:
