@@ -5,7 +5,7 @@
 
 import { generateText } from "ai";
 import { google } from "@ai-sdk/google";
-import { hybridSearch } from "./rag";
+import { hybridSearch, storeDocumentEmbeddings, deleteEmbeddings } from "./rag";
 import { prisma } from "./prisma";
 import { formatDateKST } from "./utils";
 
@@ -22,6 +22,8 @@ export interface GenerateBusinessPlanInput {
   projectId: string;
   newBusinessDescription: string;
   additionalNotes?: string;
+  referenceBusinessPlanIds?: string[];
+  businessPlanId?: string; // For fetching attachments
 }
 
 export interface BusinessPlanSection {
@@ -69,11 +71,13 @@ export async function generateBusinessPlanSections(
       throw new Error("Project not found");
     }
 
-    // Build context from RAG (PRD 12.6)
-    const ragContext = await buildRagContext({
+    // Build context from RAG with evaluation criteria, reference plans, and attachments (PRD 12.6)
+    const { context: ragContext, evaluationCriteria } = await buildRagContext({
       projectId: input.projectId,
       companyId: input.companyId,
       newBusinessDescription: input.newBusinessDescription,
+      referenceBusinessPlanIds: input.referenceBusinessPlanIds,
+      businessPlanId: input.businessPlanId,
     });
 
     // Generate sections
@@ -89,6 +93,7 @@ export async function generateBusinessPlanSections(
         project,
         newBusinessDescription: input.newBusinessDescription,
         ragContext,
+        evaluationCriteria,
         prompt: `다음 정보를 바탕으로 사업 개요를 작성해주세요:
 
 **신규 사업 내용**: ${input.newBusinessDescription}
@@ -115,6 +120,7 @@ export async function generateBusinessPlanSections(
         project,
         newBusinessDescription: input.newBusinessDescription,
         ragContext,
+        evaluationCriteria,
         prompt: `기업 현황을 다음 정보를 바탕으로 작성해주세요:
 
 **기업 정보**:
@@ -150,6 +156,7 @@ ${company.isVenture ? "- 벤처기업 인증\n" : ""}${company.isInnoBiz ? "- �
         project,
         newBusinessDescription: input.newBusinessDescription,
         ragContext,
+        evaluationCriteria,
         prompt: `다음 신규 사업에 대한 상세한 내용을 작성해주세요:
 
 **신규 사업**: ${input.newBusinessDescription}
@@ -175,6 +182,7 @@ ${company.isVenture ? "- 벤처기업 인증\n" : ""}${company.isInnoBiz ? "- �
         project,
         newBusinessDescription: input.newBusinessDescription,
         ragContext,
+        evaluationCriteria,
         prompt: `사업 추진 계획을 작성해주세요:
 
 **사업 기간**: ${project.startDate && project.endDate ? `${formatDateKST(project.startDate)} ~ ${formatDateKST(project.endDate)}` : "프로젝트 일정에 따름"}
@@ -200,6 +208,7 @@ ${company.isVenture ? "- 벤처기업 인증\n" : ""}${company.isInnoBiz ? "- �
         project,
         newBusinessDescription: input.newBusinessDescription,
         ragContext,
+        evaluationCriteria,
         prompt: `사업의 기대 효과를 작성해주세요:
 
 다음 관점에서 작성해주세요:
@@ -220,13 +229,15 @@ ${company.isVenture ? "- 벤처기업 인증\n" : ""}${company.isInnoBiz ? "- �
 }
 
 /**
- * Build RAG context (PRD 12.6)
+ * Build RAG context with evaluation criteria, reference plans, and attachments (PRD 12.6)
  */
 async function buildRagContext(input: {
   projectId: string;
   companyId: string;
   newBusinessDescription: string;
-}): Promise<string> {
+  referenceBusinessPlanIds?: string[];
+  businessPlanId?: string;
+}): Promise<{ context: string; evaluationCriteria: string }> {
   try {
     // Search project context (40% allocation)
     const projectResults = await hybridSearch({
@@ -257,16 +268,102 @@ async function buildRagContext(input: {
       .map((r) => r.content)
       .join("\n\n");
 
+    // Extract evaluation criteria from project embeddings
+    const evaluationCriteria = await extractEvaluationCriteria(input.projectId);
+
+    // Get reference business plans content
+    let referencePlansContext = "";
+    if (input.referenceBusinessPlanIds?.length) {
+      const referencePlans = await prisma.businessPlan.findMany({
+        where: { id: { in: input.referenceBusinessPlanIds } },
+        include: { sections: { orderBy: { sectionIndex: "asc" } } },
+      });
+
+      referencePlansContext = referencePlans
+        .map((plan) => {
+          const sectionsText = plan.sections
+            .map((s) => `### ${s.title}\n${s.content}`)
+            .join("\n\n");
+          return `## 참조 사업계획서: ${plan.title}\n${sectionsText}`;
+        })
+        .join("\n\n---\n\n");
+    }
+
+    // Get attachments content (if analyzed)
+    let attachmentsContext = "";
+    if (input.businessPlanId) {
+      const attachments = await prisma.businessPlanAttachment.findMany({
+        where: {
+          businessPlanId: input.businessPlanId,
+          isAnalyzed: true,
+          extractedText: { not: null },
+        },
+      });
+
+      if (attachments.length > 0) {
+        attachmentsContext = attachments
+          .map((a: { fileName: string; extractedText: string | null }) => `## 첨부 파일: ${a.fileName}\n${a.extractedText}`)
+          .join("\n\n");
+      }
+    }
+
     // Combine context
-    return `
+    const context = `
 ## 지원사업 관련 정보
 ${projectContext || "정보 없음"}
 
 ## 기업 관련 정보
 ${companyContext || "정보 없음"}
+
+${evaluationCriteria ? `## 평가 기준 (지원사업 공고문 기반)\n${evaluationCriteria}` : ""}
+
+${referencePlansContext ? `## 참조 사업계획서\n${referencePlansContext}` : ""}
+
+${attachmentsContext ? `## 첨부 자료 분석 결과\n${attachmentsContext}` : ""}
 `.trim();
+
+    return { context, evaluationCriteria };
   } catch (error) {
     console.error("[BusinessPlan] Build RAG context error:", error);
+    return { context: "", evaluationCriteria: "" };
+  }
+}
+
+/**
+ * Extract evaluation criteria from project's embedded documents
+ * Searches for keywords like: 평가기준, 심사기준, 배점기준, 평가항목
+ */
+async function extractEvaluationCriteria(projectId: string): Promise<string> {
+  try {
+    // First, check if project has direct evaluationCriteria field
+    const project = await prisma.supportProject.findUnique({
+      where: { id: projectId },
+      select: { evaluationCriteria: true },
+    });
+
+    if (project?.evaluationCriteria) {
+      return project.evaluationCriteria;
+    }
+
+    // Search in project embeddings for evaluation criteria
+    const evaluationResults = await hybridSearch({
+      queryText: "평가기준 심사기준 배점기준 평가항목 심사항목 선정기준",
+      sourceType: "support_project",
+      matchThreshold: 0.5,
+      matchCount: 5,
+      semanticWeight: 0.6,
+    });
+
+    // Filter results for this specific project
+    const projectEvaluationResults = evaluationResults
+      .filter((r) => r.sourceId === projectId)
+      .slice(0, 3)
+      .map((r) => r.content)
+      .join("\n\n");
+
+    return projectEvaluationResults || "";
+  } catch (error) {
+    console.error("[BusinessPlan] Extract evaluation criteria error:", error);
     return "";
   }
 }
@@ -280,9 +377,18 @@ async function generateSection(params: {
   project: any;
   newBusinessDescription: string;
   ragContext: string;
+  evaluationCriteria?: string;
   prompt: string;
 }): Promise<string> {
   try {
+    const evaluationSection = params.evaluationCriteria
+      ? `
+## 평가 기준 (매우 중요 - 이 기준에 맞춰 작성하세요)
+${params.evaluationCriteria}
+
+평가 기준에 명시된 항목들을 충족하도록 내용을 구성하세요.`
+      : "";
+
     const systemPrompt = `당신은 정부 지원사업 사업계획서 작성 전문가입니다.
 다음 원칙을 준수하여 사업계획서를 작성해주세요:
 
@@ -291,6 +397,7 @@ async function generateSection(params: {
 3. 기업의 강점과 역량 강조
 4. 실현 가능하고 구체적인 계획 제시
 5. 전문적이고 설득력 있는 문체 사용
+${evaluationSection}
 
 RAG 컨텍스트:
 ${params.ragContext}`;
@@ -353,11 +460,12 @@ export async function regenerateSection(
 
     const section = businessPlan.sections[0];
 
-    // Build RAG context
-    const ragContext = await buildRagContext({
+    // Build RAG context with evaluation criteria
+    const { context: ragContext, evaluationCriteria } = await buildRagContext({
       projectId: businessPlan.projectId || "",
       companyId: businessPlan.companyId,
       newBusinessDescription: businessPlan.newBusinessDescription || "",
+      businessPlanId: businessPlan.id,
     });
 
     // Determine prompt based on section title
@@ -379,6 +487,7 @@ export async function regenerateSection(
       project: businessPlan.project,
       newBusinessDescription: businessPlan.newBusinessDescription || "",
       ragContext,
+      evaluationCriteria,
       prompt,
     });
 
@@ -387,4 +496,95 @@ export async function regenerateSection(
     console.error("[BusinessPlan] Regenerate section error:", error);
     throw new Error("Failed to regenerate section");
   }
+}
+
+/**
+ * Generate embeddings for a completed business plan (PRD 12.4)
+ * This makes the business plan searchable for future reference
+ */
+export async function generateBusinessPlanEmbeddings(
+  businessPlanId: string
+): Promise<void> {
+  try {
+    // Fetch the business plan with all sections
+    const businessPlan = await prisma.businessPlan.findUnique({
+      where: { id: businessPlanId },
+      include: {
+        sections: { orderBy: { sectionIndex: "asc" } },
+        company: { select: { name: true } },
+        project: { select: { name: true } },
+      },
+    });
+
+    if (!businessPlan) {
+      throw new Error("Business plan not found");
+    }
+
+    // Delete existing embeddings for this business plan
+    await deleteEmbeddings("business_plan", businessPlanId);
+
+    // Build full text content from all sections
+    const fullContent = buildBusinessPlanContent(businessPlan);
+
+    // Store embeddings with metadata
+    await storeDocumentEmbeddings(
+      "business_plan",
+      businessPlanId,
+      fullContent,
+      {
+        title: businessPlan.title,
+        company_name: businessPlan.company?.name,
+        project_name: businessPlan.project?.name,
+        status: businessPlan.status,
+        created_at: businessPlan.createdAt.toISOString(),
+      }
+    );
+
+    console.log(
+      `[BusinessPlan] Generated embeddings for business plan: ${businessPlanId}`
+    );
+  } catch (error) {
+    console.error("[BusinessPlan] Generate embeddings error:", error);
+    throw new Error("Failed to generate business plan embeddings");
+  }
+}
+
+/**
+ * Build searchable content from business plan sections
+ */
+function buildBusinessPlanContent(businessPlan: {
+  title: string;
+  newBusinessDescription?: string | null;
+  additionalNotes?: string | null;
+  sections: { title: string; content: string }[];
+  company?: { name: string } | null;
+  project?: { name: string } | null;
+}): string {
+  const parts: string[] = [];
+
+  // Title and metadata
+  parts.push(`# ${businessPlan.title}`);
+
+  if (businessPlan.company?.name) {
+    parts.push(`기업: ${businessPlan.company.name}`);
+  }
+
+  if (businessPlan.project?.name) {
+    parts.push(`지원사업: ${businessPlan.project.name}`);
+  }
+
+  if (businessPlan.newBusinessDescription) {
+    parts.push(`\n## 신규 사업 개요\n${businessPlan.newBusinessDescription}`);
+  }
+
+  // All sections
+  for (const section of businessPlan.sections) {
+    parts.push(`\n## ${section.title}\n${section.content}`);
+  }
+
+  if (businessPlan.additionalNotes) {
+    parts.push(`\n## 추가 참고사항\n${businessPlan.additionalNotes}`);
+  }
+
+  return parts.join("\n");
 }

@@ -77,7 +77,7 @@ export async function GET(req: NextRequest) {
       members: undefined, // Remove members array from response
     }));
 
-    return NextResponse.json(companiesWithRole);
+    return NextResponse.json({ companies: companiesWithRole });
   } catch (error) {
     console.error("Error fetching companies:", error);
     return NextResponse.json(

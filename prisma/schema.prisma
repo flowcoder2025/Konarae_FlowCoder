@@ -472,10 +472,51 @@ model BusinessPlan {
 
   sections    BusinessPlanSection[]
   evaluations Evaluation[]
+  attachments BusinessPlanAttachment[]
+
+  // Self-referencing for reference plans
+  referencedBy BusinessPlanReference[] @relation("ReferencePlan")
+  references   BusinessPlanReference[] @relation("SourcePlan")
 
   @@index([userId])
   @@index([companyId])
   @@index([status])
+}
+
+model BusinessPlanAttachment {
+  id             String @id @default(cuid())
+  businessPlanId String
+
+  fileName    String
+  fileType    String // "application/pdf", "image/png", "image/jpeg"
+  fileUrl     String // Supabase Storage URL
+  fileSize    Int
+  description String? @db.Text
+
+  // AI Analysis
+  extractedText String?  @db.Text
+  isAnalyzed    Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+
+  businessPlan BusinessPlan @relation(fields: [businessPlanId], references: [id], onDelete: Cascade)
+
+  @@index([businessPlanId])
+}
+
+model BusinessPlanReference {
+  id             String @id @default(cuid())
+  businessPlanId String // The plan being created
+  referencePlanId String // The plan being referenced
+
+  createdAt DateTime @default(now())
+
+  businessPlan  BusinessPlan @relation("SourcePlan", fields: [businessPlanId], references: [id], onDelete: Cascade)
+  referencePlan BusinessPlan @relation("ReferencePlan", fields: [referencePlanId], references: [id], onDelete: Cascade)
+
+  @@unique([businessPlanId, referencePlanId])
+  @@index([businessPlanId])
+  @@index([referencePlanId])
 }
 
 model BusinessPlanSection {

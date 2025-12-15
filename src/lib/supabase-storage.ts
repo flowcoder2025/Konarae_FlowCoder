@@ -20,6 +20,7 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey, {
 // 버킷 이름
 export const BUCKETS = {
   PROJECT_FILES: "project-files",
+  BUSINESS_PLAN_FILES: "business-plan-files",
 } as const;
 
 // 파일 타입

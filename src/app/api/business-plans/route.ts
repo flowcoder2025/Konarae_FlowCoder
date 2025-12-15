@@ -16,6 +16,7 @@ const createBusinessPlanSchema = z.object({
   title: z.string().min(1),
   newBusinessDescription: z.string().optional(),
   additionalNotes: z.string().optional(),
+  referenceBusinessPlanIds: z.array(z.string()).optional(),
 });
 
 export async function GET(req: NextRequest) {
@@ -102,6 +103,16 @@ export async function POST(req: NextRequest) {
           additionalNotes: validatedData.additionalNotes,
         },
       });
+
+      // Create reference plan relations if provided
+      if (validatedData.referenceBusinessPlanIds?.length) {
+        await tx.businessPlanReference.createMany({
+          data: validatedData.referenceBusinessPlanIds.map((referencePlanId) => ({
+            businessPlanId: plan.id,
+            referencePlanId,
+          })),
+        });
+      }
 
       // Grant owner permission
       await grant("business_plan", plan.id, "owner", "user", session.user.id);

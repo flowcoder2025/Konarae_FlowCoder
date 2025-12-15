@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { check } from "@/lib/rebac";
+import { generateBusinessPlanEmbeddings } from "@/lib/business-plan-generator";
 import { z } from "zod";
 
 const updateBusinessPlanSchema = z.object({
@@ -103,10 +104,33 @@ export async function PATCH(
     const body = await req.json();
     const validatedData = updateBusinessPlanSchema.parse(body);
 
+    // Check if status is changing to "completed"
+    const isCompletingPlan = validatedData.status === "completed";
+
+    // If completing, get current status to verify it's actually changing
+    let wasNotCompleted = false;
+    if (isCompletingPlan) {
+      const currentPlan = await prisma.businessPlan.findUnique({
+        where: { id },
+        select: { status: true },
+      });
+      wasNotCompleted = currentPlan?.status !== "completed";
+    }
+
     const businessPlan = await prisma.businessPlan.update({
       where: { id },
       data: validatedData,
     });
+
+    // Generate embeddings when business plan is completed (async, don't block response)
+    if (isCompletingPlan && wasNotCompleted) {
+      generateBusinessPlanEmbeddings(id).catch((error) => {
+        console.error(
+          "[API] Failed to generate business plan embeddings:",
+          error
+        );
+      });
+    }
 
     return NextResponse.json({
       success: true,
