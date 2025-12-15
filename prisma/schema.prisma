@@ -316,7 +316,6 @@ model SupportProject {
   // Embedding queue flag
   needsEmbedding Boolean @default(true) // Flag for async embedding generation
 
-  embeddings      SupportProjectEmbedding[]
   matchingResults MatchingResult[]
   businessPlans   BusinessPlan[]
   attachments     ProjectAttachment[]
@@ -325,19 +324,6 @@ model SupportProject {
   @@index([region])
   @@index([status])
   @@index([deadline])
-}
-
-model SupportProjectEmbedding {
-  id        String                         @id @default(cuid())
-  projectId String
-  fieldType String // combined, name, description, eligibility
-  embedding Unsupported("vector(1536)")?
-
-  createdAt DateTime @default(now())
-
-  project SupportProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
-
-  @@unique([projectId, fieldType])
 }
 
 model ProjectAttachment {

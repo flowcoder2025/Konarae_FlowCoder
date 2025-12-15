@@ -22,12 +22,6 @@ export async function GET(
     const project = await prisma.supportProject.findUnique({
       where: { id, deletedAt: null },
       include: {
-        embeddings: {
-          select: {
-            fieldType: true,
-            createdAt: true,
-          },
-        },
         _count: {
           select: {
             matchingResults: true,
