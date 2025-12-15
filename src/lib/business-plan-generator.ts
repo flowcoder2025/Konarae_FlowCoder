@@ -17,6 +17,99 @@ const _CONTEXT_ALLOCATION = {
   references: 0.25, // 25%
 } as const;
 
+// 기본 섹션 템플릿 (양식 추출 실패 시 폴백)
+const DEFAULT_SECTIONS = [
+  { title: "사업 개요", promptHint: "사업의 배경, 목적, 필요성을 명확하게 설명하고, 지원사업과의 연관성을 강조" },
+  { title: "기업 현황", promptHint: "기업의 강점과 경쟁력을 강조하며 작성" },
+  { title: "사업 내용", promptHint: "구체적인 내용, 핵심 기술, 목표 시장, 기대 효과를 포함" },
+  { title: "추진 계획", promptHint: "단계별 일정, 마일스톤, 인력 계획, 예산 계획을 구체적으로 작성" },
+  { title: "기대 효과", promptHint: "경제적, 기술적, 사회적 효과를 구체적인 수치와 함께 작성" },
+] as const;
+
+interface FormSection {
+  title: string;
+  promptHint: string;
+}
+
+/**
+ * Extract form structure from project attachments using AI
+ * Searches for 신청서, 양식, 사업계획서 files and extracts section structure
+ */
+async function extractFormStructure(projectId: string): Promise<FormSection[]> {
+  try {
+    // Find form-related attachments from project
+    const attachments = await prisma.projectAttachment.findMany({
+      where: {
+        projectId,
+        isParsed: true,
+        parsedContent: { not: null },
+      },
+    });
+
+    // Filter for form files (신청서, 양식, 사업계획서)
+    const formKeywords = ["신청서", "양식", "사업계획서", "작성서식", "서식"];
+    const formAttachments = attachments.filter((a) =>
+      formKeywords.some((keyword) => a.fileName.includes(keyword))
+    );
+
+    if (formAttachments.length === 0) {
+      console.log("[BusinessPlan] No form attachments found, using default sections");
+      return [...DEFAULT_SECTIONS];
+    }
+
+    // Use the first form attachment's parsed content
+    const formContent = formAttachments[0].parsedContent;
+    if (!formContent) {
+      return [...DEFAULT_SECTIONS];
+    }
+
+    // Use Gemini to extract section structure from the form
+    const { text } = await generateText({
+      model: google("gemini-2.5-flash-preview-05-20"),
+      system: `당신은 정부 지원사업 신청서/사업계획서 양식을 분석하는 전문가입니다.
+주어진 양식 내용에서 작성해야 하는 섹션(항목)들을 추출해주세요.
+
+응답 형식 (JSON):
+[
+  { "title": "섹션 제목", "promptHint": "이 섹션에서 작성해야 할 내용 힌트" },
+  ...
+]
+
+주의사항:
+- 작성이 필요한 섹션만 추출 (단순 안내문, 표지, 서약서 등 제외)
+- 각 섹션의 작성 가이드라인을 promptHint에 포함
+- 반드시 유효한 JSON 배열로만 응답`,
+      prompt: `다음 신청서/양식 내용에서 작성 섹션을 추출해주세요:
+
+${formContent.slice(0, 8000)}`, // Limit to avoid token overflow
+      maxOutputTokens: 2000,
+    });
+
+    // Parse the AI response
+    try {
+      // Extract JSON from response (handle markdown code blocks)
+      let jsonStr = text.trim();
+      if (jsonStr.startsWith("```")) {
+        jsonStr = jsonStr.replace(/```json?\n?/g, "").replace(/```$/g, "").trim();
+      }
+
+      const sections = JSON.parse(jsonStr) as FormSection[];
+
+      if (Array.isArray(sections) && sections.length > 0) {
+        console.log(`[BusinessPlan] Extracted ${sections.length} sections from form`);
+        return sections;
+      }
+    } catch (parseError) {
+      console.error("[BusinessPlan] Failed to parse AI response:", parseError);
+    }
+
+    return [...DEFAULT_SECTIONS];
+  } catch (error) {
+    console.error("[BusinessPlan] Extract form structure error:", error);
+    return [...DEFAULT_SECTIONS];
+  }
+}
+
 export interface GenerateBusinessPlanInput {
   companyId: string;
   projectId: string;
@@ -35,6 +128,7 @@ export interface BusinessPlanSection {
 
 /**
  * Generate business plan sections using RAG + AI
+ * Dynamically extracts section structure from form attachments
  */
 export async function generateBusinessPlanSections(
   input: GenerateBusinessPlanInput
@@ -71,6 +165,10 @@ export async function generateBusinessPlanSections(
       throw new Error("Project not found");
     }
 
+    // Extract form structure from attachments (dynamic section detection)
+    const formSections = await extractFormStructure(input.projectId);
+    console.log(`[BusinessPlan] Using ${formSections.length} sections: ${formSections.map(s => s.title).join(", ")}`);
+
     // Build context from RAG with evaluation criteria, reference plans, and attachments (PRD 12.6)
     const { context: ragContext, evaluationCriteria } = await buildRagContext({
       projectId: input.projectId,
@@ -80,152 +178,116 @@ export async function generateBusinessPlanSections(
       businessPlanId: input.businessPlanId,
     });
 
-    // Generate sections
+    // Build company context for prompts
+    const companyContext = buildCompanyContext(company);
+
+    // Generate sections dynamically
     const sections: BusinessPlanSection[] = [];
 
-    // Section 1: 사업 개요
-    sections.push({
-      sectionIndex: 1,
-      title: "사업 개요",
-      content: await generateSection({
-        sectionTitle: "사업 개요",
-        company,
-        project,
-        newBusinessDescription: input.newBusinessDescription,
-        ragContext,
-        evaluationCriteria,
-        prompt: `다음 정보를 바탕으로 사업 개요를 작성해주세요:
+    for (let i = 0; i < formSections.length; i++) {
+      const formSection = formSections[i];
 
-**신규 사업 내용**: ${input.newBusinessDescription}
-
-**지원사업**: ${project.name} (${project.organization})
-
-**기업 정보**:
-- 기업명: ${company.name}
-- 업종: ${company.businessCategory}
-- 주요 사업: ${company.mainBusiness}
-
-사업의 배경, 목적, 필요성을 명확하게 설명하고, 지원사업과의 연관성을 강조해주세요.`,
-      }),
-      isAiGenerated: true,
-    });
-
-    // Section 2: 기업 현황
-    sections.push({
-      sectionIndex: 2,
-      title: "기업 현황",
-      content: await generateSection({
-        sectionTitle: "기업 현황",
-        company,
-        project,
-        newBusinessDescription: input.newBusinessDescription,
-        ragContext,
-        evaluationCriteria,
-        prompt: `기업 현황을 다음 정보를 바탕으로 작성해주세요:
-
-**기업 정보**:
-- 기업명: ${company.name}
-- 설립일: ${formatDateKST(company.establishedDate)}
-- 기업 형태: ${company.companyType}
-- 종업원 수: ${company.employeeCount || "미정"}명
-- 자본금: ${company.capitalAmount ? Number(company.capitalAmount).toLocaleString() + "원" : "미정"}
-
-**재무 현황** (최근 3년):
-${company.financials
-  .map(
-    (f) =>
-      `- ${f.fiscalYear}년: 매출 ${f.revenue ? Number(f.revenue).toLocaleString() + "원" : "미정"}, 영업이익 ${f.operatingProfit ? Number(f.operatingProfit).toLocaleString() + "원" : "미정"}`
-  )
-  .join("\n")}
-
-**보유 인증**:
-${company.isVenture ? "- 벤처기업 인증\n" : ""}${company.isInnoBiz ? "- 이노비즈 인증\n" : ""}${company.isMainBiz ? "- 메인비즈 인증\n" : ""}
-
-기업의 강점과 경쟁력을 강조하며 작성해주세요.`,
-      }),
-      isAiGenerated: true,
-    });
-
-    // Section 3: 사업 내용
-    sections.push({
-      sectionIndex: 3,
-      title: "사업 내용",
-      content: await generateSection({
-        sectionTitle: "사업 내용",
-        company,
-        project,
-        newBusinessDescription: input.newBusinessDescription,
-        ragContext,
-        evaluationCriteria,
-        prompt: `다음 신규 사업에 대한 상세한 내용을 작성해주세요:
-
-**신규 사업**: ${input.newBusinessDescription}
-
-다음 내용을 포함해주세요:
-1. 사업의 구체적인 내용과 범위
-2. 핵심 기술 또는 서비스
-3. 목표 고객 및 시장
-4. 기대 효과
-
-지원사업 "${project.name}"의 목적에 부합하도록 작성해주세요.`,
-      }),
-      isAiGenerated: true,
-    });
-
-    // Section 4: 추진 계획
-    sections.push({
-      sectionIndex: 4,
-      title: "추진 계획",
-      content: await generateSection({
-        sectionTitle: "추진 계획",
-        company,
-        project,
-        newBusinessDescription: input.newBusinessDescription,
-        ragContext,
-        evaluationCriteria,
-        prompt: `사업 추진 계획을 작성해주세요:
-
-**사업 기간**: ${project.startDate && project.endDate ? `${formatDateKST(project.startDate)} ~ ${formatDateKST(project.endDate)}` : "프로젝트 일정에 따름"}
-
-다음 내용을 포함해주세요:
-1. 단계별 추진 일정 (월별 또는 분기별)
-2. 주요 마일스톤
-3. 투입 인력 계획
-4. 예산 집행 계획
-
-구체적이고 실현 가능한 계획을 작성해주세요.`,
-      }),
-      isAiGenerated: true,
-    });
-
-    // Section 5: 기대 효과
-    sections.push({
-      sectionIndex: 5,
-      title: "기대 효과",
-      content: await generateSection({
-        sectionTitle: "기대 효과",
-        company,
-        project,
-        newBusinessDescription: input.newBusinessDescription,
-        ragContext,
-        evaluationCriteria,
-        prompt: `사업의 기대 효과를 작성해주세요:
-
-다음 관점에서 작성해주세요:
-1. **경제적 효과**: 매출 증대, 비용 절감, 고용 창출 등
-2. **기술적 효과**: 기술 개발, 특허 출원, 노하우 축적 등
-3. **사회적 효과**: 산업 발전, 지역 경제 기여, 환경 개선 등
-
-구체적인 수치와 근거를 포함하여 작성해주세요.`,
-      }),
-      isAiGenerated: true,
-    });
+      sections.push({
+        sectionIndex: i + 1,
+        title: formSection.title,
+        content: await generateSection({
+          sectionTitle: formSection.title,
+          company,
+          project,
+          newBusinessDescription: input.newBusinessDescription,
+          ragContext,
+          evaluationCriteria,
+          prompt: buildDynamicPrompt({
+            sectionTitle: formSection.title,
+            promptHint: formSection.promptHint,
+            companyContext,
+            projectName: project.name,
+            projectOrganization: project.organization,
+            newBusinessDescription: input.newBusinessDescription,
+            projectDateRange: project.startDate && project.endDate
+              ? `${formatDateKST(project.startDate)} ~ ${formatDateKST(project.endDate)}`
+              : null,
+          }),
+        }),
+        isAiGenerated: true,
+      });
+    }
 
     return sections;
   } catch (error) {
     console.error("[BusinessPlan] Generate sections error:", error);
     throw new Error("Failed to generate business plan sections");
   }
+}
+
+/**
+ * Build company context string for prompts
+ */
+function buildCompanyContext(company: {
+  name: string;
+  businessCategory: string | null;
+  mainBusiness: string | null;
+  establishedDate: Date | null;
+  companyType: string | null;
+  employeeCount: number | null;
+  capitalAmount: bigint | null;
+  isVenture: boolean;
+  isInnoBiz: boolean;
+  isMainBiz: boolean;
+  financials: Array<{
+    fiscalYear: number;
+    revenue: bigint | null;
+    operatingProfit: bigint | null;
+  }>;
+}): string {
+  const certifications = [
+    company.isVenture && "벤처기업 인증",
+    company.isInnoBiz && "이노비즈 인증",
+    company.isMainBiz && "메인비즈 인증",
+  ].filter(Boolean).join(", ");
+
+  const financials = company.financials
+    .map((f) =>
+      `${f.fiscalYear}년: 매출 ${f.revenue ? Number(f.revenue).toLocaleString() + "원" : "미정"}, 영업이익 ${f.operatingProfit ? Number(f.operatingProfit).toLocaleString() + "원" : "미정"}`
+    )
+    .join("\n- ");
+
+  return `**기업 정보**:
+- 기업명: ${company.name}
+- 업종: ${company.businessCategory || "미정"}
+- 주요 사업: ${company.mainBusiness || "미정"}
+- 설립일: ${company.establishedDate ? formatDateKST(company.establishedDate) : "미정"}
+- 기업 형태: ${company.companyType || "미정"}
+- 종업원 수: ${company.employeeCount || "미정"}명
+- 자본금: ${company.capitalAmount ? Number(company.capitalAmount).toLocaleString() + "원" : "미정"}
+${certifications ? `- 보유 인증: ${certifications}` : ""}
+${financials ? `\n**재무 현황** (최근 3년):\n- ${financials}` : ""}`;
+}
+
+/**
+ * Build dynamic prompt based on section title and hints
+ */
+function buildDynamicPrompt(params: {
+  sectionTitle: string;
+  promptHint: string;
+  companyContext: string;
+  projectName: string;
+  projectOrganization: string | null;
+  newBusinessDescription: string;
+  projectDateRange: string | null;
+}): string {
+  return `"${params.sectionTitle}" 섹션을 작성해주세요.
+
+**작성 가이드**: ${params.promptHint}
+
+**신규 사업 내용**: ${params.newBusinessDescription}
+
+**지원사업**: ${params.projectName}${params.projectOrganization ? ` (${params.projectOrganization})` : ""}
+${params.projectDateRange ? `**사업 기간**: ${params.projectDateRange}` : ""}
+
+${params.companyContext}
+
+위 정보를 바탕으로 해당 섹션의 내용을 전문적이고 설득력 있게 작성해주세요.`;
 }
 
 /**
@@ -430,13 +492,14 @@ ${params.ragContext}`;
 
 /**
  * Generate single section (for editing existing plan)
+ * Supports both default and dynamically extracted sections
  */
 export async function regenerateSection(
   businessPlanId: string,
   sectionIndex: number
 ): Promise<string> {
   try {
-    // Get business plan
+    // Get business plan with company data
     const businessPlan = await prisma.businessPlan.findUnique({
       where: { id: businessPlanId },
       include: {
@@ -468,18 +531,21 @@ export async function regenerateSection(
       businessPlanId: businessPlan.id,
     });
 
-    // Determine prompt based on section title
-    const prompts: Record<string, string> = {
-      사업개요: `사업 개요를 재작성해주세요. 배경, 목적, 필요성을 명확하게 설명하고, 지원사업과의 연관성을 강조해주세요.`,
-      기업현황: `기업 현황을 재작성해주세요. 기업의 강점과 경쟁력을 강조하며 작성해주세요.`,
-      사업내용: `사업 내용을 재작성해주세요. 구체적인 내용, 핵심 기술, 목표 시장, 기대 효과를 포함해주세요.`,
-      추진계획: `추진 계획을 재작성해주세요. 단계별 일정, 마일스톤, 인력 계획, 예산 계획을 구체적으로 작성해주세요.`,
-      기대효과: `기대 효과를 재작성해주세요. 경제적, 기술적, 사회적 효과를 구체적인 수치와 함께 작성해주세요.`,
-    };
+    // Build company context
+    const companyContext = buildCompanyContext(businessPlan.company);
 
-    const prompt =
-      prompts[section.title.replace(/\s/g, "")] ||
-      `"${section.title}" 섹션을 재작성해주세요.`;
+    // Build dynamic regeneration prompt
+    const prompt = buildDynamicPrompt({
+      sectionTitle: section.title,
+      promptHint: `이전 내용을 참고하여 더 개선된 버전으로 재작성해주세요. 더 구체적이고 설득력 있게 작성하세요.`,
+      companyContext,
+      projectName: businessPlan.project?.name || "",
+      projectOrganization: businessPlan.project?.organization || null,
+      newBusinessDescription: businessPlan.newBusinessDescription || "",
+      projectDateRange: businessPlan.project?.startDate && businessPlan.project?.endDate
+        ? `${formatDateKST(businessPlan.project.startDate)} ~ ${formatDateKST(businessPlan.project.endDate)}`
+        : null,
+    });
 
     const content = await generateSection({
       sectionTitle: section.title,
