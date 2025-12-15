@@ -1,7 +1,8 @@
 # Lib 가이드 (유틸리티 & 백엔드)
 
 > **역할**: 유틸리티, 백엔드 연동, 권한 시스템 가이드
-> **상위**: `/claude.md` (루트 헌법)
+> **상위 허브**: `/CLAUDE.md` (루트 헌법)
+> **연관 가이드**: `/prisma/claude.md`, `/src/app/claude.md`
 > **참조 스킬**: `fdp-backend-architect`
 
 ---
@@ -10,12 +11,43 @@
 
 ```
 /src/lib
-├── claude.md          # [현재 파일]
-├── utils.ts           # 유틸리티 함수 (cn 등)
-├── prisma.ts          # Prisma 클라이언트 싱글톤
-├── auth.ts            # NextAuth 설정
-├── permissions.ts     # ReBAC 권한 시스템
-└── text-config.ts     # i18n 텍스트 설정
+├── claude.md               # [현재 파일]
+│
+│   # 핵심 유틸리티
+├── utils.ts                # cn() 클래스 병합
+├── prisma.ts               # Prisma 클라이언트 싱글톤
+├── cache.ts                # 캐시 유틸리티
+├── logger.ts               # 로깅 시스템
+├── api-error.ts            # API 에러 처리
+├── performance.ts          # 성능 모니터링
+│
+│   # 인증 & 권한
+├── auth.ts                 # NextAuth 설정
+├── auth.config.ts          # NextAuth 옵션
+├── auth-utils.ts           # 인증 유틸리티
+├── rebac.ts                # ReBAC 권한 시스템
+│
+│   # 비즈니스 로직
+├── matching.ts             # RAG 매칭 엔진
+├── rag.ts                  # RAG 검색 시스템
+├── text-config.ts          # i18n 텍스트 설정
+├── notifications.ts        # 알림 시스템
+├── export.ts               # 데이터 내보내기
+│
+│   # 외부 서비스 연동
+├── qstash.ts               # QStash 연동
+├── railway.ts              # Railway 워커 연동
+├── supabase-storage.ts     # Supabase Storage
+│
+│   # 서브 모듈
+├── /crawler                # 크롤러 시스템
+│   └── worker.ts           #    크롤러 워커
+├── /documents              # 문서 분석 시스템
+│   ├── analyzer.ts         #    Gemini Vision 분석
+│   └── embeddings.ts       #    OpenAI 임베딩
+├── /supabase               # Supabase 연동
+│   └── client.ts           #    Supabase 클라이언트
+└── /actions                # Server Actions
 ```
 
 ---
@@ -279,9 +311,34 @@ export async function PATCH(req, { params }) {
 
 ---
 
+## 11. 허브 연결
+
+### 상위
+- `/CLAUDE.md` → 전역 원칙, i18n 톤 코드
+
+### 연관
+- `/prisma/claude.md` → DB 스키마, Prisma 타입
+- `/src/app/claude.md` → API에서 lib 함수 사용
+- `/src/components/claude.md` → 컴포넌트에서 유틸리티 사용
+- `/src/types/claude.md` → 타입 정의
+
+### 주요 모듈 가이드
+
+| 모듈 | 용도 | 주요 함수/클래스 |
+|-----|------|-----------------|
+| `auth.ts` | 인증 | `auth()`, `signIn()`, `signOut()` |
+| `rebac.ts` | 권한 | `check()`, `grant()`, `revoke()` |
+| `matching.ts` | 매칭 | `findMatches()`, `calculateScore()` |
+| `rag.ts` | RAG | `searchSimilar()`, `generateEmbedding()` |
+| `/crawler` | 크롤링 | `CrawlerWorker`, `parseProject()` |
+| `/documents` | 문서 분석 | `analyzeDocument()`, `createEmbeddings()` |
+
+---
+
 ## 변경 이력
 
 | 날짜 | 변경 |
 |-----|------|
 | 2025-12-05 | 초기 생성 |
 | 2025-12-05 | /docs 참조 섹션 추가 |
+| 2025-12-15 | 허브 연결 섹션 추가, 디렉토리 구조 확장 |

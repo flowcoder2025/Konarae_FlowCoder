@@ -1,7 +1,8 @@
 # Features 가이드 (기능 모듈)
 
 > **역할**: 기능별 모듈 개발 가이드
-> **상위**: `/claude.md` (루트 헌법)
+> **상위 허브**: `/CLAUDE.md` (루트 헌법)
+> **연관 가이드**: `/src/components/claude.md`, `/src/lib/claude.md`
 
 ---
 
@@ -214,9 +215,23 @@ import { LoginForm } from "./components/LoginForm"
 
 ---
 
+## 9. 허브 연결
+
+### 상위
+- `/CLAUDE.md` → 전역 원칙, 네이밍 체계
+
+### 연관
+- `/src/components/claude.md` → 공통 UI 컴포넌트 사용
+- `/src/lib/claude.md` → 백엔드 로직, 권한 시스템
+- `/src/hooks/claude.md` → 커스텀 훅 사용
+- `/src/app/claude.md` → 페이지에서 Feature 모듈 사용
+
+---
+
 ## 변경 이력
 
 | 날짜 | 변경 |
 |-----|------|
 | 2025-12-05 | 초기 생성 |
 | 2025-12-05 | /docs 참조 섹션 추가, 토큰 효율 원칙 적용 |
+| 2025-12-15 | 허브 연결 섹션 추가 |

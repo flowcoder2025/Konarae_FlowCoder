@@ -1,7 +1,8 @@
 # Components 가이드
 
 > **역할**: UI 컴포넌트 개발 가이드
-> **상위**: `/claude.md` (루트 헌법)
+> **상위 허브**: `/CLAUDE.md` (루트 헌법)
+> **연관 가이드**: `/src/app/claude.md`, `/src/hooks/claude.md`
 
 ---
 
@@ -9,13 +10,19 @@
 
 ```
 /src/components
-├── claude.md        # [현재 파일]
-└── /ui              # shadcn/ui + 커스텀 컴포넌트
-    ├── button.tsx
-    ├── card.tsx
-    ├── modal.tsx
-    ├── input.tsx
-    └── index.ts     # 통합 export
+├── claude.md           # [현재 파일]
+├── /ui                 # shadcn/ui 기반 컴포넌트
+├── /layout             # 레이아웃 컴포넌트
+├── /common             # 공통 컴포넌트
+├── /companies          # 기업 관련 컴포넌트
+├── /projects           # 프로젝트 컴포넌트
+├── /matching           # 매칭 컴포넌트
+├── /business-plans     # 사업계획서 컴포넌트
+├── /evaluations        # 평가 컴포넌트
+├── /documents          # 문서 관리 컴포넌트
+├── /dashboard          # 대시보드 컴포넌트
+├── /admin              # 관리자 컴포넌트
+└── /seo                # SEO 컴포넌트
 ```
 
 ---
@@ -243,6 +250,29 @@ Transitions:
 
 ---
 
+## 9. 허브 연결
+
+### 상위
+- `/CLAUDE.md` → 전역 원칙, 버튼 규칙, 디자인 토큰, 접근성
+
+### 연관
+- `/src/app/claude.md` → 페이지에서 컴포넌트 사용
+- `/src/hooks/claude.md` → 컴포넌트에서 훅 사용
+- `/src/lib/claude.md` → 유틸리티 함수 (cn 등)
+- `/src/types/claude.md` → Props 타입 정의
+
+### 도메인별 컴포넌트 가이드
+
+| 디렉토리 | 용도 | 주요 컴포넌트 |
+|---------|------|--------------|
+| `/companies` | 기업 관리 | CompanyForm, CompanyCard |
+| `/projects` | 지원사업 | ProjectCard, ProjectList |
+| `/matching` | 매칭 | MatchFilters, MatchResults |
+| `/documents` | 문서 관리 | DocumentUpload, DocumentList |
+| `/evaluations` | 평가 | EvaluationForm, FeedbackCard |
+
+---
+
 ## 변경 이력
 
 | 날짜 | 변경 내용 | 영향 범위 |
@@ -251,3 +281,4 @@ Transitions:
 | 2025-12-05 | 버튼 규칙 동기화 (주사용/예비 분리) | Button 컴포넌트 |
 | 2025-12-05 | 모달 상태도 보강 | Modal 컴포넌트 |
 | 2025-12-05 | /docs 참조 섹션 추가, 토큰 효율 원칙 적용 | 절차 전체 |
+| 2025-12-15 | 허브 연결 섹션 추가, 디렉토리 구조 확장 | 전체 |
