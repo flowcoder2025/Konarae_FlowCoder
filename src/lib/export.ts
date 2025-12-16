@@ -1,11 +1,10 @@
 /**
  * Document Export Library (PRD Feature 2 - 내보내기)
- * - PDF 내보내기 (jsPDF)
- * - DOCX 내보내기 (docx)
+ * - PDF 내보내기 (jsPDF) - 서버 환경 지원
+ * - DOCX 내보내기 (docx) - 서버 환경 지원
  * - HWP 내보내기 (외부 서비스)
  */
 
-import jsPDF from "jspdf";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType } from "docx";
 import { formatDateKST } from "@/lib/utils";
 
@@ -35,13 +34,15 @@ export interface ExportResult {
 }
 
 /**
- * PDF 내보내기 (jsPDF 사용)
+ * PDF 내보내기 (jsPDF 사용 - 동적 import로 서버 환경 지원)
  */
 export async function exportToPDF(
   data: BusinessPlanExportData
 ): Promise<ExportResult> {
   try {
-    // jsPDF 한글 폰트 설정 필요 (향후 추가)
+    // 동적 import로 서버 환경에서 jsPDF 로드
+    const { default: jsPDF } = await import("jspdf");
+
     const doc = new jsPDF({
       orientation: "portrait",
       unit: "mm",
@@ -61,13 +62,13 @@ export async function exportToPDF(
     // 회사명 & 프로젝트명
     if (data.companyName) {
       doc.setFontSize(12);
-      doc.text(`Company: ${data.companyName}`, margin, yPosition);
+      doc.text(`회사명: ${data.companyName}`, margin, yPosition);
       yPosition += lineHeight;
     }
 
     if (data.projectName) {
       doc.setFontSize(12);
-      doc.text(`Project: ${data.projectName}`, margin, yPosition);
+      doc.text(`지원사업: ${data.projectName}`, margin, yPosition);
       yPosition += lineHeight;
     }
 
@@ -107,8 +108,9 @@ export async function exportToPDF(
       yPosition += lineHeight;
     }
 
-    // Blob 생성
-    const blob = doc.output("blob");
+    // ArrayBuffer로 출력 후 Blob 생성 (서버 환경 호환)
+    const arrayBuffer = doc.output("arraybuffer");
+    const blob = new Blob([arrayBuffer], { type: "application/pdf" });
     const filename = `${sanitizeFilename(data.title)}_${Date.now()}.pdf`;
 
     return {
@@ -221,8 +223,13 @@ export async function exportToDOCX(
       ],
     });
 
-    // Blob 생성
-    const blob = await Packer.toBlob(doc);
+    // Buffer로 생성 후 Blob 변환 (서버 환경 호환)
+    const buffer = await Packer.toBuffer(doc);
+    // Buffer를 Uint8Array로 변환하여 Blob 생성
+    const uint8Array = new Uint8Array(buffer);
+    const blob = new Blob([uint8Array], {
+      type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    });
     const filename = `${sanitizeFilename(data.title)}_${Date.now()}.docx`;
 
     return {
