@@ -48,36 +48,37 @@ export interface ExportResult {
 
 /**
  * 한글 폰트 로드 (로컬 파일 우선, CDN 폴백, 캐싱 지원)
+ * pdf-lib에 전달할 Uint8Array 반환
  */
-async function loadKoreanFont(): Promise<ArrayBuffer | null> {
+async function loadKoreanFont(): Promise<Uint8Array | null> {
   if (cachedFontBytes) {
-    return cachedFontBytes;
+    return new Uint8Array(cachedFontBytes);
   }
 
   // 1. 로컬 파일 시도 (가장 안정적)
   try {
     const buffer = await readFile(LOCAL_FONT_PATH);
-    cachedFontBytes = buffer.buffer.slice(
-      buffer.byteOffset,
-      buffer.byteOffset + buffer.byteLength
-    );
-    console.log("[Export] Korean font loaded from local file");
-    return cachedFontBytes;
+    // Buffer를 새 Uint8Array로 복사 (정확한 바이트 보장)
+    const uint8Array = new Uint8Array(buffer.length);
+    for (let i = 0; i < buffer.length; i++) {
+      uint8Array[i] = buffer[i];
+    }
+    cachedFontBytes = uint8Array.buffer as ArrayBuffer;
+    console.log("[Export] Korean font loaded from local file, size:", buffer.length);
+    return uint8Array;
   } catch (localError) {
-    console.warn("[Export] Local font not found, trying CDN...");
+    console.warn("[Export] Local font not found, trying CDN...", localError);
   }
 
   // 2. CDN 폴백
   try {
-    const response = await fetch(NOTO_SANS_KR_CDN, {
-      headers: { "Accept": "application/octet-stream" },
-    });
+    const response = await fetch(NOTO_SANS_KR_CDN);
     if (!response.ok) {
       throw new Error(`CDN response: ${response.status}`);
     }
     cachedFontBytes = await response.arrayBuffer();
-    console.log("[Export] Korean font loaded from CDN");
-    return cachedFontBytes;
+    console.log("[Export] Korean font loaded from CDN, size:", cachedFontBytes.byteLength);
+    return new Uint8Array(cachedFontBytes);
   } catch (cdnError) {
     console.error("[Export] Failed to load Korean font from all sources:", cdnError);
     return null;
