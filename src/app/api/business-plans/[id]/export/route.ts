@@ -91,12 +91,17 @@ export async function POST(
     // Blob을 ArrayBuffer로 변환
     const arrayBuffer = await result.blob.arrayBuffer();
 
+    // 파일명 인코딩 (RFC 5987 - 한글 지원)
+    const filename = result.filename || "export.pdf";
+    const encodedFilename = encodeURIComponent(filename);
+    const asciiFilename = filename.replace(/[^\x20-\x7E]/g, "_");
+
     // 파일 다운로드 응답
     return new NextResponse(arrayBuffer, {
       status: 200,
       headers: {
         "Content-Type": getMimeType(validatedData.format),
-        "Content-Disposition": `attachment; filename="${result.filename}"`,
+        "Content-Disposition": `attachment; filename="${asciiFilename}"; filename*=UTF-8''${encodedFilename}`,
         "Content-Length": arrayBuffer.byteLength.toString(),
       },
     });
