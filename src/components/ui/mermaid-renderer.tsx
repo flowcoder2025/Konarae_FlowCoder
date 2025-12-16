@@ -19,6 +19,94 @@ function initializeMermaid() {
   mermaidInitialized = true;
 }
 
+/**
+ * Mermaid 다이어그램 코드를 파싱 에러 없이 렌더링할 수 있도록 정제
+ * 주요 문제: 노드 라벨 내 괄호(), HTML 태그, 특수문자가 파싱 에러 유발
+ */
+function sanitizeMermaid(code: string): string {
+  let sanitized = code;
+
+  // 1. <br> 태그를 공백으로 변환 (가장 먼저 처리)
+  sanitized = sanitized.replace(/<br\s*\/?>/gi, " ");
+
+  // 2. 노드 라벨 [...]  내의 괄호 처리
+  // 패턴: 대괄호 안의 내용에서 소괄호를 대괄호로 변환
+  // 예: [시제품 제작실(3D프린터)] → [시제품 제작실 - 3D프린터]
+  sanitized = sanitized.replace(
+    /\[([^\]]*)\(([^)]*)\)([^\]]*)\]/g,
+    (match, before, inside, after) => {
+      // 괄호 내용이 있으면 " - " 또는 공백으로 연결
+      const parenContent = inside.trim();
+      if (parenContent) {
+        return `[${before.trim()} - ${parenContent}${after}]`;
+      }
+      return `[${before}${after}]`;
+    }
+  );
+
+  // 3. 반복적으로 처리 (중첩 괄호 대응)
+  let prevSanitized = "";
+  let iterations = 0;
+  while (prevSanitized !== sanitized && iterations < 5) {
+    prevSanitized = sanitized;
+    sanitized = sanitized.replace(
+      /\[([^\]]*)\(([^)]*)\)([^\]]*)\]/g,
+      (match, before, inside, after) => {
+        const parenContent = inside.trim();
+        if (parenContent) {
+          return `[${before.trim()} - ${parenContent}${after}]`;
+        }
+        return `[${before}${after}]`;
+      }
+    );
+    iterations++;
+  }
+
+  // 4. subgraph 라벨 처리: subgraph ID[라벨] 또는 subgraph ID ["라벨"]
+  // 괄호가 있는 라벨을 따옴표로 감싸기
+  sanitized = sanitized.replace(
+    /subgraph\s+(\w+)\s*\[([^\]]+)\]/g,
+    (match, id, label) => {
+      // 라벨 내 특수문자가 있으면 따옴표로 감싸기
+      const cleanLabel = label.replace(/[()]/g, "").trim();
+      return `subgraph ${id}["${cleanLabel}"]`;
+    }
+  );
+
+  // 5. timeline 다이어그램 괄호 처리
+  // 예: "2024 : 시제품 개발 (Phase 1)" → "2024 : 시제품 개발 - Phase 1"
+  sanitized = sanitized.replace(
+    /^(\s*)(section|\d{4}|\w+)\s*:\s*(.+)\(([^)]+)\)(.*)$/gm,
+    (match, indent, prefix, before, inside, after) => {
+      return `${indent}${prefix} : ${before.trim()} - ${inside}${after}`;
+    }
+  );
+
+  // 6. flowchart 노드 ID에 특수문자가 있으면 제거
+  // 예: A-1[라벨] → A1[라벨] (하이픈은 Mermaid에서 화살표와 혼동)
+  sanitized = sanitized.replace(
+    /([A-Za-z])[-](\d+)\[/g,
+    (match, letter, num) => `${letter}${num}[`
+  );
+
+  // 7. 콜론(:) 뒤 공백 확보 (일부 다이어그램에서 필요)
+  sanitized = sanitized.replace(/:(?=[^\s])/g, ": ");
+
+  // 8. 빈 괄호 제거
+  sanitized = sanitized.replace(/\(\s*\)/g, "");
+
+  // 9. 연속 공백 정리
+  sanitized = sanitized.replace(/  +/g, " ");
+
+  // 10. 라인 끝 공백 제거
+  sanitized = sanitized
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .join("\n");
+
+  return sanitized;
+}
+
 interface MermaidRendererProps {
   chart: string;
   className?: string;
@@ -46,8 +134,11 @@ export function MermaidRenderer({ chart, className }: MermaidRendererProps) {
         // Generate unique ID for this diagram
         const id = `mermaid-${uniqueId}-${Date.now()}`;
 
-        // Render the chart
-        const { svg: renderedSvg } = await mermaid.render(id, chart.trim());
+        // Sanitize the chart code before rendering
+        const sanitizedChart = sanitizeMermaid(chart.trim());
+
+        // Render the sanitized chart
+        const { svg: renderedSvg } = await mermaid.render(id, sanitizedChart);
 
         if (isMounted) {
           setSvg(renderedSvg);

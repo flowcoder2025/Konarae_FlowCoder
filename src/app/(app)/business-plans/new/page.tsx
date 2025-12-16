@@ -149,9 +149,9 @@ function NewBusinessPlanForm() {
   const fetchExistingPlans = async (companyId: string) => {
     setIsLoadingExistingPlans(true);
     try {
-      const res = await fetch(
-        `/api/business-plans?companyId=${companyId}&status=completed`
-      );
+      // 모든 상태의 사업계획서를 가져옴 (참조 자료로 활용 가능)
+      // status 필터 제거 - draft, in_progress, completed 모두 표시
+      const res = await fetch(`/api/business-plans?companyId=${companyId}`);
       if (res.ok) {
         const data = await res.json();
         setExistingPlans(data.businessPlans || []);
@@ -510,7 +510,23 @@ function NewBusinessPlanForm() {
                           htmlFor={plan.id}
                           className="flex-1 text-sm cursor-pointer"
                         >
-                          <div className="font-medium">{plan.title}</div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium">{plan.title}</span>
+                            <Badge
+                              variant={
+                                plan.status === "completed"
+                                  ? "default"
+                                  : "secondary"
+                              }
+                              className="text-xs"
+                            >
+                              {plan.status === "completed"
+                                ? "완료"
+                                : plan.status === "in_progress"
+                                  ? "작성중"
+                                  : "초안"}
+                            </Badge>
+                          </div>
                           <div className="text-xs text-muted-foreground">
                             {plan.projectName && `${plan.projectName} | `}
                             {new Date(plan.createdAt).toLocaleDateString("ko-KR")}

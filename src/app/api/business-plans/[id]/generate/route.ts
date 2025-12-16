@@ -47,6 +47,12 @@ export async function POST(
 
     const businessPlan = await prisma.businessPlan.findUnique({
       where: { id },
+      include: {
+        // 참조 사업계획서 ID 조회 (PRD 12.6 - RAG 컨텍스트에 포함)
+        references: {
+          select: { referencePlanId: true },
+        },
+      },
     });
 
     if (!businessPlan) {
@@ -68,11 +74,21 @@ export async function POST(
         );
       }
 
+      // 참조 사업계획서 ID 추출
+      const referenceBusinessPlanIds = businessPlan.references.map(
+        (ref) => ref.referencePlanId
+      );
+
       const sections = await generateBusinessPlanSections({
         companyId: businessPlan.companyId,
         projectId: businessPlan.projectId,
         newBusinessDescription: businessPlan.newBusinessDescription,
         additionalNotes: businessPlan.additionalNotes || undefined,
+        referenceBusinessPlanIds:
+          referenceBusinessPlanIds.length > 0
+            ? referenceBusinessPlanIds
+            : undefined,
+        businessPlanId: id, // 첨부파일 분석 결과도 포함
       });
 
       // Delete existing sections

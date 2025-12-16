@@ -34,6 +34,19 @@ interface UserMenuProps {
   isAdmin?: boolean;
 }
 
+/**
+ * http:// URL을 https://로 변환 (Mixed Content 경고 방지)
+ * Kakao CDN 등 일부 서비스에서 http:// URL을 제공하는 경우 대응
+ */
+function ensureHttps(url: string | null | undefined): string | undefined {
+  if (!url) return undefined;
+  // http://로 시작하는 URL을 https://로 변환
+  if (url.startsWith("http://")) {
+    return url.replace("http://", "https://");
+  }
+  return url;
+}
+
 export function UserMenu({ user, isAdmin = false }: UserMenuProps) {
   const initials = user.name
     ?.split(" ")
@@ -41,6 +54,9 @@ export function UserMenu({ user, isAdmin = false }: UserMenuProps) {
     .join("")
     .toUpperCase()
     .slice(0, 2) || user.email?.[0]?.toUpperCase() || "U";
+
+  // Mixed Content 방지를 위해 이미지 URL을 https로 변환
+  const safeImageUrl = ensureHttps(user.image);
 
   const handleSignOut = async () => {
     await signOut({ callbackUrl: "/" });
@@ -54,7 +70,7 @@ export function UserMenu({ user, isAdmin = false }: UserMenuProps) {
           className="flex items-center gap-2 px-2"
         >
           <Avatar className="h-8 w-8">
-            <AvatarImage src={user.image || undefined} alt={user.name || ""} />
+            <AvatarImage src={safeImageUrl} alt={user.name || ""} />
             <AvatarFallback className="bg-primary/10 text-primary text-xs">
               {initials}
             </AvatarFallback>
