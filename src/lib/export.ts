@@ -1,12 +1,20 @@
 /**
  * Document Export Library (PRD Feature 2 - 내보내기)
- * - PDF 내보내기 (jsPDF) - 서버 환경 지원
+ * - PDF 내보내기 (pdf-lib) - 서버리스 환경 완벽 지원
  * - DOCX 내보내기 (docx) - 서버 환경 지원
  * - HWP 내보내기 (외부 서비스)
  */
 
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType } from "docx";
+import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
+import fontkit from "@pdf-lib/fontkit";
 import { formatDateKST } from "@/lib/utils";
+
+// Google Fonts Noto Sans KR TTF URL (Regular 400)
+const NOTO_SANS_KR_URL = "https://cdn.jsdelivr.net/gh/nickhoo555/noto-sans-korean-webfont@master/fonts/NotoSansKR-Regular.otf";
+
+// 폰트 캐시 (메모리 내 캐싱)
+let cachedFontBytes: ArrayBuffer | null = null;
 
 export type ExportFormat = "pdf" | "docx" | "hwp";
 
@@ -34,104 +42,221 @@ export interface ExportResult {
 }
 
 /**
- * PDF 내보내기 (jsPDF 사용 - 동적 import로 서버 환경 지원)
- * Note: jsPDF는 한글 폰트 지원 한계로 DOCX 우선 권장
+ * 한글 폰트 로드 (캐싱 지원)
+ */
+async function loadKoreanFont(): Promise<ArrayBuffer | null> {
+  if (cachedFontBytes) {
+    return cachedFontBytes;
+  }
+
+  try {
+    const response = await fetch(NOTO_SANS_KR_URL);
+    if (!response.ok) {
+      console.warn("[Export] Failed to load Korean font, using fallback");
+      return null;
+    }
+    cachedFontBytes = await response.arrayBuffer();
+    return cachedFontBytes;
+  } catch (error) {
+    console.warn("[Export] Korean font load error:", error);
+    return null;
+  }
+}
+
+/**
+ * 텍스트를 지정된 폭에 맞게 줄바꿈 처리
+ */
+function wrapText(text: string, maxCharsPerLine: number): string[] {
+  const lines: string[] = [];
+  const paragraphs = text.split("\n");
+
+  for (const paragraph of paragraphs) {
+    if (paragraph.length === 0) {
+      lines.push("");
+      continue;
+    }
+
+    let remaining = paragraph;
+    while (remaining.length > 0) {
+      if (remaining.length <= maxCharsPerLine) {
+        lines.push(remaining);
+        break;
+      }
+
+      // 단어 단위로 끊기 시도
+      let breakPoint = remaining.lastIndexOf(" ", maxCharsPerLine);
+      if (breakPoint === -1 || breakPoint < maxCharsPerLine * 0.5) {
+        breakPoint = maxCharsPerLine;
+      }
+
+      lines.push(remaining.substring(0, breakPoint));
+      remaining = remaining.substring(breakPoint).trimStart();
+    }
+  }
+
+  return lines;
+}
+
+/**
+ * PDF 내보내기 (pdf-lib 사용 - 서버리스 환경 완벽 지원)
+ * - Vercel 서버리스 환경에서 안정적으로 동작
+ * - 한글 폰트 임베딩 지원 (Noto Sans KR)
  */
 export async function exportToPDF(
   data: BusinessPlanExportData
 ): Promise<ExportResult> {
   try {
-    // 동적 import로 서버 환경에서 jsPDF 로드
-    const { default: jsPDF } = await import("jspdf");
+    // PDF 문서 생성
+    const pdfDoc = await PDFDocument.create();
+    pdfDoc.registerFontkit(fontkit);
 
-    const doc = new jsPDF({
-      orientation: "portrait",
-      unit: "mm",
-      format: "a4",
-    });
+    // 한글 폰트 로드 시도
+    let font;
+    const koreanFontBytes = await loadKoreanFont();
 
-    let yPosition = 20;
-    const pageHeight = doc.internal.pageSize.height;
-    const margin = 20;
-    const lineHeight = 7;
-    const maxWidth = doc.internal.pageSize.width - margin * 2;
+    if (koreanFontBytes) {
+      try {
+        font = await pdfDoc.embedFont(koreanFontBytes);
+      } catch (fontError) {
+        console.warn("[Export] Korean font embedding failed, using Helvetica:", fontError);
+        font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+      }
+    } else {
+      font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    }
 
-    // 텍스트 안전 처리 함수 (null/undefined 방지)
+    // A4 크기 설정
+    const pageWidth = 595.28; // A4 width in points
+    const pageHeight = 841.89; // A4 height in points
+    const margin = 50;
+    const contentWidth = pageWidth - margin * 2;
+    const lineHeight = 16;
+    const titleSize = 24;
+    const headingSize = 16;
+    const bodySize = 11;
+
+    // 텍스트 안전 처리 함수
     const safeText = (text: string | null | undefined): string => {
       return (text || "").toString();
     };
 
-    // 안전한 텍스트 렌더링 함수
-    const renderText = (text: string, x: number, y: number): void => {
-      try {
-        doc.text(safeText(text), x, y);
-      } catch {
-        // 한글 렌더링 실패 시 빈 텍스트로 대체
-        doc.text("(rendering error)", x, y);
+    // 최대 문자 수 계산 (대략적)
+    const maxCharsPerLine = Math.floor(contentWidth / (bodySize * 0.5));
+
+    let currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
+    let yPosition = pageHeight - margin;
+
+    // 새 페이지 추가 함수
+    const ensureSpace = (requiredSpace: number) => {
+      if (yPosition - requiredSpace < margin) {
+        currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
+        yPosition = pageHeight - margin;
       }
     };
 
     // 제목
-    doc.setFontSize(20);
-    renderText(data.title, margin, yPosition);
-    yPosition += lineHeight * 2;
+    ensureSpace(titleSize + lineHeight);
+    currentPage.drawText(safeText(data.title) || "사업계획서", {
+      x: margin,
+      y: yPosition,
+      size: titleSize,
+      font,
+      color: rgb(0.1, 0.1, 0.1),
+    });
+    yPosition -= titleSize + lineHeight;
 
-    // 회사명 & 프로젝트명
+    // 회사명
     if (data.companyName) {
-      doc.setFontSize(12);
-      renderText(`Company: ${data.companyName}`, margin, yPosition);
-      yPosition += lineHeight;
+      ensureSpace(lineHeight * 2);
+      currentPage.drawText(`회사명: ${safeText(data.companyName)}`, {
+        x: margin,
+        y: yPosition,
+        size: bodySize,
+        font,
+        color: rgb(0.3, 0.3, 0.3),
+      });
+      yPosition -= lineHeight;
     }
 
+    // 프로젝트명
     if (data.projectName) {
-      doc.setFontSize(12);
-      renderText(`Project: ${data.projectName}`, margin, yPosition);
-      yPosition += lineHeight;
+      ensureSpace(lineHeight * 2);
+      currentPage.drawText(`지원사업: ${safeText(data.projectName)}`, {
+        x: margin,
+        y: yPosition,
+        size: bodySize,
+        font,
+        color: rgb(0.3, 0.3, 0.3),
+      });
+      yPosition -= lineHeight;
     }
 
-    yPosition += lineHeight;
+    yPosition -= lineHeight; // 여백
 
     // 섹션별 내용
-    const sortedSections = [...data.sections].sort((a, b) => a.order - b.order);
+    const sortedSections = [...(data.sections || [])].sort((a, b) => a.order - b.order);
 
     for (const section of sortedSections) {
-      // 페이지 체크
-      if (yPosition > pageHeight - margin) {
-        doc.addPage();
-        yPosition = margin;
-      }
-
       // 섹션 제목
-      doc.setFontSize(14);
-      renderText(section.title, margin, yPosition);
-      yPosition += lineHeight;
+      ensureSpace(headingSize + lineHeight * 2);
+      currentPage.drawText(safeText(section.title), {
+        x: margin,
+        y: yPosition,
+        size: headingSize,
+        font,
+        color: rgb(0.15, 0.15, 0.15),
+      });
+      yPosition -= headingSize + lineHeight * 0.5;
 
-      // 섹션 내용 (간단한 줄바꿈 처리)
-      doc.setFontSize(10);
+      // 섹션 내용 (줄바꿈 처리)
       const content = safeText(section.content);
+      const lines = wrapText(content, maxCharsPerLine);
 
-      try {
-        const lines = doc.splitTextToSize(content, maxWidth);
-
-        for (const line of lines) {
-          if (yPosition > pageHeight - margin) {
-            doc.addPage();
-            yPosition = margin;
-          }
-          renderText(line, margin, yPosition);
-          yPosition += lineHeight;
+      for (const line of lines) {
+        ensureSpace(lineHeight);
+        if (line.length > 0) {
+          currentPage.drawText(line, {
+            x: margin,
+            y: yPosition,
+            size: bodySize,
+            font,
+            color: rgb(0.2, 0.2, 0.2),
+          });
         }
-      } catch {
-        // splitTextToSize 실패 시 원본 텍스트 일부만 출력
-        renderText(content.substring(0, 100) + "...", margin, yPosition);
-        yPosition += lineHeight;
+        yPosition -= lineHeight;
       }
 
-      yPosition += lineHeight;
+      yPosition -= lineHeight; // 섹션 간 여백
     }
 
-    // ArrayBuffer로 출력 후 Blob 생성 (서버 환경 호환)
-    const arrayBuffer = doc.output("arraybuffer");
+    // 메타데이터 (작성자, 날짜)
+    ensureSpace(lineHeight * 3);
+    yPosition -= lineHeight;
+
+    if (data.metadata?.author) {
+      currentPage.drawText(`작성자: ${safeText(data.metadata.author)}`, {
+        x: pageWidth - margin - 150,
+        y: yPosition,
+        size: 9,
+        font,
+        color: rgb(0.5, 0.5, 0.5),
+      });
+      yPosition -= lineHeight;
+    }
+
+    currentPage.drawText(`생성일: ${formatDateKST(data.createdAt)}`, {
+      x: pageWidth - margin - 150,
+      y: yPosition,
+      size: 9,
+      font,
+      color: rgb(0.5, 0.5, 0.5),
+    });
+
+    // PDF를 Uint8Array로 저장
+    const pdfBytes = await pdfDoc.save();
+    // 새 ArrayBuffer로 복사하여 Blob 생성 (타입 호환성)
+    const arrayBuffer = new ArrayBuffer(pdfBytes.length);
+    new Uint8Array(arrayBuffer).set(pdfBytes);
     const blob = new Blob([arrayBuffer], { type: "application/pdf" });
     const filename = `${sanitizeFilename(data.title)}_${Date.now()}.pdf`;
 
