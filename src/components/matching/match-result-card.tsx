@@ -11,7 +11,7 @@ interface MatchResultCardProps {
     id: string;
     projectId: string;
     totalScore: number;
-    semanticScore: number;
+    businessSimilarityScore: number; // 사업 유사도 (텍스트 + 문서 벡터 통합)
     categoryScore: number;
     eligibilityScore: number;
     timelinessScore: number;
@@ -94,10 +94,10 @@ export function MatchResultCard({ result }: MatchResultCardProps) {
         {/* Scores Breakdown */}
         <div className="space-y-2 mb-4">
           <div className="flex items-center justify-between text-xs">
-            <span className="text-muted-foreground">의미적 유사도</span>
-            <span className="font-medium">{result.semanticScore}점</span>
+            <span className="text-muted-foreground">사업 유사도</span>
+            <span className="font-medium">{result.businessSimilarityScore}점</span>
           </div>
-          <Progress value={result.semanticScore} className="h-1" />
+          <Progress value={result.businessSimilarityScore} className="h-1" />
 
           <div className="flex items-center justify-between text-xs">
             <span className="text-muted-foreground">업종 적합도</span>

@@ -105,12 +105,12 @@ export default async function MatchResultDetailPage({
         <div className="space-y-4">
           <div>
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm">의미적 유사도 (35%)</span>
-              <span className="font-medium">{result.semanticScore}점</span>
+              <span className="text-sm">사업 유사도 (35%)</span>
+              <span className="font-medium">{result.businessSimilarityScore}점</span>
             </div>
-            <Progress value={result.semanticScore} />
+            <Progress value={result.businessSimilarityScore} />
             <p className="text-xs text-muted-foreground mt-1">
-              기업 프로필과 사업 내용의 의미적 유사도
+              기업 프로필/문서와 지원사업의 벡터 유사도
             </p>
           </div>
 

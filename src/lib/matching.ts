@@ -1,18 +1,18 @@
 /**
  * Matching Algorithm (PRD 6.2)
- * Multi-dimensional matching: semantic + category + eligibility + timeliness + amount
+ * Multi-dimensional matching: businessSimilarity + category + eligibility + timeliness + amount
  */
 
 import { hybridSearch } from "./rag";
 import { prisma } from "./prisma";
 
-// Matching weights (PRD 6.2)
+// Matching weights (PRD 6.2) - Simplified with unified business similarity
 const MATCHING_WEIGHTS = {
-  semantic: 0.35, // Vector similarity
-  category: 0.2, // Category match
-  eligibility: 0.2, // Eligibility criteria
-  timeliness: 0.15, // Deadline proximity
-  amount: 0.1, // Amount range fit
+  businessSimilarity: 0.35, // 사업 유사도 (텍스트 + 문서 벡터 통합)
+  category: 0.2, // Category match (업종 적합도)
+  eligibility: 0.2, // Eligibility criteria (자격 요건)
+  timeliness: 0.15, // Deadline proximity (마감 시기)
+  amount: 0.1, // Amount range fit (지원금액)
 } as const;
 
 export interface MatchingInput {
@@ -29,7 +29,7 @@ export interface MatchingInput {
 
 export interface MatchingScore {
   totalScore: number;
-  semanticScore: number;
+  businessSimilarityScore: number; // 사업 유사도 (텍스트 + 문서 벡터 통합)
   categoryScore: number;
   eligibilityScore: number;
   timelinessScore: number;
@@ -93,6 +93,92 @@ async function calculateSemanticScoresBatch(
 }
 
 /**
+ * Calculate document similarity scores between company documents and support projects
+ * CompanyDocumentEmbedding ↔ document_embeddings (support_project) 벡터 유사도
+ * Optimized: Batch calculation using pgvector
+ */
+async function calculateDocumentSimilarityScoresBatch(
+  companyId: string,
+  projectIds: string[]
+): Promise<Map<string, number>> {
+  try {
+    if (projectIds.length === 0) {
+      return new Map();
+    }
+
+    // 기업 문서 임베딩이 있는지 먼저 확인
+    const companyEmbeddingCount = await prisma.companyDocumentEmbedding.count({
+      where: {
+        document: {
+          companyId,
+          deletedAt: null,
+        },
+      },
+    });
+
+    if (companyEmbeddingCount === 0) {
+      console.log(
+        `[Matching] No document embeddings for company ${companyId}, skipping document similarity`
+      );
+      return new Map();
+    }
+
+    // SQL로 기업 문서 임베딩과 지원사업 임베딩 간 유사도 계산
+    // 각 지원사업에 대해 가장 높은 유사도를 반환
+    const results: Array<{
+      project_id: string;
+      max_similarity: number;
+      avg_similarity: number;
+    }> = await prisma.$queryRaw`
+      WITH company_embeddings AS (
+        SELECT cde.embedding
+        FROM "CompanyDocumentEmbedding" cde
+        INNER JOIN "CompanyDocument" cd ON cd.id = cde."documentId"
+        WHERE cd."companyId" = ${companyId}
+          AND cd."deletedAt" IS NULL
+        LIMIT 50
+      ),
+      project_similarities AS (
+        SELECT
+          de.source_id as project_id,
+          MAX(1 - (ce.embedding <=> de.embedding)) as max_similarity,
+          AVG(1 - (ce.embedding <=> de.embedding)) as avg_similarity
+        FROM document_embeddings de
+        CROSS JOIN company_embeddings ce
+        WHERE de.source_type = 'support_project'
+          AND de.source_id = ANY(${projectIds}::text[])
+        GROUP BY de.source_id
+      )
+      SELECT
+        project_id,
+        max_similarity,
+        avg_similarity
+      FROM project_similarities
+      WHERE max_similarity > 0.3
+      ORDER BY max_similarity DESC
+    `;
+
+    const scoreMap = new Map<string, number>();
+
+    for (const row of results) {
+      // 최대 유사도와 평균 유사도의 가중 평균 사용 (최대에 더 높은 가중치)
+      const combinedSimilarity = row.max_similarity * 0.7 + row.avg_similarity * 0.3;
+      const score = Math.round(combinedSimilarity * 100);
+      scoreMap.set(row.project_id, Math.min(score, 100));
+    }
+
+    console.log(
+      `[Matching] Document similarity calculated for ${scoreMap.size}/${projectIds.length} projects`
+    );
+
+    return scoreMap;
+  } catch (error) {
+    console.error("[Matching] Document similarity score error:", error);
+    return new Map();
+  }
+}
+
+/**
  * Calculate category match score
  */
 export function calculateCategoryScore(
@@ -125,6 +211,7 @@ export function calculateCategoryScore(
 
 /**
  * Calculate eligibility score
+ * Enhanced: 실제 인증서 정보(CompanyCertification) 활용
  */
 export function calculateEligibilityScore(
   company: {
@@ -135,6 +222,12 @@ export function calculateEligibilityScore(
     isMainBiz: boolean;
     employeeCount?: number | null;
     annualRevenue?: bigint | null;
+    // Enhanced: 실제 인증서 정보
+    certifications?: Array<{
+      certificationType: string;
+      certificationName: string;
+      issuingOrganization: string;
+    }>;
   },
   project: {
     target: string;
@@ -146,6 +239,7 @@ export function calculateEligibilityScore(
 
   const target = project.target.toLowerCase();
   const eligibility = project.eligibility?.toLowerCase() || "";
+  const combinedCriteria = `${target} ${eligibility}`;
 
   // Company type match
   if (target.includes("중소기업") || target.includes("sme")) {
@@ -155,31 +249,100 @@ export function calculateEligibilityScore(
     }
   }
 
-  // Venture certification
+  // Venture certification (Boolean 플래그 + 실제 인증서 확인)
+  const hasVentureCert =
+    company.isVenture ||
+    company.certifications?.some(
+      (c) =>
+        c.certificationType.includes("벤처") ||
+        c.certificationName.includes("벤처")
+    );
   if (
     (target.includes("벤처") || eligibility.includes("벤처")) &&
-    company.isVenture
+    hasVentureCert
   ) {
     score += 15;
     reasons.push("벤처기업 인증 보유");
   }
 
   // InnoBiz certification
+  const hasInnoBizCert =
+    company.isInnoBiz ||
+    company.certifications?.some(
+      (c) =>
+        c.certificationType.includes("이노비즈") ||
+        c.certificationName.includes("이노비즈")
+    );
   if (
     (target.includes("이노비즈") || eligibility.includes("이노비즈")) &&
-    company.isInnoBiz
+    hasInnoBizCert
   ) {
     score += 10;
     reasons.push("이노비즈 인증 보유");
   }
 
   // MainBiz certification
+  const hasMainBizCert =
+    company.isMainBiz ||
+    company.certifications?.some(
+      (c) =>
+        c.certificationType.includes("메인비즈") ||
+        c.certificationName.includes("메인비즈")
+    );
   if (
     (target.includes("메인비즈") || eligibility.includes("메인비즈")) &&
-    company.isMainBiz
+    hasMainBizCert
   ) {
     score += 10;
     reasons.push("메인비즈 인증 보유");
+  }
+
+  // Enhanced: 추가 인증서 매칭 (ISO, 특허, 인정 등)
+  if (company.certifications && company.certifications.length > 0) {
+    // ISO 인증 관련
+    if (combinedCriteria.includes("iso") || combinedCriteria.includes("품질")) {
+      const hasIsoCert = company.certifications.some(
+        (c) =>
+          c.certificationName.includes("ISO") ||
+          c.certificationType.includes("ISO")
+      );
+      if (hasIsoCert) {
+        score += 10;
+        reasons.push("ISO 인증 보유");
+      }
+    }
+
+    // 특허/지식재산권 관련
+    if (
+      combinedCriteria.includes("특허") ||
+      combinedCriteria.includes("지식재산")
+    ) {
+      const hasPatentCert = company.certifications.some(
+        (c) =>
+          c.certificationType.includes("특허") ||
+          c.certificationName.includes("특허")
+      );
+      if (hasPatentCert) {
+        score += 10;
+        reasons.push("특허 보유");
+      }
+    }
+
+    // 기술혁신형 기업 관련
+    if (
+      combinedCriteria.includes("기술혁신") ||
+      combinedCriteria.includes("기술개발")
+    ) {
+      const hasTechCert = company.certifications.some(
+        (c) =>
+          c.certificationType.includes("기술") ||
+          c.certificationName.includes("혁신")
+      );
+      if (hasTechCert) {
+        score += 5;
+        reasons.push("기술 관련 인증 보유");
+      }
+    }
   }
 
   // Employee count criteria
@@ -300,12 +463,13 @@ function calculateConfidence(
 
 /**
  * Execute matching for a company
+ * Enhanced: 기업 문서 분석 결과 및 인증서 정보 활용
  */
 export async function executeMatching(
   input: MatchingInput
 ): Promise<MatchingResultData[]> {
   try {
-    // Get company data
+    // Get company data with related documents and certifications
     const company = await prisma.company.findUnique({
       where: { id: input.companyId, deletedAt: null },
       select: {
@@ -325,6 +489,40 @@ export async function executeMatching(
         introduction: true,
         vision: true,
         mission: true,
+        // 기업 문서 및 분석 결과 조회
+        documents: {
+          where: { deletedAt: null, status: "analyzed" },
+          select: {
+            documentType: true,
+            analysis: {
+              select: {
+                summary: true,
+                keyInsights: true,
+              },
+            },
+          },
+          take: 10,
+        },
+        // 활성 인증서 조회
+        certifications: {
+          where: { isActive: true },
+          select: {
+            certificationType: true,
+            certificationName: true,
+            issuingOrganization: true,
+          },
+          take: 10,
+        },
+        // 최신 재무정보 조회
+        financials: {
+          orderBy: { fiscalYear: "desc" },
+          select: {
+            fiscalYear: true,
+            revenue: true,
+            operatingProfit: true,
+          },
+          take: 1,
+        },
       },
     });
 
@@ -332,8 +530,9 @@ export async function executeMatching(
       throw new Error("Company not found");
     }
 
-    // Build company profile for semantic search
-    const companyProfile = [
+    // Build enhanced company profile for semantic search
+    // 1. 기본 정보
+    const baseProfile = [
       company.name,
       company.businessCategory,
       company.mainBusiness,
@@ -341,9 +540,42 @@ export async function executeMatching(
       company.introduction,
       company.vision,
       company.mission,
+    ];
+
+    // 2. 문서 분석 결과 (CompanyDocumentAnalysis 활용)
+    const documentSummaries = company.documents
+      .filter((doc) => doc.analysis?.summary)
+      .map((doc) => {
+        const insights = doc.analysis?.keyInsights?.join(", ") || "";
+        return `${doc.documentType}: ${doc.analysis?.summary} ${insights}`;
+      });
+
+    // 3. 인증서 정보 (CompanyCertification 활용)
+    const certificationInfo = company.certifications.map(
+      (cert) =>
+        `${cert.certificationType} ${cert.certificationName} (${cert.issuingOrganization})`
+    );
+
+    // 4. 재무 정보 요약 (선택적)
+    const financialInfo =
+      company.financials[0] && company.financials[0].revenue
+        ? `연매출 ${Number(company.financials[0].revenue).toLocaleString()}원`
+        : "";
+
+    // 통합 프로필 생성
+    const companyProfile = [
+      ...baseProfile,
+      ...documentSummaries,
+      ...certificationInfo,
+      financialInfo,
     ]
       .filter(Boolean)
       .join(" ");
+
+    console.log(
+      `[Matching] Enhanced profile for ${company.name}: ` +
+        `${company.documents.length} docs, ${company.certifications.length} certs`
+    );
 
     // Get active projects
     const whereClause: any = {
@@ -396,18 +628,31 @@ export async function executeMatching(
     // Calculate scores for each project
     const results: MatchingResultData[] = [];
 
-    // Batch semantic score calculation (optimized)
+    // Batch score calculations (optimized - parallel)
     const projectIds = projects.map((p) => p.id);
-    const semanticScoreMap = await calculateSemanticScoresBatch(
-      companyProfile,
-      projectIds
-    );
+
+    // 병렬로 두 가지 유사도 점수 계산
+    const [semanticScoreMap, documentSimilarityScoreMap] = await Promise.all([
+      calculateSemanticScoresBatch(companyProfile, projectIds),
+      calculateDocumentSimilarityScoresBatch(company.id, projectIds),
+    ]);
 
     for (const project of projects) {
-      // Semantic score (from batch results)
+      // 텍스트 기반 유사도
       const semanticScore = semanticScoreMap.get(project.id) || 0;
 
-      // Category score
+      // 문서 벡터 유사도
+      const documentSimilarityScore =
+        documentSimilarityScoreMap.get(project.id) || 0;
+
+      // 사업 유사도 = 텍스트(60%) + 문서벡터(40%) 가중 평균
+      // 문서 벡터가 없으면 텍스트만 사용
+      const businessSimilarityScore =
+        documentSimilarityScore > 0
+          ? Math.round(semanticScore * 0.6 + documentSimilarityScore * 0.4)
+          : semanticScore;
+
+      // Category score (업종 적합도)
       const categoryScore = calculateCategoryScore(
         [
           company.businessCategory,
@@ -418,15 +663,15 @@ export async function executeMatching(
         project.subCategory
       );
 
-      // Eligibility score
+      // Eligibility score (자격 요건)
       const { score: eligibilityScore, reasons: eligibilityReasons } =
         calculateEligibilityScore(company, project);
 
-      // Timeliness score
+      // Timeliness score (마감 시기)
       const { score: timelinessScore, reasons: timelinessReasons } =
         calculateTimelinessScore(project.deadline, project.isPermanent);
 
-      // Amount score
+      // Amount score (지원금액)
       const { score: amountScore, reasons: amountReasons } =
         calculateAmountScore(
           company.annualRevenue,
@@ -436,7 +681,7 @@ export async function executeMatching(
 
       // Calculate total score
       const totalScore = Math.round(
-        semanticScore * MATCHING_WEIGHTS.semantic +
+        businessSimilarityScore * MATCHING_WEIGHTS.businessSimilarity +
           categoryScore * MATCHING_WEIGHTS.category +
           eligibilityScore * MATCHING_WEIGHTS.eligibility +
           timelinessScore * MATCHING_WEIGHTS.timeliness +
@@ -450,9 +695,9 @@ export async function executeMatching(
         ...amountReasons,
       ];
 
-      // Add semantic reason if high
-      if (semanticScore >= 70) {
-        matchReasons.push("높은 의미적 유사도");
+      // Add business similarity reason if high
+      if (businessSimilarityScore >= 70) {
+        matchReasons.push("높은 사업 유사도");
       }
 
       // Add category reason if high
@@ -475,7 +720,7 @@ export async function executeMatching(
           amountMax: project.amountMax,
         },
         totalScore,
-        semanticScore,
+        businessSimilarityScore,
         categoryScore,
         eligibilityScore,
         timelinessScore,
@@ -518,7 +763,7 @@ export async function storeMatchingResults(
         companyId,
         projectId: result.projectId,
         totalScore: result.totalScore,
-        semanticScore: result.semanticScore,
+        businessSimilarityScore: result.businessSimilarityScore,
         categoryScore: result.categoryScore,
         eligibilityScore: result.eligibilityScore,
         timelinessScore: result.timelinessScore,

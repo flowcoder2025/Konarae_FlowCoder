@@ -398,12 +398,12 @@ model MatchingResult {
   projectId String
 
   // Scores
-  totalScore       Int
-  semanticScore    Int
-  categoryScore    Int
-  eligibilityScore Int
-  timelinessScore  Int
-  amountScore      Int
+  totalScore             Int
+  businessSimilarityScore Int    @default(0) // 사업 유사도 (텍스트 + 문서 벡터 통합)
+  categoryScore          Int
+  eligibilityScore       Int
+  timelinessScore        Int
+  amountScore            Int
 
   // Details
   confidence   String // high, medium, low

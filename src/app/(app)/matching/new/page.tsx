@@ -22,7 +22,7 @@ interface MatchingResult {
     amountMax?: string | null;
   };
   totalScore: number;
-  semanticScore: number;
+  businessSimilarityScore: number; // 사업 유사도 (텍스트 + 문서 벡터 통합)
   categoryScore: number;
   eligibilityScore: number;
   timelinessScore: number;
