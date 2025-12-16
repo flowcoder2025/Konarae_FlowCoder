@@ -415,6 +415,86 @@ CrawlSource → CrawlJob → SupportProject + ProjectAttachment
 
 ---
 
+## 10. 개발 규칙 (필수 준수)
+
+### 10.1 Prisma 우선 원칙 🔴
+
+> **수동 SQL 생성 금지 - 벡터 연산만 예외**
+
+| 허용 | 금지 |
+|-----|------|
+| `prisma.$queryRaw` (벡터 검색 `<=>`, `<->`) | 테이블/컬럼 생성 SQL |
+| `prisma.$executeRaw` (벡터 INSERT) | 인덱스 생성 SQL |
+| Prisma 스키마 + `db push` | 마이그레이션 SQL |
+
+**규칙**:
+- 모든 테이블/모델은 `prisma/schema.prisma`에 정의
+- 기존 테이블도 Prisma 스키마로 관리 (`@@map()` 사용)
+- pgvector 벡터 컬럼: `Unsupported("vector(1536)")` 사용
+- 벡터 인덱스(HNSW, GIN): Prisma `@@index` 사용
+
+```prisma
+// ✅ 올바른 예시 - Prisma 스키마
+model DocumentEmbedding {
+  embedding Unsupported("vector(1536)")
+  @@index([embedding], map: "idx_embeddings_hnsw")
+  @@map("document_embeddings")
+}
+```
+
+```sql
+-- ❌ 금지 - 수동 SQL
+CREATE TABLE document_embeddings (...);
+CREATE INDEX idx_embeddings_hnsw ...;
+```
+
+### 10.2 환경 변수 규칙 🔴
+
+> **Prisma 명령 실행 전 `.env.local` 로드 필수**
+
+```bash
+# ✅ 올바른 방법
+set -a && source .env.local && set +a && npx prisma db push
+
+# ❌ 금지 - 환경 변수 없이 실행
+npx prisma db push  # DIRECT_URL not found 에러 발생
+```
+
+**필수 환경 변수**:
+- `DATABASE_URL`: Prisma 연결 (pgbouncer)
+- `DIRECT_URL`: 마이그레이션용 직접 연결
+
+**위치**: `.env.local` (gitignore됨)
+
+### 10.3 권한 시스템 규칙 🔴
+
+> **ReBAC 사용 - RLS(Row Level Security) 금지**
+
+| 사용 | 금지 |
+|-----|------|
+| ReBAC (`/src/lib/rebac.ts`) | Supabase RLS 정책 |
+| `RelationTuple` 모델 | `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` |
+| `check()`, `grant()`, `revoke()` | `CREATE POLICY ...` |
+
+**ReBAC 패턴**:
+```typescript
+// ✅ 올바른 권한 체크
+import { check, grant } from "@/lib/rebac"
+
+const canEdit = await check(userId, "company", companyId, "editor")
+await grant("company", companyId, "owner", "user", userId)
+```
+
+```sql
+-- ❌ 금지 - RLS 정책
+CREATE POLICY "users can view own data" ON companies
+  FOR SELECT USING (auth.uid() = user_id);
+```
+
+**이유**: Supabase RLS는 Prisma ORM과 충돌, ReBAC는 애플리케이션 레벨에서 유연한 권한 관리 제공
+
+---
+
 ## 변경 이력
 
 | 날짜 | 버전 | 변경 |
@@ -425,3 +505,4 @@ CrawlSource → CrawlJob → SupportProject + ProjectAttachment
 | 2025-12-05 | 2.1.0 | 토큰 효율 원칙 추가 + /docs 구조 개선 |
 | 2025-12-15 | 2.2.0 | 기업 문서 관리, 비동기 임베딩, RAG 매칭, 크롤러 시스템 추가 |
 | 2025-12-15 | 3.0.0 | Hub-Spoke 아키텍처 강화, 7개 하위 claude.md 가이드 통합 |
+| 2025-12-16 | 3.1.0 | 개발 규칙 섹션 추가 (Prisma 우선, 환경변수, ReBAC) |
