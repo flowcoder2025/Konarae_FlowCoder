@@ -1,15 +1,20 @@
 -- ===========================================================
 -- RAG System Setup Script
--- Run this in Supabase SQL Editor (Dashboard > SQL Editor)
+-- ⚠️ NOTE: This SQL is now managed by Prisma schema (DocumentEmbedding model)
+-- This file is kept for reference and initial setup only.
+-- Prisma will handle the table through prisma/schema.prisma
 -- ===========================================================
 
 -- ============================================
 -- PART 1: Enable pgvector extension
+-- (Required by Prisma schema: extensions = [pgvector(map: "vector")])
 -- ============================================
 CREATE EXTENSION IF NOT EXISTS vector;
 
 -- ============================================
 -- PART 2: Create document_embeddings table
+-- ⚠️ This table is now defined in prisma/schema.prisma as DocumentEmbedding model
+-- The following SQL is for reference/initial setup only
 -- ============================================
 CREATE TABLE IF NOT EXISTS document_embeddings (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -38,22 +43,26 @@ CREATE TABLE IF NOT EXISTS document_embeddings (
 );
 
 -- HNSW Index for fast similarity search (cosine)
+-- Mapped in Prisma: @@index([embedding], map: "idx_embeddings_hnsw")
 CREATE INDEX IF NOT EXISTS idx_embeddings_hnsw ON document_embeddings
   USING hnsw (embedding vector_cosine_ops)
   WITH (m = 16, ef_construction = 64);
 
 -- GIN index for keyword search
+-- Mapped in Prisma: @@index([keywords], map: "idx_embeddings_keywords", type: Gin)
 CREATE INDEX IF NOT EXISTS idx_embeddings_keywords ON document_embeddings
   USING GIN (keywords);
 
 -- Composite index for filtered searches
+-- Mapped in Prisma: @@index([sourceType, sourceId], map: "idx_embeddings_source")
 CREATE INDEX IF NOT EXISTS idx_embeddings_source ON document_embeddings (source_type, source_id);
 
 -- Timestamp index for cleanup/maintenance
+-- Mapped in Prisma: @@index([createdAt(sort: Desc)], map: "idx_embeddings_created")
 CREATE INDEX IF NOT EXISTS idx_embeddings_created ON document_embeddings (created_at DESC);
 
 -- Comment
-COMMENT ON TABLE document_embeddings IS 'RAG vector embeddings for support projects, companies, and business plans';
+COMMENT ON TABLE document_embeddings IS 'RAG vector embeddings for support projects, companies, and business plans (Prisma: DocumentEmbedding)';
 
 -- ============================================
 -- PART 3: Create hybrid_search function

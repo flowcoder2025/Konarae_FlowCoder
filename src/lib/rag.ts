@@ -3,11 +3,13 @@
  * - Embedding generation with Vercel AI SDK
  * - Hybrid search (semantic + keyword)
  * - Document chunking and storage
+ * - Uses Prisma DocumentEmbedding model for type safety
  */
 
 import { embed } from "ai";
 import { openai } from "@ai-sdk/openai";
 import { prisma } from "./prisma";
+import { Prisma } from "@prisma/client";
 
 // Configuration (PRD 12.3)
 const CHUNK_SIZE = 512; // tokens
@@ -213,18 +215,21 @@ export async function hybridSearch(
 
 /**
  * Delete all embeddings for a source
+ * Uses Prisma model for type-safe deletion
  */
 export async function deleteEmbeddings(
   sourceType: SourceType,
   sourceId: string
 ): Promise<void> {
   try {
-    await prisma.$executeRaw`
-      DELETE FROM document_embeddings
-      WHERE source_type = ${sourceType} AND source_id = ${sourceId}
-    `;
+    const result = await prisma.documentEmbedding.deleteMany({
+      where: {
+        sourceType,
+        sourceId,
+      },
+    });
 
-    console.log(`[RAG] Deleted embeddings for ${sourceType}:${sourceId}`);
+    console.log(`[RAG] Deleted ${result.count} embeddings for ${sourceType}:${sourceId}`);
   } catch (error) {
     console.error("[RAG] Delete embeddings error:", error);
     throw new Error("Failed to delete embeddings");
@@ -233,21 +238,69 @@ export async function deleteEmbeddings(
 
 /**
  * Get embedding count for a source
+ * Uses Prisma model for type-safe counting
  */
 export async function getEmbeddingCount(
   sourceType: SourceType,
   sourceId: string
 ): Promise<number> {
   try {
-    const result: any[] = await prisma.$queryRaw`
-      SELECT COUNT(*)::int as count
-      FROM document_embeddings
-      WHERE source_type = ${sourceType} AND source_id = ${sourceId}
-    `;
-
-    return result[0]?.count || 0;
+    return await prisma.documentEmbedding.count({
+      where: {
+        sourceType,
+        sourceId,
+      },
+    });
   } catch (error) {
     console.error("[RAG] Get count error:", error);
     return 0;
   }
+}
+
+/**
+ * Get all embeddings for a source (without vector data)
+ * Uses Prisma model for type-safe querying
+ */
+export async function getEmbeddingsForSource(
+  sourceType: SourceType,
+  sourceId: string
+): Promise<{
+  id: string;
+  chunkIndex: number;
+  content: string;
+  keywords: string[];
+  createdAt: Date | null;
+}[]> {
+  try {
+    return await prisma.documentEmbedding.findMany({
+      where: {
+        sourceType,
+        sourceId,
+      },
+      select: {
+        id: true,
+        chunkIndex: true,
+        content: true,
+        keywords: true,
+        createdAt: true,
+      },
+      orderBy: {
+        chunkIndex: "asc",
+      },
+    });
+  } catch (error) {
+    console.error("[RAG] Get embeddings error:", error);
+    return [];
+  }
+}
+
+/**
+ * Check if source has embeddings
+ */
+export async function hasEmbeddings(
+  sourceType: SourceType,
+  sourceId: string
+): Promise<boolean> {
+  const count = await getEmbeddingCount(sourceType, sourceId);
+  return count > 0;
 }

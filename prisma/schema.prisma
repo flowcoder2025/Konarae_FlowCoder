@@ -707,3 +707,39 @@ model CompanyDocumentEmbedding {
   @@unique([documentId, chunkIndex])
   @@index([documentId])
 }
+
+// ============================================
+// RAG Unified Embeddings Table (PRD 12)
+// ============================================
+
+/// document_embeddings - 통합 RAG 임베딩 테이블
+/// support_project, company, business_plan 등의 벡터 임베딩 저장
+model DocumentEmbedding {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  // Polymorphic reference
+  sourceType String @map("source_type") @db.VarChar(50) // 'support_project' | 'company' | 'business_plan'
+  sourceId   String @map("source_id")
+
+  // Content
+  content       String @db.Text
+  chunkIndex    Int    @map("chunk_index")
+  chunkMetadata Json?  @default("{}") @map("chunk_metadata")
+
+  // Vector (1536 for OpenAI text-embedding-3-small)
+  embedding Unsupported("vector(1536)")
+
+  // Search optimization - BM25 keyword search
+  keywords String[]
+
+  // Timestamps
+  createdAt DateTime? @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime? @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([sourceType, sourceId, chunkIndex])
+  @@index([sourceType, sourceId], map: "idx_embeddings_source")
+  @@index([createdAt(sort: Desc)], map: "idx_embeddings_created")
+  @@index([embedding], map: "idx_embeddings_hnsw")
+  @@index([keywords], map: "idx_embeddings_keywords", type: Gin)
+  @@map("document_embeddings")
+}
