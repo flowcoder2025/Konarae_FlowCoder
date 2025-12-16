@@ -6,12 +6,17 @@
  */
 
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType } from "docx";
-import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
+import { PDFDocument, rgb } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
 import { formatDateKST } from "@/lib/utils";
+import { readFile } from "fs/promises";
+import { join } from "path";
 
-// Google Fonts Noto Sans KR TTF URL (Regular 400)
-const NOTO_SANS_KR_URL = "https://cdn.jsdelivr.net/gh/nickhoo555/noto-sans-korean-webfont@master/fonts/NotoSansKR-Regular.otf";
+// 로컬 폰트 파일 경로 (public/fonts에 포함)
+const LOCAL_FONT_PATH = join(process.cwd(), "public", "fonts", "NotoSansKR-Regular.otf");
+
+// CDN 폴백 URL
+const NOTO_SANS_KR_CDN = "https://cdn.jsdelivr.net/gh/googlefonts/noto-cjk@main/Sans/OTF/Korean/NotoSansKR-Regular.otf";
 
 // 폰트 캐시 (메모리 내 캐싱)
 let cachedFontBytes: ArrayBuffer | null = null;
@@ -42,23 +47,39 @@ export interface ExportResult {
 }
 
 /**
- * 한글 폰트 로드 (캐싱 지원)
+ * 한글 폰트 로드 (로컬 파일 우선, CDN 폴백, 캐싱 지원)
  */
 async function loadKoreanFont(): Promise<ArrayBuffer | null> {
   if (cachedFontBytes) {
     return cachedFontBytes;
   }
 
+  // 1. 로컬 파일 시도 (가장 안정적)
   try {
-    const response = await fetch(NOTO_SANS_KR_URL);
+    const buffer = await readFile(LOCAL_FONT_PATH);
+    cachedFontBytes = buffer.buffer.slice(
+      buffer.byteOffset,
+      buffer.byteOffset + buffer.byteLength
+    );
+    console.log("[Export] Korean font loaded from local file");
+    return cachedFontBytes;
+  } catch (localError) {
+    console.warn("[Export] Local font not found, trying CDN...");
+  }
+
+  // 2. CDN 폴백
+  try {
+    const response = await fetch(NOTO_SANS_KR_CDN, {
+      headers: { "Accept": "application/octet-stream" },
+    });
     if (!response.ok) {
-      console.warn("[Export] Failed to load Korean font, using fallback");
-      return null;
+      throw new Error(`CDN response: ${response.status}`);
     }
     cachedFontBytes = await response.arrayBuffer();
+    console.log("[Export] Korean font loaded from CDN");
     return cachedFontBytes;
-  } catch (error) {
-    console.warn("[Export] Korean font load error:", error);
+  } catch (cdnError) {
+    console.error("[Export] Failed to load Korean font from all sources:", cdnError);
     return null;
   }
 }
@@ -110,19 +131,26 @@ export async function exportToPDF(
     const pdfDoc = await PDFDocument.create();
     pdfDoc.registerFontkit(fontkit);
 
-    // 한글 폰트 로드 시도
-    let font;
+    // 한글 폰트 로드 (필수)
     const koreanFontBytes = await loadKoreanFont();
 
-    if (koreanFontBytes) {
-      try {
-        font = await pdfDoc.embedFont(koreanFontBytes);
-      } catch (fontError) {
-        console.warn("[Export] Korean font embedding failed, using Helvetica:", fontError);
-        font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-      }
-    } else {
-      font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    if (!koreanFontBytes) {
+      console.error("[Export] Korean font not available");
+      return {
+        success: false,
+        error: "PDF 생성에 필요한 한글 폰트를 로드할 수 없습니다. DOCX 형식을 사용해주세요.",
+      };
+    }
+
+    let font;
+    try {
+      font = await pdfDoc.embedFont(koreanFontBytes);
+    } catch (fontError) {
+      console.error("[Export] Korean font embedding failed:", fontError);
+      return {
+        success: false,
+        error: "한글 폰트 임베딩에 실패했습니다. DOCX 형식을 사용해주세요.",
+      };
     }
 
     // A4 크기 설정
