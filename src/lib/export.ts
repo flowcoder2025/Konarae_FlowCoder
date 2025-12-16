@@ -35,6 +35,7 @@ export interface ExportResult {
 
 /**
  * PDF 내보내기 (jsPDF 사용 - 동적 import로 서버 환경 지원)
+ * Note: jsPDF는 한글 폰트 지원 한계로 DOCX 우선 권장
  */
 export async function exportToPDF(
   data: BusinessPlanExportData
@@ -53,29 +54,45 @@ export async function exportToPDF(
     const pageHeight = doc.internal.pageSize.height;
     const margin = 20;
     const lineHeight = 7;
+    const maxWidth = doc.internal.pageSize.width - margin * 2;
+
+    // 텍스트 안전 처리 함수 (null/undefined 방지)
+    const safeText = (text: string | null | undefined): string => {
+      return (text || "").toString();
+    };
+
+    // 안전한 텍스트 렌더링 함수
+    const renderText = (text: string, x: number, y: number): void => {
+      try {
+        doc.text(safeText(text), x, y);
+      } catch {
+        // 한글 렌더링 실패 시 빈 텍스트로 대체
+        doc.text("(rendering error)", x, y);
+      }
+    };
 
     // 제목
     doc.setFontSize(20);
-    doc.text(data.title, margin, yPosition);
+    renderText(data.title, margin, yPosition);
     yPosition += lineHeight * 2;
 
     // 회사명 & 프로젝트명
     if (data.companyName) {
       doc.setFontSize(12);
-      doc.text(`회사명: ${data.companyName}`, margin, yPosition);
+      renderText(`Company: ${data.companyName}`, margin, yPosition);
       yPosition += lineHeight;
     }
 
     if (data.projectName) {
       doc.setFontSize(12);
-      doc.text(`지원사업: ${data.projectName}`, margin, yPosition);
+      renderText(`Project: ${data.projectName}`, margin, yPosition);
       yPosition += lineHeight;
     }
 
     yPosition += lineHeight;
 
     // 섹션별 내용
-    const sortedSections = data.sections.sort((a, b) => a.order - b.order);
+    const sortedSections = [...data.sections].sort((a, b) => a.order - b.order);
 
     for (const section of sortedSections) {
       // 페이지 체크
@@ -86,22 +103,27 @@ export async function exportToPDF(
 
       // 섹션 제목
       doc.setFontSize(14);
-      doc.text(section.title, margin, yPosition);
+      renderText(section.title, margin, yPosition);
       yPosition += lineHeight;
 
       // 섹션 내용 (간단한 줄바꿈 처리)
       doc.setFontSize(10);
-      const lines = doc.splitTextToSize(
-        section.content,
-        doc.internal.pageSize.width - margin * 2
-      );
+      const content = safeText(section.content);
 
-      for (const line of lines) {
-        if (yPosition > pageHeight - margin) {
-          doc.addPage();
-          yPosition = margin;
+      try {
+        const lines = doc.splitTextToSize(content, maxWidth);
+
+        for (const line of lines) {
+          if (yPosition > pageHeight - margin) {
+            doc.addPage();
+            yPosition = margin;
+          }
+          renderText(line, margin, yPosition);
+          yPosition += lineHeight;
         }
-        doc.text(line, margin, yPosition);
+      } catch {
+        // splitTextToSize 실패 시 원본 텍스트 일부만 출력
+        renderText(content.substring(0, 100) + "...", margin, yPosition);
         yPosition += lineHeight;
       }
 
@@ -134,7 +156,12 @@ export async function exportToDOCX(
   data: BusinessPlanExportData
 ): Promise<ExportResult> {
   try {
-    const sections = data.sections.sort((a, b) => a.order - b.order);
+    // 안전한 텍스트 추출 함수
+    const safeText = (text: string | null | undefined): string => {
+      return (text || "").toString();
+    };
+
+    const sections = [...(data.sections || [])].sort((a, b) => a.order - b.order);
 
     // 문서 생성
     const doc = new Document({
@@ -144,7 +171,7 @@ export async function exportToDOCX(
           children: [
             // 제목
             new Paragraph({
-              text: data.title,
+              text: safeText(data.title) || "사업계획서",
               heading: HeadingLevel.TITLE,
               alignment: AlignmentType.CENTER,
             }),
@@ -156,7 +183,7 @@ export async function exportToDOCX(
                   new Paragraph({
                     children: [
                       new TextRun({
-                        text: `회사명: ${data.companyName}`,
+                        text: `회사명: ${safeText(data.companyName)}`,
                         bold: true,
                       }),
                     ],
@@ -170,7 +197,7 @@ export async function exportToDOCX(
                   new Paragraph({
                     children: [
                       new TextRun({
-                        text: `지원사업: ${data.projectName}`,
+                        text: `지원사업: ${safeText(data.projectName)}`,
                         bold: true,
                       }),
                     ],
@@ -182,11 +209,11 @@ export async function exportToDOCX(
             // 섹션별 내용
             ...sections.flatMap((section) => [
               new Paragraph({
-                text: section.title,
+                text: safeText(section.title),
                 heading: HeadingLevel.HEADING_1,
               }),
               new Paragraph({
-                text: section.content,
+                text: safeText(section.content),
               }),
               new Paragraph({ text: "" }), // 빈 줄
             ]),
@@ -198,7 +225,7 @@ export async function exportToDOCX(
                   new Paragraph({
                     children: [
                       new TextRun({
-                        text: `작성자: ${data.metadata.author}`,
+                        text: `작성자: ${safeText(data.metadata.author)}`,
                         italics: true,
                         size: 20,
                       }),
