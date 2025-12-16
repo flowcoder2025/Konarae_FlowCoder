@@ -12,11 +12,11 @@ import { formatDateKST } from "@/lib/utils";
 import { readFile } from "fs/promises";
 import { join } from "path";
 
-// 로컬 폰트 파일 경로 (public/fonts에 포함)
-const LOCAL_FONT_PATH = join(process.cwd(), "public", "fonts", "NotoSansKR-Regular.otf");
+// 로컬 폰트 파일 경로 (public/fonts에 포함) - TTF 형식 사용
+const LOCAL_FONT_PATH = join(process.cwd(), "public", "fonts", "NotoSansKR-Regular.ttf");
 
-// CDN 폴백 URL
-const NOTO_SANS_KR_CDN = "https://cdn.jsdelivr.net/gh/googlefonts/noto-cjk@main/Sans/OTF/Korean/NotoSansKR-Regular.otf";
+// CDN 폴백 URL - TTF 형식
+const NOTO_SANS_KR_CDN = "https://github.com/googlefonts/noto-cjk/raw/main/Sans/TTF/Korean/NotoSansKR-Regular.ttf";
 
 // 폰트 캐시 (메모리 내 캐싱)
 let cachedFontBytes: ArrayBuffer | null = null;
