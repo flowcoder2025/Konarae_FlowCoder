@@ -2,19 +2,19 @@
   "crons": [
     {
       "path": "/api/cron/crawl-all",
-      "schedule": "0 16 * * *"
+      "schedule": "0 15 * * *"
+    },
+    {
+      "path": "/api/cron/generate-embeddings",
+      "schedule": "0 18 * * *"
+    },
+    {
+      "path": "/api/cron/matching-refresh",
+      "schedule": "0 21 * * *"
     },
     {
       "path": "/api/cron/deadline-alerts",
       "schedule": "0 0 * * *"
-    },
-    {
-      "path": "/api/cron/matching-refresh",
-      "schedule": "0 3 * * *"
-    },
-    {
-      "path": "/api/cron/generate-embeddings",
-      "schedule": "0 20 * * *"
     }
   ]
 }
