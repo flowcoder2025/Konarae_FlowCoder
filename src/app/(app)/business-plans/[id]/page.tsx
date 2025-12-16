@@ -5,10 +5,18 @@ import { useRouter, useParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { SectionEditor } from "@/components/business-plans/section-editor";
 import Link from "next/link";
 import { PageHeader } from "@/components/common";
-import { Loader2, Sparkles, AlertTriangle } from "lucide-react";
+import { Loader2, Sparkles, AlertTriangle, FileDown } from "lucide-react";
 
 const STATUS_LABELS: Record<string, string> = {
   draft: "초안",
@@ -28,6 +36,8 @@ export default function BusinessPlanDetailPage() {
   const [generationStartTime, setGenerationStartTime] = useState<number | null>(
     null
   );
+  const [isExporting, setIsExporting] = useState(false);
+  const [showHwpModal, setShowHwpModal] = useState(false);
 
   // 페이지 이탈 경고 (생성 중일 때)
   useEffect(() => {
@@ -97,7 +107,8 @@ export default function BusinessPlanDetailPage() {
     }
   };
 
-  const handleExport = async (format: "pdf" | "docx" | "hwp") => {
+  const handleExport = async (format: "pdf" | "docx") => {
+    setIsExporting(true);
     try {
       const res = await fetch(`/api/business-plans/${id}/export`, {
         method: "POST",
@@ -109,11 +120,26 @@ export default function BusinessPlanDetailPage() {
         throw new Error("Failed to export business plan");
       }
 
-      const data = await res.json();
-      alert(data.message);
+      // Content-Disposition 헤더에서 파일명 추출
+      const contentDisposition = res.headers.get("Content-Disposition");
+      const filenameMatch = contentDisposition?.match(/filename="(.+)"/);
+      const filename = filenameMatch?.[1] || `사업계획서.${format}`;
+
+      // Blob으로 변환 후 다운로드
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
     } catch (error) {
       console.error("Export business plan error:", error);
       alert("내보내기에 실패했습니다.");
+    } finally {
+      setIsExporting(false);
     }
   };
 
@@ -157,16 +183,60 @@ export default function BusinessPlanDetailPage() {
         >
           {isGenerating ? "생성 중..." : "전체 AI 생성"}
         </Button>
-        <Button onClick={() => handleExport("pdf")} variant="outline">
+        <Button
+          onClick={() => handleExport("pdf")}
+          variant="outline"
+          disabled={isExporting}
+        >
+          {isExporting ? (
+            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+          ) : (
+            <FileDown className="h-4 w-4 mr-2" />
+          )}
           PDF 내보내기
         </Button>
-        <Button onClick={() => handleExport("docx")} variant="outline">
+        <Button
+          onClick={() => handleExport("docx")}
+          variant="outline"
+          disabled={isExporting}
+        >
+          {isExporting ? (
+            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+          ) : (
+            <FileDown className="h-4 w-4 mr-2" />
+          )}
           DOCX 내보내기
         </Button>
-        <Button onClick={() => handleExport("hwp")} variant="outline">
+        <Button
+          onClick={() => setShowHwpModal(true)}
+          variant="outline"
+        >
+          <FileDown className="h-4 w-4 mr-2" />
           HWP 내보내기
         </Button>
       </div>
+
+      {/* HWP 준비중 모달 */}
+      <Dialog open={showHwpModal} onOpenChange={setShowHwpModal}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>HWP 내보내기 준비중</DialogTitle>
+            <DialogDescription>
+              HWP 형식 내보내기 기능은 현재 개발 중입니다.
+              <br />
+              빠른 시일 내에 제공될 예정이니 조금만 기다려 주세요.
+              <br />
+              <br />
+              당분간은 DOCX 파일로 내보낸 후 한글(HWP) 프로그램에서 열어 저장해 주세요.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button onClick={() => setShowHwpModal(false)}>
+              확인
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* AI 생성 중 로딩 UI */}
       {isGenerating && (
