@@ -13,6 +13,7 @@ import express from 'express';
 import { processCrawlJob } from '@/lib/crawler/worker';
 import { prisma } from '@/lib/prisma';
 import { storeDocumentEmbeddings } from '@/lib/rag';
+import { executeMatching, storeMatchingResults } from '@/lib/matching';
 
 const app = express();
 
@@ -371,6 +372,251 @@ app.get('/embedding-stats', async (req, res) => {
     });
   } catch (error) {
     console.error('[Embedding] Stats error:', error);
+    return res.status(500).json({
+      error: 'Failed to get stats',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+/**
+ * POST /matching/batch
+ *
+ * Batch matching refresh for all companies with matching preferences
+ * Processes in batches to avoid memory issues and enable long-running operations
+ */
+app.post('/matching/batch', async (req, res) => {
+  const startTime = Date.now();
+
+  try {
+    // Verify API key
+    const authHeader = req.headers.authorization;
+    if (!authHeader || authHeader !== `Bearer ${process.env.WORKER_API_KEY}`) {
+      console.error('[Matching] Unauthorized request');
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const { batchSize = 20, maxCompanies = 500 } = req.body;
+
+    console.log(`[Matching] Starting batch matching refresh (batch: ${batchSize}, max: ${maxCompanies})`);
+
+    // Get companies with matching preferences
+    const companies = await prisma.company.findMany({
+      where: {
+        deletedAt: null,
+        matchingPreferences: {
+          some: {}, // Has at least one preference
+        },
+        members: {
+          some: {}, // Has at least one member
+        },
+      },
+      select: {
+        id: true,
+        name: true,
+        matchingPreferences: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+        },
+        members: {
+          take: 1,
+          select: { userId: true },
+        },
+      },
+      take: maxCompanies,
+    });
+
+    if (companies.length === 0) {
+      console.log('[Matching] No companies with preferences found');
+      return res.json({
+        success: true,
+        message: 'No companies need matching refresh',
+        processed: 0,
+        duration: Date.now() - startTime,
+      });
+    }
+
+    console.log(`[Matching] Processing ${companies.length} company(ies)`);
+
+    // Respond immediately (202 Accepted)
+    res.status(202).json({
+      accepted: true,
+      message: `Matching refresh started for ${companies.length} companies`,
+      companiesQueued: companies.length,
+      batchSize,
+      timestamp: new Date().toISOString(),
+    });
+
+    // Process in background
+    processMatchingBatch(companies, batchSize, startTime).catch((error) => {
+      console.error('[Matching] Batch processing error:', error);
+    });
+
+  } catch (error) {
+    const duration = Date.now() - startTime;
+    console.error('[Matching] Batch error:', error);
+
+    return res.status(500).json({
+      error: 'Matching batch failed',
+      details: error instanceof Error ? error.message : 'Unknown error',
+      duration,
+    });
+  }
+});
+
+/**
+ * Process matching batch in background
+ */
+async function processMatchingBatch(
+  companies: Array<{
+    id: string;
+    name: string;
+    matchingPreferences: Array<{
+      categories: string[];
+      minAmount: bigint | null;
+      maxAmount: bigint | null;
+      regions: string[] | null;
+      excludeKeywords: string[] | null;
+    }>;
+    members: Array<{ userId: string }>;
+  }>,
+  batchSize: number,
+  startTime: number
+): Promise<void> {
+  let successCount = 0;
+  let errorCount = 0;
+  let totalResultsStored = 0;
+  const errors: Array<{ companyId: string; error: string }> = [];
+
+  // Process in batches
+  for (let i = 0; i < companies.length; i += batchSize) {
+    const batch = companies.slice(i, i + batchSize);
+    const batchNum = Math.floor(i / batchSize) + 1;
+    const totalBatches = Math.ceil(companies.length / batchSize);
+
+    console.log(`[Matching] Processing batch ${batchNum}/${totalBatches} (${batch.length} companies)`);
+
+    // Process batch sequentially to manage memory
+    for (const company of batch) {
+      try {
+        const preference = company.matchingPreferences[0];
+        const firstMember = company.members[0];
+
+        if (!preference || !firstMember) {
+          console.warn(`[Matching] Skipping ${company.id}: missing preference or member`);
+          continue;
+        }
+
+        console.log(`[Matching] Processing: ${company.name} (${company.id})`);
+
+        // Execute matching
+        const results = await executeMatching({
+          companyId: company.id,
+          userId: firstMember.userId,
+          preferences: {
+            categories: preference.categories,
+            minAmount: preference.minAmount || undefined,
+            maxAmount: preference.maxAmount || undefined,
+            regions: preference.regions || undefined,
+            excludeKeywords: preference.excludeKeywords || undefined,
+          },
+        });
+
+        // Store results
+        if (results.length > 0) {
+          await storeMatchingResults(
+            firstMember.userId,
+            company.id,
+            results
+          );
+          totalResultsStored += results.length;
+        }
+
+        successCount++;
+        console.log(`[Matching] ✓ ${company.name}: ${results.length} matches stored`);
+
+      } catch (error) {
+        errorCount++;
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        console.error(`[Matching] ✗ Failed for ${company.id}:`, errorMessage);
+        errors.push({
+          companyId: company.id,
+          error: errorMessage,
+        });
+      }
+    }
+
+    // Brief pause between batches to allow GC
+    if (i + batchSize < companies.length) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  }
+
+  const duration = Date.now() - startTime;
+  const durationMinutes = Math.round(duration / 1000 / 60 * 10) / 10;
+
+  console.log('');
+  console.log('='.repeat(60));
+  console.log('  📊 Matching Batch Complete');
+  console.log('='.repeat(60));
+  console.log(`  Companies processed: ${successCount + errorCount}`);
+  console.log(`  Successful: ${successCount}`);
+  console.log(`  Failed: ${errorCount}`);
+  console.log(`  Total matches stored: ${totalResultsStored}`);
+  console.log(`  Duration: ${durationMinutes} minutes`);
+  console.log('='.repeat(60));
+  console.log('');
+}
+
+/**
+ * GET /matching/stats
+ *
+ * Get statistics about matching status
+ */
+app.get('/matching/stats', async (req, res) => {
+  try {
+    // Verify API key
+    const authHeader = req.headers.authorization;
+    if (!authHeader || authHeader !== `Bearer ${process.env.WORKER_API_KEY}`) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const [
+      totalCompanies,
+      companiesWithPreferences,
+      totalMatchingResults,
+      recentResults,
+    ] = await Promise.all([
+      prisma.company.count({
+        where: { deletedAt: null },
+      }),
+      prisma.company.count({
+        where: {
+          deletedAt: null,
+          matchingPreferences: {
+            some: {},
+          },
+        },
+      }),
+      prisma.matchingResult.count(),
+      prisma.matchingResult.count({
+        where: {
+          createdAt: {
+            gte: new Date(Date.now() - 24 * 60 * 60 * 1000), // Last 24 hours
+          },
+        },
+      }),
+    ]);
+
+    return res.json({
+      totalCompanies,
+      companiesWithPreferences,
+      totalMatchingResults,
+      resultsLast24Hours: recentResults,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('[Matching] Stats error:', error);
     return res.status(500).json({
       error: 'Failed to get stats',
       details: error instanceof Error ? error.message : 'Unknown error',
