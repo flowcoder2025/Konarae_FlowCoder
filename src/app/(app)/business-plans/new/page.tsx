@@ -25,6 +25,9 @@ import {
   AlertCircle,
   CheckCircle,
   Loader2,
+  Search,
+  Info,
+  CalendarClock,
 } from "lucide-react";
 
 interface Company {
@@ -42,6 +45,16 @@ interface MatchedProject {
   deadline: string | null;
   isPermanent: boolean;
   hasEvaluationCriteria: boolean;
+}
+
+interface SearchedProject {
+  id: string;
+  name: string;
+  organization: string;
+  category: string;
+  deadline: string | null;
+  isPermanent?: boolean;
+  summary: string;
 }
 
 interface ExistingPlan {
@@ -87,6 +100,13 @@ function NewBusinessPlanForm() {
 
   // Messages
   const [noMatchingMessage, setNoMatchingMessage] = useState<string | null>(null);
+
+  // Search mode states
+  const [showSearchMode, setShowSearchMode] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<SearchedProject[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [selectedSearchProject, setSelectedSearchProject] = useState<SearchedProject | null>(null);
 
   // Fetch companies on mount
   useEffect(() => {
@@ -161,6 +181,53 @@ function NewBusinessPlanForm() {
     } finally {
       setIsLoadingExistingPlans(false);
     }
+  };
+
+  // Search all projects (including expired/unmatched)
+  const searchProjects = async () => {
+    if (!searchQuery.trim()) return;
+
+    setIsSearching(true);
+    try {
+      const res = await fetch(`/api/projects?search=${encodeURIComponent(searchQuery.trim())}&pageSize=20`);
+      if (res.ok) {
+        const data = await res.json();
+        setSearchResults(data.projects || []);
+      }
+    } catch (error) {
+      console.error("Search projects error:", error);
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  // Handle search on Enter key
+  const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      searchProjects();
+    }
+  };
+
+  // Select a project from search results
+  const selectSearchedProject = (project: SearchedProject) => {
+    setSelectedSearchProject(project);
+    setFormData((prev) => ({ ...prev, projectId: project.id }));
+    setSearchResults([]);
+    setSearchQuery("");
+  };
+
+  // Check if deadline has passed
+  const isDeadlinePassed = (deadline: string | null): boolean => {
+    if (!deadline) return false;
+    return new Date(deadline) < new Date();
+  };
+
+  // Clear search selection and go back to recommended
+  const clearSearchSelection = () => {
+    setSelectedSearchProject(null);
+    setFormData((prev) => ({ ...prev, projectId: "" }));
+    setShowSearchMode(false);
   };
 
   const handleFileChange = useCallback(
@@ -314,73 +381,232 @@ function NewBusinessPlanForm() {
             </div>
 
             {/* Support Project Selection */}
-            <div className="space-y-2">
+            <div className="space-y-4">
               <Label htmlFor="projectId">지원사업 선택</Label>
               {!formData.companyId ? (
                 <p className="text-sm text-muted-foreground">
                   먼저 기업을 선택하세요
                 </p>
-              ) : isLoadingProjects ? (
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  매칭된 지원사업 로딩 중...
-                </div>
-              ) : noMatchingMessage ? (
-                <div className="flex items-center gap-2 text-amber-600">
-                  <AlertCircle className="h-4 w-4" />
-                  <span>{noMatchingMessage}</span>
-                  <Link href="/matching/new" className="underline">
-                    매칭 실행하기
-                  </Link>
-                </div>
               ) : (
                 <>
-                  <Select
-                    value={formData.projectId}
-                    onValueChange={(value: string) =>
-                      setFormData({ ...formData, projectId: value })
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="지원사업을 선택하세요 (선택사항)" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {matchedProjects.map((project) => (
-                        <SelectItem key={project.id} value={project.id}>
-                          <div className="flex items-center gap-2">
-                            <span>{project.name}</span>
-                            <Badge
-                              variant={
-                                project.confidence === "high"
-                                  ? "default"
-                                  : "secondary"
-                              }
-                              className="text-xs"
-                            >
-                              {project.matchingScore}점
-                            </Badge>
+                  {/* Selected Search Project Display */}
+                  {selectedSearchProject && (
+                    <div className="p-4 border rounded-lg bg-muted/50">
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <div className="font-medium">{selectedSearchProject.name}</div>
+                          <div className="text-sm text-muted-foreground">
+                            {selectedSearchProject.organization} | {selectedSearchProject.category}
                           </div>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {selectedProject && (
-                    <div className="mt-2 p-3 bg-muted rounded-lg text-sm">
-                      <div className="font-medium">{selectedProject.name}</div>
-                      <div className="text-muted-foreground">
-                        {selectedProject.organization} | {selectedProject.category}
+                          {selectedSearchProject.deadline && (
+                            <div className="flex items-center gap-1 mt-1">
+                              <CalendarClock className="h-3 w-3" />
+                              <span className={`text-xs ${isDeadlinePassed(selectedSearchProject.deadline) ? "text-destructive" : "text-muted-foreground"}`}>
+                                마감: {new Date(selectedSearchProject.deadline).toLocaleDateString("ko-KR")}
+                                {isDeadlinePassed(selectedSearchProject.deadline) && " (마감됨)"}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={clearSearchSelection}
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
                       </div>
-                      <div className="flex gap-2 mt-1">
-                        <Badge variant="outline">
-                          매칭점수: {selectedProject.matchingScore}점
-                        </Badge>
-                        {selectedProject.hasEvaluationCriteria && (
-                          <Badge variant="outline" className="text-green-600">
-                            <CheckCircle className="h-3 w-3 mr-1" />
-                            평가기준 있음
-                          </Badge>
-                        )}
+                      {isDeadlinePassed(selectedSearchProject.deadline) && (
+                        <div className="mt-2 flex items-center gap-1 text-xs text-amber-600">
+                          <AlertCircle className="h-3 w-3" />
+                          마감된 사업입니다. 다음 공고를 대비한 연습용으로 활용하세요.
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Recommended Projects Section */}
+                  {!showSearchMode && !selectedSearchProject && (
+                    <div className="space-y-3">
+                      {isLoadingProjects ? (
+                        <div className="flex items-center gap-2 text-muted-foreground">
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          매칭된 지원사업 로딩 중...
+                        </div>
+                      ) : noMatchingMessage ? (
+                        <div className="flex items-center gap-2 text-amber-600">
+                          <AlertCircle className="h-4 w-4" />
+                          <span>{noMatchingMessage}</span>
+                          <Link href="/matching/new" className="underline">
+                            매칭 실행하기
+                          </Link>
+                        </div>
+                      ) : matchedProjects.length > 0 ? (
+                        <>
+                          <Select
+                            value={formData.projectId}
+                            onValueChange={(value: string) =>
+                              setFormData({ ...formData, projectId: value })
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="추천 지원사업을 선택하세요" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {matchedProjects.map((project) => (
+                                <SelectItem key={project.id} value={project.id}>
+                                  <div className="flex items-center gap-2">
+                                    <span>{project.name}</span>
+                                    <Badge
+                                      variant={
+                                        project.confidence === "high"
+                                          ? "default"
+                                          : "secondary"
+                                      }
+                                      className="text-xs"
+                                    >
+                                      {project.matchingScore}점
+                                    </Badge>
+                                  </div>
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+
+                          {/* Info message for recommended projects */}
+                          <div className="flex items-start gap-2 p-3 bg-primary/5 rounded-lg text-sm">
+                            <Info className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                            <span className="text-muted-foreground">
+                              매칭 점수 60점 이상, 접수 중인 지원사업만 표시됩니다.
+                            </span>
+                          </div>
+
+                          {/* Selected Project Details */}
+                          {selectedProject && (
+                            <div className="p-3 bg-muted rounded-lg text-sm">
+                              <div className="font-medium">{selectedProject.name}</div>
+                              <div className="text-muted-foreground">
+                                {selectedProject.organization} | {selectedProject.category}
+                              </div>
+                              <div className="flex gap-2 mt-1">
+                                <Badge variant="outline">
+                                  매칭점수: {selectedProject.matchingScore}점
+                                </Badge>
+                                {selectedProject.hasEvaluationCriteria && (
+                                  <Badge variant="outline" className="text-green-600">
+                                    <CheckCircle className="h-3 w-3 mr-1" />
+                                    평가기준 있음
+                                  </Badge>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <div className="flex items-center gap-2 text-muted-foreground">
+                          <AlertCircle className="h-4 w-4" />
+                          <span>추천 조건에 맞는 지원사업이 없습니다.</span>
+                        </div>
+                      )}
+
+                      {/* Toggle to Search Mode */}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="w-full"
+                        onClick={() => setShowSearchMode(true)}
+                      >
+                        <Search className="h-4 w-4 mr-2" />
+                        다른 지원사업 직접 검색
+                      </Button>
+                    </div>
+                  )}
+
+                  {/* Search Mode Section */}
+                  {showSearchMode && !selectedSearchProject && (
+                    <div className="space-y-3">
+                      <div className="flex gap-2">
+                        <Input
+                          placeholder="지원사업명, 기관명으로 검색..."
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          onKeyDown={handleSearchKeyDown}
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={searchProjects}
+                          disabled={isSearching || !searchQuery.trim()}
+                        >
+                          {isSearching ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Search className="h-4 w-4" />
+                          )}
+                        </Button>
                       </div>
+
+                      {/* Warning for search mode */}
+                      <div className="flex items-start gap-2 p-3 bg-amber-50 dark:bg-amber-950/20 rounded-lg text-sm">
+                        <AlertCircle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
+                        <span className="text-amber-700 dark:text-amber-400">
+                          마감된 사업이나 매칭되지 않은 사업도 검색됩니다.
+                          다음 공고를 대비한 연습용으로 활용할 수 있습니다.
+                        </span>
+                      </div>
+
+                      {/* Search Results */}
+                      {searchResults.length > 0 && (
+                        <div className="border rounded-lg max-h-[300px] overflow-y-auto">
+                          {searchResults.map((project) => (
+                            <button
+                              key={project.id}
+                              type="button"
+                              className="w-full p-3 text-left hover:bg-muted border-b last:border-b-0 transition-colors"
+                              onClick={() => selectSearchedProject(project)}
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex-1 min-w-0">
+                                  <div className="font-medium truncate">{project.name}</div>
+                                  <div className="text-sm text-muted-foreground truncate">
+                                    {project.organization}
+                                  </div>
+                                </div>
+                                {project.deadline && (
+                                  <div className={`text-xs shrink-0 ${isDeadlinePassed(project.deadline) ? "text-destructive" : "text-muted-foreground"}`}>
+                                    {isDeadlinePassed(project.deadline) ? "마감됨" : new Date(project.deadline).toLocaleDateString("ko-KR")}
+                                  </div>
+                                )}
+                                {project.isPermanent && (
+                                  <Badge variant="secondary" className="text-xs shrink-0">상시</Badge>
+                                )}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* No results message */}
+                      {searchResults.length === 0 && searchQuery && !isSearching && (
+                        <p className="text-sm text-muted-foreground text-center py-4">
+                          검색 결과가 없습니다. 다른 키워드로 검색해보세요.
+                        </p>
+                      )}
+
+                      {/* Back to recommended */}
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="w-full"
+                        onClick={() => {
+                          setShowSearchMode(false);
+                          setSearchQuery("");
+                          setSearchResults([]);
+                        }}
+                      >
+                        추천 지원사업으로 돌아가기
+                      </Button>
                     </div>
                   )}
                 </>

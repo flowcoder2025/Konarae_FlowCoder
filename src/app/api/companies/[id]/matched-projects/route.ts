@@ -2,6 +2,9 @@
  * Matched Projects API
  * GET /api/companies/[id]/matched-projects
  * Returns matching results for a company (active, non-expired projects only)
+ *
+ * Query params:
+ * - minScore: Minimum matching score filter (default: 60)
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -13,6 +16,9 @@ interface RouteContext {
   params: Promise<{ id: string }>;
 }
 
+// Default minimum score for recommended projects
+const DEFAULT_MIN_SCORE = 60;
+
 export async function GET(req: NextRequest, { params }: RouteContext) {
   try {
     const session = await auth();
@@ -21,6 +27,10 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
     }
 
     const { id: companyId } = await params;
+    const { searchParams } = new URL(req.url);
+
+    // Parse minScore parameter (default: 60)
+    const minScore = parseInt(searchParams.get("minScore") || String(DEFAULT_MIN_SCORE));
 
     // ReBAC permission check
     const canView = await check(session.user.id, "company", companyId, "viewer");
@@ -31,10 +41,11 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
     // Get current date for deadline filtering
     const now = new Date();
 
-    // Fetch matching results with active, non-expired projects
+    // Fetch matching results with active, non-expired projects and minimum score
     const matchingResults = await prisma.matchingResult.findMany({
       where: {
         companyId,
+        totalScore: { gte: minScore }, // Filter by minimum score
         project: {
           deletedAt: null,
           status: "active",
@@ -91,6 +102,7 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
       projects: matchedProjects,
       total: matchedProjects.length,
       companyId,
+      minScore, // Return applied minimum score filter
     });
   } catch (error) {
     console.error("[API] Get matched projects error:", error);
