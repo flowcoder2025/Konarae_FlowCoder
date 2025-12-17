@@ -1,8 +1,11 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import { MatchResultCard } from "@/components/matching/match-result-card";
 import { MatchFilters } from "@/components/matching/match-filters";
+import { Button } from "@/components/ui/button";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 
 interface MatchingResultsPageProps {
   searchParams: Promise<{
@@ -155,9 +158,106 @@ export default async function MatchingResultsPage({
       {/* Pagination */}
       {totalPages > 1 && (
         <div className="mt-8 flex items-center justify-center gap-2">
-          <p className="text-sm text-muted-foreground">
-            Page {page} of {totalPages}
-          </p>
+          {/* Previous Button */}
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page <= 1}
+            asChild={page > 1}
+          >
+            {page > 1 ? (
+              <Link
+                href={`/matching/results?${new URLSearchParams({
+                  ...(params.companyId && { companyId: params.companyId }),
+                  ...(params.confidence && { confidence: params.confidence }),
+                  ...(params.sort && { sort: params.sort }),
+                  page: String(page - 1),
+                }).toString()}`}
+              >
+                <ChevronLeft className="h-4 w-4 mr-1" />
+                이전
+              </Link>
+            ) : (
+              <>
+                <ChevronLeft className="h-4 w-4 mr-1" />
+                이전
+              </>
+            )}
+          </Button>
+
+          {/* Page Numbers */}
+          <div className="flex items-center gap-1">
+            {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+              // Show pages around current page
+              let pageNum: number;
+              if (totalPages <= 5) {
+                pageNum = i + 1;
+              } else if (page <= 3) {
+                pageNum = i + 1;
+              } else if (page >= totalPages - 2) {
+                pageNum = totalPages - 4 + i;
+              } else {
+                pageNum = page - 2 + i;
+              }
+
+              return (
+                <Button
+                  key={pageNum}
+                  variant={pageNum === page ? "default" : "outline"}
+                  size="sm"
+                  className="w-9"
+                  asChild={pageNum !== page}
+                >
+                  {pageNum === page ? (
+                    <span>{pageNum}</span>
+                  ) : (
+                    <Link
+                      href={`/matching/results?${new URLSearchParams({
+                        ...(params.companyId && { companyId: params.companyId }),
+                        ...(params.confidence && { confidence: params.confidence }),
+                        ...(params.sort && { sort: params.sort }),
+                        page: String(pageNum),
+                      }).toString()}`}
+                    >
+                      {pageNum}
+                    </Link>
+                  )}
+                </Button>
+              );
+            })}
+          </div>
+
+          {/* Next Button */}
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page >= totalPages}
+            asChild={page < totalPages}
+          >
+            {page < totalPages ? (
+              <Link
+                href={`/matching/results?${new URLSearchParams({
+                  ...(params.companyId && { companyId: params.companyId }),
+                  ...(params.confidence && { confidence: params.confidence }),
+                  ...(params.sort && { sort: params.sort }),
+                  page: String(page + 1),
+                }).toString()}`}
+              >
+                다음
+                <ChevronRight className="h-4 w-4 ml-1" />
+              </Link>
+            ) : (
+              <>
+                다음
+                <ChevronRight className="h-4 w-4 ml-1" />
+              </>
+            )}
+          </Button>
+
+          {/* Page Info */}
+          <span className="ml-4 text-sm text-muted-foreground">
+            {page} / {totalPages} 페이지
+          </span>
         </div>
       )}
     </div>

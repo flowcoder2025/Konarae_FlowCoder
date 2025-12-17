@@ -25,6 +25,36 @@ const MATCHING_WEIGHTS = {
   eligibility: 0.25, // 자격 요건 (인증, 기업 유형 등)
 } as const;
 
+/**
+ * Scale business similarity score to realistic range
+ * Raw cosine similarity typically produces 25-50 range scores
+ * This scales them to 50-100 range for better distribution
+ *
+ * @param rawScore - Raw similarity score (0-100)
+ * @returns Scaled score (0-100)
+ */
+function scaleBusinessSimilarity(rawScore: number): number {
+  if (rawScore <= 0) return 0;
+
+  // Input range: 20-50 (realistic observed range)
+  // Output range: 50-100
+  const inputMin = 20;
+  const inputMax = 50;
+  const outputMin = 50;
+  const outputMax = 100;
+
+  // Clamp input to expected range
+  const clampedScore = Math.max(inputMin, Math.min(inputMax, rawScore));
+
+  // Linear scaling
+  const scaled =
+    ((clampedScore - inputMin) / (inputMax - inputMin)) *
+      (outputMax - outputMin) +
+    outputMin;
+
+  return Math.round(Math.min(100, scaled));
+}
+
 export interface MatchingInput {
   companyId: string;
   userId: string;
@@ -737,10 +767,13 @@ export async function executeMatching(
 
       // 사업 유사도 = 텍스트(60%) + 문서벡터(40%) 가중 평균
       // 문서 벡터가 없으면 텍스트만 사용
-      const businessSimilarityScore =
+      const rawBusinessSimilarity =
         documentSimilarityScore > 0
           ? Math.round(semanticScore * 0.6 + documentSimilarityScore * 0.4)
           : semanticScore;
+
+      // 스케일링 적용: 20-50 범위를 50-100 범위로 변환
+      const businessSimilarityScore = scaleBusinessSimilarity(rawBusinessSimilarity);
 
       // Category score (업종 적합도) - v2: 기업 업종과 프로젝트 대상/이름 비교
       const categoryScore = calculateCategoryScore(
