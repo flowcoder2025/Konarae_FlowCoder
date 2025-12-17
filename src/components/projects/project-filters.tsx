@@ -169,66 +169,72 @@ export function ProjectFilters({
 
       {/* Category Filters */}
       {categories.length > 0 && (
-        <div className="flex flex-wrap gap-2 items-center">
-          <span className="text-sm text-muted-foreground py-1 min-w-[40px]">
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-muted-foreground py-1 shrink-0">
             분야:
           </span>
-          {categories.map((cat) => (
-            <button
-              key={cat.value}
-              onClick={() => handleCategoryClick(cat.value)}
-              className={`px-3 py-1 text-sm rounded-full border transition-[background-color,border-color,color] duration-150 ${getCategoryColor(
-                cat.value,
-                currentCategory === cat.value
-              )}`}
-            >
-              {cat.value} ({cat.count})
-            </button>
-          ))}
+          <div className="flex gap-2 overflow-x-auto scrollbar-hide touch-scroll pb-1 -mb-1">
+            {categories.map((cat) => (
+              <button
+                key={cat.value}
+                onClick={() => handleCategoryClick(cat.value)}
+                className={`px-3 py-1 text-sm rounded-full border transition-[background-color,border-color,color] duration-150 whitespace-nowrap shrink-0 ${getCategoryColor(
+                  cat.value,
+                  currentCategory === cat.value
+                )}`}
+              >
+                {cat.value} ({cat.count})
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
       {/* Region Filters */}
       {regions.length > 1 && (
-        <div className="flex flex-wrap gap-2 items-center">
-          <span className="text-sm text-muted-foreground py-1 min-w-[40px]">
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-muted-foreground py-1 shrink-0">
             지역:
           </span>
-          {regions.slice(0, 10).map((region) => (
-            <button
-              key={region.value}
-              onClick={() => handleRegionClick(region.value)}
-              className={`px-3 py-1 text-sm rounded-full border transition-[background-color,border-color,color] duration-150 ${
-                currentRegion === region.value
-                  ? "bg-primary/10 text-primary border-primary/30"
-                  : "bg-muted text-muted-foreground hover:bg-muted/80"
-              }`}
-            >
-              {region.value} ({region.count})
-            </button>
-          ))}
+          <div className="flex gap-2 overflow-x-auto scrollbar-hide touch-scroll pb-1 -mb-1">
+            {regions.slice(0, 10).map((region) => (
+              <button
+                key={region.value}
+                onClick={() => handleRegionClick(region.value)}
+                className={`px-3 py-1 text-sm rounded-full border transition-[background-color,border-color,color] duration-150 whitespace-nowrap shrink-0 ${
+                  currentRegion === region.value
+                    ? "bg-primary/10 text-primary border-primary/30"
+                    : "bg-muted text-muted-foreground hover:bg-muted/80"
+                }`}
+              >
+                {region.value} ({region.count})
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
       {/* Deadline Filters */}
-      <div className="flex flex-wrap gap-2 items-center">
-        <span className="text-sm text-muted-foreground py-1 min-w-[40px] flex items-center gap-1">
+      <div className="flex items-center gap-2">
+        <span className="text-sm text-muted-foreground py-1 shrink-0 flex items-center gap-1">
           <Calendar className="h-3.5 w-3.5" />
           마감:
         </span>
-        {DEADLINE_OPTIONS.map((option) => (
-          <button
-            key={option.value}
-            onClick={() => handleDeadlineClick(option.value)}
-            className={`px-3 py-1 text-sm rounded-full border transition-[background-color,border-color,color] duration-150 ${
-              currentDeadline === option.value
-                ? "bg-primary/10 text-primary border-primary/30"
-                : "bg-muted text-muted-foreground hover:bg-muted/80"
-            }`}
-          >
-            {option.label}
-          </button>
-        ))}
+        <div className="flex gap-2 overflow-x-auto scrollbar-hide touch-scroll pb-1 -mb-1">
+          {DEADLINE_OPTIONS.map((option) => (
+            <button
+              key={option.value}
+              onClick={() => handleDeadlineClick(option.value)}
+              className={`px-3 py-1 text-sm rounded-full border transition-[background-color,border-color,color] duration-150 whitespace-nowrap shrink-0 ${
+                currentDeadline === option.value
+                  ? "bg-primary/10 text-primary border-primary/30"
+                  : "bg-muted text-muted-foreground hover:bg-muted/80"
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Active Filters & Count */}

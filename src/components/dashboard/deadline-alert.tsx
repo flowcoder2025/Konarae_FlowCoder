@@ -38,25 +38,25 @@ export function DeadlineAlert({ deadlines }: DeadlineAlertProps) {
           마감 임박 지원사업
         </CardTitle>
       </CardHeader>
-      <CardContent>
-        <div className="space-y-3">
+      <CardContent className="px-3 sm:px-6">
+        <div className="space-y-2 sm:space-y-3">
           {deadlines.map((item) => (
             <div
               key={item.id}
-              className="flex items-start justify-between p-3 bg-white rounded-lg border"
+              className="flex items-start justify-between gap-2 p-2.5 sm:p-3 bg-white rounded-lg border"
             >
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-1">
-                  <p className="text-sm font-medium truncate">{item.title}</p>
+                <div className="flex items-start sm:items-center gap-2 mb-1 flex-col sm:flex-row">
+                  <p className="text-xs sm:text-sm font-medium line-clamp-2 sm:truncate">{item.title}</p>
                   <Badge
                     variant={item.daysLeft <= 7 ? "destructive" : "secondary"}
-                    className="shrink-0"
+                    className="shrink-0 text-xs"
                   >
                     D-{item.daysLeft}
                   </Badge>
                 </div>
                 <p className="text-xs text-muted-foreground">{item.agency}</p>
-                <p className="text-xs text-muted-foreground mt-1">
+                <p className="text-xs text-muted-foreground mt-0.5 sm:mt-1">
                   마감일:{" "}
                   {format(new Date(item.deadline), "yyyy년 M월 d일", {
                     locale: ko,
@@ -68,7 +68,7 @@ export function DeadlineAlert({ deadlines }: DeadlineAlertProps) {
                   </p>
                 )}
               </div>
-              <Button variant="outline" size="sm" asChild className="ml-2 shrink-0">
+              <Button variant="outline" size="sm" asChild className="shrink-0 text-xs sm:text-sm h-7 sm:h-8 px-2 sm:px-3">
                 <Link href={`/projects/${item.id}`}>
                   상세보기 <ExternalLink className="ml-1 h-3 w-3" />
                 </Link>

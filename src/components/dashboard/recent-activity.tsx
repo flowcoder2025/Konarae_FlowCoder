@@ -35,9 +35,9 @@ export function RecentActivity({
   viewAllHref,
 }: RecentActivityProps) {
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0">
-        <CardTitle className="text-base font-semibold">{title}</CardTitle>
+    <Card className="min-w-0 overflow-hidden">
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 px-3 sm:px-6">
+        <CardTitle className="text-sm sm:text-base font-semibold">{title}</CardTitle>
         {viewAllHref && (
           <Button variant="ghost" size="sm" asChild>
             <Link href={viewAllHref}>
@@ -46,7 +46,7 @@ export function RecentActivity({
           </Button>
         )}
       </CardHeader>
-      <CardContent>
+      <CardContent className="px-3 sm:px-6">
         {items.length === 0 ? (
           <p className="text-sm text-muted-foreground py-4 text-center">
             {emptyMessage}

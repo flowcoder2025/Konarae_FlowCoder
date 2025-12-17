@@ -145,3 +145,23 @@
     height: 0;
   }
 }
+
+/* ============================================
+   MOBILE UTILITIES
+   ============================================ */
+
+/* Scrollbar Hide - 모바일 가로 스크롤 시 스크롤바 숨김 */
+.scrollbar-hide {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;  /* Chrome, Safari and Opera */
+}
+
+/* Touch Scroll - 모바일 터치 스크롤 최적화 */
+.touch-scroll {
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: smooth;
+}

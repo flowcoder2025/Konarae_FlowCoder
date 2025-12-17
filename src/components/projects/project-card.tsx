@@ -57,66 +57,64 @@ export function ProjectCard({ project }: ProjectCardProps) {
 
   return (
     <Link href={`/projects/${project.id}`}>
-      <Card className="p-6 hover:border-primary transition-colors cursor-pointer h-full flex flex-col">
+      <Card className="p-4 sm:p-6 hover:border-primary transition-colors cursor-pointer h-full flex flex-col">
         {/* Header */}
-        <div className="flex items-start justify-between mb-3">
-          <div className="flex-1">
-            <div className="flex items-center gap-2 mb-2 flex-wrap">
-              <Badge className={getCategoryColor(project.category)}>
+        <div className="flex items-start justify-between mb-2 sm:mb-3 gap-2">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5 sm:gap-2 mb-1.5 sm:mb-2 flex-wrap">
+              <Badge className={`text-xs sm:text-sm ${getCategoryColor(project.category)}`}>
                 {project.category}
               </Badge>
               {project.region && project.region !== "전국" && (
-                <Badge variant="outline">{project.region}</Badge>
+                <Badge variant="outline" className="text-xs sm:text-sm">{project.region}</Badge>
               )}
               {isDeadlineSoon && !project.isPermanent && (
-                <Badge variant="destructive">마감임박</Badge>
+                <Badge variant="destructive" className="text-xs sm:text-sm">마감임박</Badge>
               )}
             </div>
-            <h3 className="font-semibold text-lg line-clamp-2 min-h-[3.5rem]">
+            <h3 className="font-semibold text-base sm:text-lg line-clamp-2 min-h-[2.75rem] sm:min-h-[3.5rem]">
               {project.name}
             </h3>
           </div>
         </div>
 
         {/* Organization */}
-        <div className="text-sm text-muted-foreground mb-3">
+        <div className="text-xs sm:text-sm text-muted-foreground mb-2 sm:mb-3">
           <span>{project.organization}</span>
         </div>
 
         {/* Summary */}
-        <p className="text-sm text-muted-foreground line-clamp-2 mb-4 flex-grow min-h-[2.5rem]">
+        <p className="text-xs sm:text-sm text-muted-foreground line-clamp-2 mb-3 sm:mb-4 flex-grow min-h-[2rem] sm:min-h-[2.5rem]">
           {project.summary}
         </p>
 
         {/* Funding Summary */}
-        <div className="mb-4 min-h-[1.5rem]">
+        <div className="mb-3 sm:mb-4 min-h-[1.25rem] sm:min-h-[1.5rem]">
           {project.fundingSummary ? (
-            <span className="text-sm font-medium text-primary line-clamp-1">
+            <span className="text-xs sm:text-sm font-medium text-primary line-clamp-1">
               {project.fundingSummary}
             </span>
           ) : project.amountMin && project.amountMax ? (
-            <span className="text-sm font-medium text-primary">
+            <span className="text-xs sm:text-sm font-medium text-primary">
               {formatAmount(project.amountMin)} ~ {formatAmount(project.amountMax)}
             </span>
           ) : (
-            <span className="text-sm text-muted-foreground">금액 미정</span>
+            <span className="text-xs sm:text-sm text-muted-foreground">금액 미정</span>
           )}
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between text-sm pt-3 border-t">
+        <div className="flex items-center justify-between text-xs sm:text-sm pt-2 sm:pt-3 border-t">
           <div className="text-muted-foreground">
             {project.isPermanent ? (
-              <span className="text-xs">상시모집</span>
+              <span>상시모집</span>
             ) : project.deadline ? (
-              <span className="text-xs">
-                ~{formatDateKST(project.deadline)}
-              </span>
+              <span>~{formatDateKST(project.deadline)}</span>
             ) : (
-              <span className="text-xs">기한 미정</span>
+              <span>기한 미정</span>
             )}
           </div>
-          <span className="text-xs text-muted-foreground">
+          <span className="text-muted-foreground">
             조회 {project.viewCount}
           </span>
         </div>

@@ -43,26 +43,26 @@ export function QuickActions() {
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="text-base font-semibold">빠른 작업</CardTitle>
+      <CardHeader className="px-3 sm:px-6 pb-2 sm:pb-4">
+        <CardTitle className="text-sm sm:text-base font-semibold">빠른 작업</CardTitle>
       </CardHeader>
-      <CardContent>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <CardContent className="px-3 sm:px-6">
+        <div className="grid grid-cols-2 gap-2 sm:gap-3">
           {actions.map((action) => (
             <Button
               key={action.href}
               variant={action.variant}
               rounded="lg"
-              className="h-auto flex-col items-start p-4 text-left"
+              className="h-auto flex-col items-start p-3 sm:p-4 text-left"
               asChild
             >
               <Link href={action.href}>
-                <div className="flex items-center gap-2 mb-2">
-                  <action.icon className="h-5 w-5" />
-                  <span className="font-semibold">{action.title}</span>
+                <div className="flex items-center gap-1.5 sm:gap-2 mb-1 sm:mb-2">
+                  <action.icon className="h-4 w-4 sm:h-5 sm:w-5" />
+                  <span className="font-semibold text-xs sm:text-sm">{action.title}</span>
                 </div>
                 <p
-                  className={`text-xs font-normal ${
+                  className={`text-xs font-normal hidden sm:block ${
                     action.variant === "default"
                       ? "text-primary-foreground/80"
                       : "text-muted-foreground"
