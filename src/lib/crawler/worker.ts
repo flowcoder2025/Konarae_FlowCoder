@@ -1431,18 +1431,19 @@ async function processProjectFiles(
 
 /**
  * Crawler configuration
- * Vercel serverless 환경 최적화 (maxDuration: 60초)
+ * Railway 워커 환경 (타임아웃 제한 없음)
  *
- * 성수기 대응 시 Railway 서비스로 분리 권장
+ * 시간 기반 필터링: 24시간 이내 등록된 공고만 수집
+ * 페이지 제한 없음: 시간 필터에 의해 자연스럽게 종료
  */
 const CRAWLER_CONFIG = {
-  // 페이지네이션 설정 (Vercel 60초 타임아웃 대응)
-  MAX_PAGES: 3,            // 10 → 3 (약 45개 항목)
+  // 페이지네이션 설정 (Railway: 무제한)
+  MAX_PAGES: 50,           // 충분히 높게 설정 (시간 필터로 자연 종료)
   PAGE_SIZE: 15,           // 기업마당 기본 페이지 크기
-  MAX_PROJECTS: 30,        // 150 → 30 (Vercel 타임아웃 내 처리 가능)
+  // MAX_PROJECTS 제거: 시간 필터만으로 제어
 
   // 시간 필터 설정
-  HOURS_FILTER: 28,        // N시간 이내 등록된 공고만 수집
+  HOURS_FILTER: 24,        // 24시간 이내 등록된 공고만 수집
 
   // 요청 간격 (rate limiting - 증가시켜 안정성 향상)
   PAGE_DELAY_MS: 1000,     // 500 → 1000 (서버 부하 감소)
@@ -1536,7 +1537,7 @@ async function crawlAndParse(
       let pageIndex = 1;
       let consecutiveEmptyPages = 0;
 
-      while (pageIndex <= CRAWLER_CONFIG.MAX_PAGES && allProjects.length < CRAWLER_CONFIG.MAX_PROJECTS) {
+      while (pageIndex <= CRAWLER_CONFIG.MAX_PAGES) {
         // 사이트별 페이지네이션 URL 생성
         const pageUrl = siteType === 'kstartup'
           ? buildKStartupPaginatedUrl(url, pageIndex)
@@ -1577,12 +1578,6 @@ async function crawlAndParse(
           } else {
             consecutiveEmptyPages = 0;
             allProjects.push(...pageProjects);
-          }
-
-          // 최대 수집 개수 도달 시 중단
-          if (allProjects.length >= CRAWLER_CONFIG.MAX_PROJECTS) {
-            console.log(`  → Reached max projects limit (${CRAWLER_CONFIG.MAX_PROJECTS})`);
-            break;
           }
 
           pageIndex++;
