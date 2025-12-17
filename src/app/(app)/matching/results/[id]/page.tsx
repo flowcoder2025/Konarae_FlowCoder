@@ -105,7 +105,7 @@ export default async function MatchResultDetailPage({
         <div className="space-y-4">
           <div>
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm">사업 유사도 (35%)</span>
+              <span className="text-sm">사업 유사도 (50%)</span>
               <span className="font-medium">{result.businessSimilarityScore}점</span>
             </div>
             <Progress value={result.businessSimilarityScore} />
@@ -116,45 +116,23 @@ export default async function MatchResultDetailPage({
 
           <div>
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm">업종 적합도 (20%)</span>
+              <span className="text-sm">업종 적합도 (25%)</span>
               <span className="font-medium">{result.categoryScore}점</span>
             </div>
             <Progress value={result.categoryScore} />
             <p className="text-xs text-muted-foreground mt-1">
-              기업 업종과 지원사업 카테고리 일치도
+              기업 업종과 지원사업 대상/자격요건 일치도
             </p>
           </div>
 
           <div>
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm">자격 요건 (20%)</span>
+              <span className="text-sm">자격 요건 (25%)</span>
               <span className="font-medium">{result.eligibilityScore}점</span>
             </div>
             <Progress value={result.eligibilityScore} />
             <p className="text-xs text-muted-foreground mt-1">
-              신청 자격 및 인증 요건 충족도
-            </p>
-          </div>
-
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-sm">적시성 (15%)</span>
-              <span className="font-medium">{result.timelinessScore}점</span>
-            </div>
-            <Progress value={result.timelinessScore} />
-            <p className="text-xs text-muted-foreground mt-1">
-              마감일까지 남은 기간 고려
-            </p>
-          </div>
-
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-sm">지원 규모 (10%)</span>
-              <span className="font-medium">{result.amountScore}점</span>
-            </div>
-            <Progress value={result.amountScore} />
-            <p className="text-xs text-muted-foreground mt-1">
-              기업 규모 대비 지원 금액 적정성
+              벤처/이노비즈/메인비즈 등 인증 요건 충족도
             </p>
           </div>
         </div>

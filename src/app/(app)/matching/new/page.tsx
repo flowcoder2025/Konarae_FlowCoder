@@ -22,11 +22,9 @@ interface MatchingResult {
     amountMax?: string | null;
   };
   totalScore: number;
-  businessSimilarityScore: number; // 사업 유사도 (텍스트 + 문서 벡터 통합)
-  categoryScore: number;
-  eligibilityScore: number;
-  timelinessScore: number;
-  amountScore: number;
+  businessSimilarityScore: number; // 사업 유사도 (50%)
+  categoryScore: number; // 업종 적합도 (25%)
+  eligibilityScore: number; // 자격 요건 (25%)
   confidence: "high" | "medium" | "low";
   matchReasons: string[];
 }

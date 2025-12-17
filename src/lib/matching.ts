@@ -1,18 +1,28 @@
 /**
- * Matching Algorithm (PRD 6.2)
- * Multi-dimensional matching: businessSimilarity + category + eligibility + timeliness + amount
+ * Matching Algorithm (PRD 6.2) - v2
+ *
+ * 매칭 점수 계산 (3가지 요소):
+ * - businessSimilarity (50%): 사업 유사도 (텍스트 + 문서 벡터)
+ * - category (25%): 업종 적합도 (기업 업종 vs 프로젝트 대상/자격요건)
+ * - eligibility (25%): 자격 요건 (인증, 기업 유형 등)
+ *
+ * 필터링:
+ * - preferences.categories: 사용자 관심 분야로 프로젝트 필터링 (R&D, 수출 등)
+ *
+ * v2 변경사항:
+ * - timeliness, amount 점수 제거 (매칭 품질에 불필요)
+ * - categoryScore: 기업 업종과 프로젝트 target/eligibility 키워드 매칭으로 변경
  */
 
 import { hybridSearch } from "./rag";
 import { prisma } from "./prisma";
 
-// Matching weights (PRD 6.2) - Simplified with unified business similarity
+// Matching weights - Simplified (v2)
+// Removed: timeliness, amount (not meaningful for matching quality)
 const MATCHING_WEIGHTS = {
-  businessSimilarity: 0.35, // 사업 유사도 (텍스트 + 문서 벡터 통합)
-  category: 0.2, // Category match (업종 적합도)
-  eligibility: 0.2, // Eligibility criteria (자격 요건)
-  timeliness: 0.15, // Deadline proximity (마감 시기)
-  amount: 0.1, // Amount range fit (지원금액)
+  businessSimilarity: 0.50, // 사업 유사도 (텍스트 + 문서 벡터 통합)
+  category: 0.25, // 관심 분야 일치도 (사용자 선호도 vs 프로젝트 카테고리)
+  eligibility: 0.25, // 자격 요건 (인증, 기업 유형 등)
 } as const;
 
 export interface MatchingInput {
@@ -30,10 +40,8 @@ export interface MatchingInput {
 export interface MatchingScore {
   totalScore: number;
   businessSimilarityScore: number; // 사업 유사도 (텍스트 + 문서 벡터 통합)
-  categoryScore: number;
-  eligibilityScore: number;
-  timelinessScore: number;
-  amountScore: number;
+  categoryScore: number; // 관심 분야 일치도 (사용자 선호도 vs 프로젝트 카테고리)
+  eligibilityScore: number; // 자격 요건 (인증, 기업 유형 등)
   confidence: "high" | "medium" | "low";
   matchReasons: string[];
 }
@@ -67,9 +75,9 @@ async function calculateSemanticScoresBatch(
     const results = await hybridSearch({
       queryText: companyProfile,
       sourceType: "support_project",
-      matchThreshold: 0.5,
+      matchThreshold: 0.35, // Balanced threshold for relevant matches
       matchCount,
-      semanticWeight: 0.8,
+      semanticWeight: 0.7, // Balanced weight between semantic and keyword
     });
 
     // Create Map for O(1) lookup
@@ -179,31 +187,108 @@ async function calculateDocumentSimilarityScoresBatch(
 }
 
 /**
- * Calculate category match score
+ * Calculate category/industry match score (v2)
+ * 기업의 업종(businessInfo)과 프로젝트의 대상/자격요건(target/eligibility)의 연관성 비교
+ *
+ * @param companyBusinessInfo - 기업의 업종 관련 정보 (businessCategory, mainBusiness, businessItems)
+ * @param projectTarget - 프로젝트의 지원 대상 (e.g., "IT/SW 기업", "제조업 중소기업")
+ * @param projectEligibility - 프로젝트의 자격 요건 (e.g., "소프트웨어 개발 기업 우대")
  */
 export function calculateCategoryScore(
-  companyCategories: string[],
-  projectCategory: string,
-  projectSubCategory?: string | null
+  companyBusinessInfo: string[],
+  projectTarget: string,
+  projectEligibility?: string | null,
+  projectName?: string | null
 ): number {
+  // 기업 업종 정보가 없으면 기본 점수
+  if (!companyBusinessInfo || companyBusinessInfo.length === 0) {
+    return 50;
+  }
+
   let score = 0;
 
-  // Direct category match
-  if (companyCategories.includes(projectCategory)) {
-    score += 60;
+  // 프로젝트 대상 및 자격 요건을 하나의 텍스트로 결합
+  const targetText = `${projectTarget} ${projectEligibility || ""}`.toLowerCase();
+  const projectNameLower = (projectName || "").toLowerCase();
+
+  // 대상이 일반적인지 확인 (중소기업, 창업기업 등)
+  const isGenericTarget =
+    targetText.trim() === "중소기업" ||
+    targetText.trim() === "창업기업" ||
+    targetText.trim() === "중소·중견기업" ||
+    targetText.trim() === "예비창업자" ||
+    targetText.includes("전업종") ||
+    targetText.includes("업종무관") ||
+    targetText.includes("업종 무관");
+
+  // 업종 관련 키워드 매핑 (기업 업종 → 프로젝트 관련 키워드)
+  const industryKeywordMap: Record<string, string[]> = {
+    // IT/SW 관련
+    소프트웨어: ["sw", "소프트웨어", "it", "정보통신", "디지털", "스마트", "ai", "데이터", "ax"],
+    "it서비스": ["it", "정보통신", "sw", "소프트웨어", "디지털", "플랫폼"],
+    정보통신: ["it", "정보통신", "sw", "소프트웨어", "ict"],
+    플랫폼: ["플랫폼", "it", "디지털", "sw"],
+    ai: ["ai", "인공지능", "데이터", "it", "sw", "ax", "디지털"],
+
+    // 제조업 관련
+    제조: ["제조", "생산", "부품", "산업", "공장", "스마트공장"],
+    생산: ["제조", "생산", "공정"],
+    기계: ["기계", "제조", "장비", "설비"],
+    전자: ["전자", "반도체", "부품", "it"],
+
+    // 바이오/헬스케어
+    바이오: ["바이오", "의료", "헬스케어", "생명", "그린바이오"],
+    의료: ["의료", "바이오", "헬스케어", "건강"],
+    헬스케어: ["헬스케어", "의료", "바이오", "건강"],
+
+    // 기타
+    디자인: ["디자인", "콘텐츠", "창작", "문화"],
+    콘텐츠: ["콘텐츠", "디자인", "문화", "미디어"],
+    서비스: ["서비스", "플랫폼"],
+    자동화: ["자동화", "ai", "ax", "디지털", "스마트"],
+  };
+
+  // 검색할 텍스트 (대상이 일반적이면 프로젝트 이름도 포함)
+  const searchText = isGenericTarget
+    ? `${targetText} ${projectNameLower}`
+    : targetText;
+
+  // 각 기업 업종 정보에 대해 점수 계산
+  for (const bizInfo of companyBusinessInfo) {
+    if (!bizInfo) continue;
+    const bizLower = bizInfo.toLowerCase();
+
+    // 1. 직접 매칭 (프로젝트에 기업 업종이 직접 언급됨)
+    if (searchText.includes(bizLower)) {
+      score = Math.max(score, 80);
+      continue;
+    }
+
+    // 2. 키워드 매핑 매칭
+    for (const [industry, keywords] of Object.entries(industryKeywordMap)) {
+      if (bizLower.includes(industry)) {
+        const matchCount = keywords.filter((kw) => searchText.includes(kw)).length;
+        if (matchCount >= 2) {
+          score = Math.max(score, 70);
+        } else if (matchCount === 1) {
+          score = Math.max(score, 50);
+        }
+      }
+    }
+
+    // 3. 부분 문자열 매칭 (기업 업종의 일부가 포함됨)
+    const bizParts = bizLower.split(/[\s,\/]+/).filter((p) => p.length >= 2);
+    for (const part of bizParts) {
+      if (searchText.includes(part)) {
+        score = Math.max(score, 60);
+        break;
+      }
+    }
   }
 
-  // Subcategory match
-  if (projectSubCategory && companyCategories.includes(projectSubCategory)) {
-    score += 40;
-  }
-
-  // Partial match (industry-related keywords)
-  const partialMatch = companyCategories.some((cat) =>
-    projectCategory.includes(cat) || cat.includes(projectCategory)
-  );
-  if (partialMatch && score === 0) {
-    score = 30;
+  // 4. 전체 업종 무관 (모든 업종 지원) 체크 - 최소 점수 보장
+  if (isGenericTarget && score === 0) {
+    score = 50; // 업종 무관인 경우 중립 점수
   }
 
   return Math.min(score, 100);
@@ -357,6 +442,7 @@ export function calculateEligibilityScore(
 }
 
 /**
+ * @deprecated v2에서 더 이상 매칭 점수에 사용되지 않음
  * Calculate timeliness score (deadline proximity)
  */
 export function calculateTimelinessScore(
@@ -404,6 +490,7 @@ export function calculateTimelinessScore(
 }
 
 /**
+ * @deprecated v2에서 더 이상 매칭 점수에 사용되지 않음
  * Calculate amount fit score
  */
 export function calculateAmountScore(
@@ -452,12 +539,15 @@ export function calculateAmountScore(
 
 /**
  * Calculate overall confidence level
+ * Adjusted thresholds based on realistic score distributions:
+ * - Semantic similarity rarely exceeds 0.5-0.6
+ * - Typical high-quality match: 50-65 points
  */
 function calculateConfidence(
   totalScore: number
 ): "high" | "medium" | "low" {
-  if (totalScore >= 80) return "high";
-  if (totalScore >= 60) return "medium";
+  if (totalScore >= 60) return "high";
+  if (totalScore >= 45) return "medium";
   return "low";
 }
 
@@ -652,48 +742,31 @@ export async function executeMatching(
           ? Math.round(semanticScore * 0.6 + documentSimilarityScore * 0.4)
           : semanticScore;
 
-      // Category score (업종 적합도)
+      // Category score (업종 적합도) - v2: 기업 업종과 프로젝트 대상/이름 비교
       const categoryScore = calculateCategoryScore(
         [
           company.businessCategory,
           company.mainBusiness,
           ...(company.businessItems || []),
         ].filter(Boolean) as string[],
-        project.category,
-        project.subCategory
+        project.target,
+        project.eligibility,
+        project.name // 프로젝트 이름도 업종 매칭에 활용
       );
 
       // Eligibility score (자격 요건)
       const { score: eligibilityScore, reasons: eligibilityReasons } =
         calculateEligibilityScore(company, project);
 
-      // Timeliness score (마감 시기)
-      const { score: timelinessScore, reasons: timelinessReasons } =
-        calculateTimelinessScore(project.deadline, project.isPermanent);
-
-      // Amount score (지원금액)
-      const { score: amountScore, reasons: amountReasons } =
-        calculateAmountScore(
-          company.annualRevenue,
-          project.amountMin,
-          project.amountMax
-        );
-
-      // Calculate total score
+      // Calculate total score (v2: 3가지 요소만 사용)
       const totalScore = Math.round(
         businessSimilarityScore * MATCHING_WEIGHTS.businessSimilarity +
           categoryScore * MATCHING_WEIGHTS.category +
-          eligibilityScore * MATCHING_WEIGHTS.eligibility +
-          timelinessScore * MATCHING_WEIGHTS.timeliness +
-          amountScore * MATCHING_WEIGHTS.amount
+          eligibilityScore * MATCHING_WEIGHTS.eligibility
       );
 
       // Combine reasons
-      const matchReasons = [
-        ...eligibilityReasons,
-        ...timelinessReasons,
-        ...amountReasons,
-      ];
+      const matchReasons = [...eligibilityReasons];
 
       // Add business similarity reason if high
       if (businessSimilarityScore >= 70) {
@@ -723,8 +796,6 @@ export async function executeMatching(
         businessSimilarityScore,
         categoryScore,
         eligibilityScore,
-        timelinessScore,
-        amountScore,
         confidence,
         matchReasons,
       });
@@ -766,8 +837,8 @@ export async function storeMatchingResults(
         businessSimilarityScore: result.businessSimilarityScore,
         categoryScore: result.categoryScore,
         eligibilityScore: result.eligibilityScore,
-        timelinessScore: result.timelinessScore,
-        amountScore: result.amountScore,
+        timelinessScore: 0, // Deprecated: 더 이상 사용하지 않음
+        amountScore: 0, // Deprecated: 더 이상 사용하지 않음
         confidence: result.confidence,
         matchReasons: result.matchReasons,
       })),

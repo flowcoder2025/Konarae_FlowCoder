@@ -12,10 +12,8 @@ interface MatchResultCardProps {
     projectId: string;
     totalScore: number;
     businessSimilarityScore: number; // 사업 유사도 (텍스트 + 문서 벡터 통합)
-    categoryScore: number;
-    eligibilityScore: number;
-    timelinessScore: number;
-    amountScore: number;
+    categoryScore: number; // 관심 분야 일치도
+    eligibilityScore: number; // 자격 요건
     confidence: "high" | "medium" | "low";
     matchReasons: string[];
     project: {
