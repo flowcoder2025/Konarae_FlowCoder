@@ -5,7 +5,8 @@ import { checkCompanyPermission } from "@/lib/rebac";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Building2, Mail, Phone, MapPin, Users, Calendar, Briefcase, Lightbulb, Pencil, Factory, FileText, Tag, Target, Eye, FolderOpen } from "lucide-react";
+import { Building2, Mail, Phone, MapPin, Users, Calendar, Briefcase, Lightbulb, Pencil, Factory, FileText, Tag, Target, Eye, FolderOpen, Settings2 } from "lucide-react";
+import { MatchingPreferencesForm } from "@/components/company/matching-preferences-form";
 import { format } from "date-fns";
 import { PageHeader } from "@/components/common";
 import Link from "next/link";
@@ -346,6 +347,11 @@ export default async function CompanyDetailPage({
             )}
           </CardContent>
         </Card>
+      </div>
+
+      {/* 매칭 선호도 설정 섹션 */}
+      <div className="mt-6">
+        <MatchingPreferencesForm companyId={id} canEdit={canEdit} />
       </div>
     </div>
   );
