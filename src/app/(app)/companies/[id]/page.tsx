@@ -10,12 +10,95 @@ import { MatchingPreferencesForm } from "@/components/company/matching-preferenc
 import { format } from "date-fns";
 import { PageHeader } from "@/components/common";
 import Link from "next/link";
+import type { Metadata } from "next";
+
+interface CompanyDetailPageProps {
+  params: Promise<{ id: string }>;
+}
+
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://konarae.com";
+
+export async function generateMetadata({
+  params,
+}: CompanyDetailPageProps): Promise<Metadata> {
+  const { id } = await params;
+
+  const company = await prisma.company.findUnique({
+    where: { id, deletedAt: null },
+    select: {
+      name: true,
+      businessCategory: true,
+      mainBusiness: true,
+      introduction: true,
+      isVenture: true,
+      isInnoBiz: true,
+      isMainBiz: true,
+      isSocial: true,
+    },
+  });
+
+  if (!company) {
+    return {
+      title: "기업을 찾을 수 없습니다",
+      description: "요청하신 기업 정보를 찾을 수 없습니다.",
+      robots: {
+        index: false,
+        follow: false,
+      },
+    };
+  }
+
+  const certifications = [
+    company.isVenture && "벤처기업",
+    company.isInnoBiz && "이노비즈",
+    company.isMainBiz && "메인비즈",
+    company.isSocial && "사회적기업",
+  ].filter((c): c is string => Boolean(c));
+
+  const description =
+    company.introduction ||
+    company.mainBusiness ||
+    `${company.name}의 기업 정보 페이지입니다.`;
+
+  const truncatedDescription =
+    description.length > 160
+      ? description.substring(0, 157) + "..."
+      : description;
+
+  const keywords = ["기업정보", company.name];
+  if (company.businessCategory) keywords.push(company.businessCategory);
+  keywords.push(...certifications);
+
+  return {
+    title: company.businessCategory
+      ? `${company.name} - ${company.businessCategory}`
+      : company.name,
+    description: truncatedDescription,
+    keywords,
+    robots: {
+      index: false, // 인증 필요 페이지이므로 검색엔진 색인 제외
+      follow: false,
+    },
+    openGraph: {
+      title: `${company.name} | Konarae`,
+      description: truncatedDescription,
+      type: "profile",
+      url: `${SITE_URL}/companies/${id}`,
+      images: [
+        {
+          url: "/og-image.png",
+          width: 1200,
+          height: 630,
+          alt: company.name,
+        },
+      ],
+    },
+  };
+}
 
 export default async function CompanyDetailPage({
   params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
+}: CompanyDetailPageProps) {
   const session = await auth();
   if (!session?.user?.id) {
     redirect("/login");

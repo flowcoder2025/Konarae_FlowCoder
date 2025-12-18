@@ -8,9 +8,90 @@ import { Button } from "@/components/ui/button";
 import { ProjectFiles } from "@/components/project/project-files";
 import { PageHeader } from "@/components/common";
 import { ExternalLink } from "lucide-react";
+import type { Metadata } from "next";
 
 interface ProjectDetailPageProps {
   params: Promise<{ id: string }>;
+}
+
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://konarae.com";
+
+export async function generateMetadata({
+  params,
+}: ProjectDetailPageProps): Promise<Metadata> {
+  const { id } = await params;
+
+  const project = await prisma.supportProject.findUnique({
+    where: { id, deletedAt: null },
+    select: {
+      name: true,
+      summary: true,
+      organization: true,
+      category: true,
+      subCategory: true,
+      region: true,
+      status: true,
+      target: true,
+    },
+  });
+
+  if (!project) {
+    return {
+      title: "프로젝트를 찾을 수 없습니다",
+      description: "요청하신 지원사업을 찾을 수 없습니다.",
+    };
+  }
+
+  const description =
+    project.summary.length > 160
+      ? project.summary.substring(0, 157) + "..."
+      : project.summary;
+
+  const statusLabel =
+    project.status === "active"
+      ? "모집중"
+      : project.status === "closed"
+      ? "마감"
+      : "준비중";
+
+  const keywords = [
+    "정부지원사업",
+    project.category,
+    project.organization,
+    project.region,
+    "중소기업 지원",
+    project.target,
+  ];
+
+  if (project.subCategory) {
+    keywords.push(project.subCategory);
+  }
+
+  return {
+    title: `${project.name} (${statusLabel})`,
+    description,
+    keywords,
+    openGraph: {
+      title: `${project.name} | Konarae`,
+      description,
+      type: "article",
+      url: `${SITE_URL}/projects/${id}`,
+      images: [
+        {
+          url: "/og-image.png",
+          width: 1200,
+          height: 630,
+          alt: project.name,
+        },
+      ],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: project.name,
+      description,
+      images: ["/og-image.png"],
+    },
+  };
 }
 
 export default async function ProjectDetailPage({

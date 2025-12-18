@@ -7,9 +7,77 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import Link from "next/link";
 import { PageHeader } from "@/components/common";
+import type { Metadata } from "next";
 
 interface MatchResultDetailPageProps {
   params: Promise<{ id: string }>;
+}
+
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://konarae.com";
+
+export async function generateMetadata({
+  params,
+}: MatchResultDetailPageProps): Promise<Metadata> {
+  const { id } = await params;
+
+  const result = await prisma.matchingResult.findUnique({
+    where: { id },
+    select: {
+      totalScore: true,
+      confidence: true,
+      company: {
+        select: {
+          name: true,
+        },
+      },
+      project: {
+        select: {
+          name: true,
+          category: true,
+        },
+      },
+    },
+  });
+
+  if (!result) {
+    return {
+      title: "매칭 결과를 찾을 수 없습니다",
+      description: "요청하신 매칭 결과를 찾을 수 없습니다.",
+      robots: {
+        index: false,
+        follow: false,
+      },
+    };
+  }
+
+  const scorePercent = Math.round(result.totalScore * 100);
+  const confidenceLabel =
+    result.confidence === "high"
+      ? "높음"
+      : result.confidence === "medium"
+      ? "중간"
+      : "낮음";
+
+  return {
+    title: `${result.company.name} × ${result.project.name} 매칭 결과`,
+    description: `매칭 점수 ${scorePercent}점, 신뢰도 ${confidenceLabel} - ${result.project.name} 지원사업 매칭 분석 결과`,
+    keywords: [
+      "매칭 결과",
+      result.company.name,
+      result.project.name,
+      result.project.category,
+    ],
+    robots: {
+      index: false,
+      follow: false,
+    },
+    openGraph: {
+      title: `${result.company.name} × ${result.project.name}`,
+      description: `매칭 점수 ${scorePercent}점`,
+      type: "article",
+      url: `${SITE_URL}/matching/results/${id}`,
+    },
+  };
 }
 
 export default async function MatchResultDetailPage({

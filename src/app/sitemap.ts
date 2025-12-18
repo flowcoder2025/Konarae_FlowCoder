@@ -1,8 +1,9 @@
 import type { MetadataRoute } from "next";
+import { prisma } from "@/lib/prisma";
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://konarae.com";
 
-export default function sitemap(): MetadataRoute.Sitemap {
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const currentDate = new Date();
 
   const staticPages: MetadataRoute.Sitemap = [
@@ -38,5 +39,27 @@ export default function sitemap(): MetadataRoute.Sitemap {
     },
   ];
 
-  return staticPages;
+  // 동적 프로젝트 페이지 추가
+  const projects = await prisma.supportProject.findMany({
+    where: {
+      status: "active",
+      deletedAt: null,
+    },
+    select: {
+      id: true,
+      updatedAt: true,
+    },
+    orderBy: {
+      updatedAt: "desc",
+    },
+  });
+
+  const projectPages: MetadataRoute.Sitemap = projects.map((project) => ({
+    url: `${SITE_URL}/projects/${project.id}`,
+    lastModified: project.updatedAt,
+    changeFrequency: "weekly",
+    priority: 0.7,
+  }));
+
+  return [...staticPages, ...projectPages];
 }

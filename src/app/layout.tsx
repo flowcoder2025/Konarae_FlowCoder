@@ -35,6 +35,11 @@ export const metadata: Metadata = {
     address: false,
     telephone: false,
   },
+  verification: {
+    other: {
+      "naver-site-verification": process.env.NAVER_SITE_VERIFICATION || "",
+    },
+  },
   robots: {
     index: true,
     follow: true,
