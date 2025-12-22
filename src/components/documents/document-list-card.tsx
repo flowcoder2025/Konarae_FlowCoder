@@ -20,7 +20,8 @@ import {
   Loader2,
   Download,
   Trash2,
-  Plus
+  Plus,
+  Info
 } from "lucide-react";
 import { format } from "date-fns";
 import { useDropzone } from "@/hooks/use-dropzone";
@@ -278,6 +279,16 @@ export function DocumentListCard({
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* 분석 중 안내 메시지 */}
+      {existingDocuments.some((doc) => doc.status === "analyzing") && (
+        <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded-lg flex items-start gap-2">
+          <Info className="h-4 w-4 text-blue-600 mt-0.5 flex-shrink-0" />
+          <p className="text-xs text-blue-700">
+            AI가 문서를 분석 중입니다. 페이지를 나가셔도 안전하게 처리됩니다.
+          </p>
         </div>
       )}
 

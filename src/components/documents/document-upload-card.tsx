@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { DocumentMetadata, DocumentType } from "@/lib/documents/types";
-import { FileText, Upload, CheckCircle2, AlertCircle, Loader2 } from "lucide-react";
+import { FileText, Upload, CheckCircle2, AlertCircle, Loader2, Info } from "lucide-react";
 import { useDropzone } from "@/hooks/use-dropzone";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -180,6 +180,16 @@ export function DocumentUploadCard({
           </p>
           <p className="text-xs text-muted-foreground">
             {new Date(existingDocument.uploadedAt).toLocaleDateString("ko-KR")}
+          </p>
+        </div>
+      )}
+
+      {/* 분석 중 안내 메시지 */}
+      {existingDocument?.status === "analyzing" && (
+        <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded-lg flex items-start gap-2">
+          <Info className="h-4 w-4 text-blue-600 mt-0.5 flex-shrink-0" />
+          <p className="text-xs text-blue-700">
+            AI가 문서를 분석 중입니다. 페이지를 나가셔도 안전하게 처리됩니다.
           </p>
         </div>
       )}
