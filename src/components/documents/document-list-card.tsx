@@ -1,11 +1,12 @@
 /**
  * 문서 목록 카드 컴포넌트 (멀티 파일 지원)
  * 각 문서 유형당 여러 파일을 관리
+ * 드래그 앤 드랍 지원
  */
 
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -22,6 +23,9 @@ import {
   Plus
 } from "lucide-react";
 import { format } from "date-fns";
+import { useDropzone } from "@/hooks/use-dropzone";
+import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 
 interface DocumentFile {
   id: string;
@@ -56,48 +60,76 @@ export function DocumentListCard({
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
+  const handleUpload = useCallback(
+    async (file: File) => {
+      try {
+        setUploading(true);
+        setError(null);
+        setProgress(10);
+
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("documentType", metadata.type);
+
+        setProgress(30);
+
+        const response = await fetch(
+          `/api/companies/${companyId}/documents/upload`,
+          {
+            method: "POST",
+            body: formData,
+          }
+        );
+
+        setProgress(60);
+
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data.error || "업로드 실패");
+        }
+
+        setProgress(100);
+
+        setTimeout(() => {
+          setUploading(false);
+          setProgress(0);
+          onUploadComplete?.();
+        }, 500);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "업로드 실패");
+        setUploading(false);
+        setProgress(0);
+      }
+    },
+    [companyId, metadata.type, onUploadComplete]
+  );
+
+  const handleFileDrop = useCallback(
+    (files: File[]) => {
+      if (files.length > 0) {
+        handleUpload(files[0]);
+      }
+    },
+    [handleUpload]
+  );
+
+  const handleDropError = useCallback((errorMsg: string) => {
+    toast.error(errorMsg);
+  }, []);
+
+  const { isDragging, getRootProps, getInputProps, open } = useDropzone({
+    accept: metadata.acceptedFormats,
+    maxSize: metadata.maxSize * 1024 * 1024,
+    multiple: false,
+    disabled: uploading,
+    onDrop: handleFileDrop,
+    onError: handleDropError,
+  });
+
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
-    try {
-      setUploading(true);
-      setError(null);
-      setProgress(10);
-
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("documentType", metadata.type);
-
-      setProgress(30);
-
-      const response = await fetch(
-        `/api/companies/${companyId}/documents/upload`,
-        {
-          method: "POST",
-          body: formData,
-        }
-      );
-
-      setProgress(60);
-
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || "업로드 실패");
-      }
-
-      setProgress(100);
-
-      setTimeout(() => {
-        setUploading(false);
-        setProgress(0);
-        onUploadComplete?.();
-      }, 500);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "업로드 실패");
-      setUploading(false);
-      setProgress(0);
-    }
+    handleUpload(file);
   };
 
   const handleDelete = async (documentId: string) => {
@@ -266,14 +298,40 @@ export function DocumentListCard({
         </div>
       )}
 
-      {/* 새 파일 추가 버튼 */}
-      <div className="flex gap-2">
+      {/* 드래그 앤 드랍 영역 + 파일 추가 버튼 */}
+      <div
+        {...getRootProps()}
+        className={cn(
+          "flex flex-col items-center justify-center p-4 border-2 border-dashed rounded-lg cursor-pointer transition-all",
+          isDragging
+            ? "border-primary bg-primary/5 ring-2 ring-primary"
+            : "border-muted-foreground/25 hover:border-muted-foreground/50 hover:bg-muted/50",
+          uploading && "opacity-50 cursor-not-allowed"
+        )}
+      >
+        <input {...getInputProps()} />
+        <Upload
+          className={cn(
+            "h-8 w-8 mb-2 transition-transform",
+            isDragging ? "text-primary scale-110" : "text-muted-foreground"
+          )}
+        />
+        <p className="text-sm text-muted-foreground text-center mb-2">
+          {isDragging
+            ? "여기에 파일을 놓으세요"
+            : existingDocuments.length > 0
+              ? "파일을 드래그하거나 클릭하여 추가"
+              : "파일을 드래그하거나 클릭하여 업로드"}
+        </p>
         <Button
+          type="button"
           variant={existingDocuments.length > 0 ? "outline" : "default"}
           size="sm"
           disabled={uploading}
-          className="w-full"
-          onClick={() => document.getElementById(`file-${metadata.type}`)?.click()}
+          onClick={(e) => {
+            e.stopPropagation();
+            open();
+          }}
         >
           {existingDocuments.length > 0 ? (
             <>
@@ -287,14 +345,6 @@ export function DocumentListCard({
             </>
           )}
         </Button>
-
-        <input
-          id={`file-${metadata.type}`}
-          type="file"
-          accept={metadata.acceptedFormats.join(",")}
-          onChange={handleFileSelect}
-          className="hidden"
-        />
       </div>
 
       {/* 안내 문구 */}
