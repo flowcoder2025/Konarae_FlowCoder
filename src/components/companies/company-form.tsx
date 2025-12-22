@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -13,6 +13,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
 import { Lightbulb, Upload, FileText, CheckCircle2, Sparkles } from "lucide-react";
+import { useDropzone } from "@/hooks/use-dropzone";
+import { cn } from "@/lib/utils";
 
 const companyFormSchema = z.object({
   // 기본 정보
@@ -149,6 +151,39 @@ export function CompanyForm() {
     }
   };
 
+  const handleFileDrop = useCallback(
+    (files: File[]) => {
+      if (files.length > 0) {
+        handleFileAnalyze(files[0]);
+      }
+    },
+    [handleFileAnalyze]
+  );
+
+  const handleDropError = useCallback((errorMsg: string) => {
+    toast.error(errorMsg);
+  }, []);
+
+  const { isDragging, getRootProps, getInputProps, open } = useDropzone({
+    accept: [
+      "application/pdf",
+      "image/jpeg",
+      "image/jpg",
+      "image/png",
+      "image/webp",
+      ".pdf",
+      ".jpg",
+      ".jpeg",
+      ".png",
+      ".webp",
+    ],
+    maxSize: 10 * 1024 * 1024, // 10MB
+    multiple: false,
+    disabled: analyzing,
+    onDrop: handleFileDrop,
+    onError: handleDropError,
+  });
+
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -254,27 +289,43 @@ export function CompanyForm() {
           </CardHeader>
           <CardContent className="space-y-4">
             {!businessRegFile ? (
-              <div className="flex flex-col items-center justify-center p-8 border-2 border-dashed border-muted-foreground/25 rounded-lg bg-muted/50">
-                <FileText className="h-12 w-12 text-muted-foreground mb-4" />
+              <div
+                {...getRootProps()}
+                className={cn(
+                  "flex flex-col items-center justify-center p-8 border-2 border-dashed rounded-lg cursor-pointer transition-all",
+                  isDragging
+                    ? "border-primary bg-primary/5 ring-2 ring-primary"
+                    : "border-muted-foreground/25 bg-muted/50 hover:border-muted-foreground/50 hover:bg-muted",
+                  analyzing && "opacity-50 cursor-not-allowed"
+                )}
+              >
+                <input {...getInputProps()} />
+                <FileText
+                  className={cn(
+                    "h-12 w-12 mb-4 transition-transform",
+                    isDragging ? "text-primary scale-110" : "text-muted-foreground"
+                  )}
+                />
                 <p className="text-sm text-muted-foreground mb-4 text-center">
-                  PDF 또는 이미지 파일을 업로드하세요
+                  {isDragging
+                    ? "여기에 파일을 놓으세요"
+                    : "파일을 드래그하거나 클릭하여 선택하세요"}
                 </p>
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => document.getElementById("business-reg-file")?.click()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    open();
+                  }}
                   disabled={analyzing}
                 >
                   <Upload className="h-4 w-4 mr-2" />
                   파일 선택
                 </Button>
-                <input
-                  id="business-reg-file"
-                  type="file"
-                  accept=".pdf,.jpg,.jpeg,.png,.webp"
-                  onChange={handleFileSelect}
-                  className="hidden"
-                />
+                <p className="text-xs text-muted-foreground mt-3">
+                  PDF, JPG, PNG, WEBP | 최대 10MB
+                </p>
               </div>
             ) : (
               <div className="space-y-3">

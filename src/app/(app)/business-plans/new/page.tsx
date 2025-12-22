@@ -29,6 +29,9 @@ import {
   Info,
   CalendarClock,
 } from "lucide-react";
+import { useDropzone } from "@/hooks/use-dropzone";
+import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 
 interface Company {
   id: string;
@@ -251,6 +254,31 @@ function NewBusinessPlanForm() {
     },
     []
   );
+
+  const handleFileDrop = useCallback((files: File[]) => {
+    const newAttachments: AttachmentFile[] = files
+      .filter(
+        (file) =>
+          file.type === "application/pdf" || file.type.startsWith("image/")
+      )
+      .map((file) => ({ file }));
+
+    if (newAttachments.length > 0) {
+      setAttachments((prev) => [...prev, ...newAttachments]);
+    }
+  }, []);
+
+  const handleDropError = useCallback((errorMsg: string) => {
+    toast.error(errorMsg);
+  }, []);
+
+  const { isDragging, getRootProps, getInputProps, open } = useDropzone({
+    accept: ["application/pdf", "image/*", ".pdf"],
+    maxSize: 20 * 1024 * 1024, // 20MB
+    multiple: true,
+    onDrop: handleFileDrop,
+    onError: handleDropError,
+  });
 
   const removeAttachment = (index: number) => {
     setAttachments((prev) => prev.filter((_, i) => i !== index));
@@ -662,21 +690,30 @@ function NewBusinessPlanForm() {
             {/* File Attachments */}
             <div className="space-y-2">
               <Label>파일 첨부 (PDF, 이미지)</Label>
-              <div className="flex items-center gap-2">
-                <label className="flex items-center gap-2 px-4 py-2 border rounded-lg cursor-pointer hover:bg-muted transition-colors">
-                  <Upload className="h-4 w-4" />
-                  <span>파일 선택</span>
-                  <input
-                    type="file"
-                    accept=".pdf,image/*"
-                    multiple
-                    onChange={handleFileChange}
-                    className="hidden"
-                  />
-                </label>
-                <span className="text-sm text-muted-foreground">
-                  PDF 또는 이미지 파일을 업로드하세요
-                </span>
+              <div
+                {...getRootProps()}
+                className={cn(
+                  "flex flex-col items-center justify-center p-6 border-2 border-dashed rounded-lg cursor-pointer transition-all",
+                  isDragging
+                    ? "border-primary bg-primary/5 ring-2 ring-primary"
+                    : "border-muted-foreground/25 hover:border-muted-foreground/50 hover:bg-muted/50"
+                )}
+              >
+                <input {...getInputProps()} />
+                <Upload
+                  className={cn(
+                    "h-8 w-8 mb-2 transition-transform",
+                    isDragging ? "text-primary scale-110" : "text-muted-foreground"
+                  )}
+                />
+                <p className="text-sm text-muted-foreground text-center">
+                  {isDragging
+                    ? "여기에 파일을 놓으세요"
+                    : "파일을 드래그하거나 클릭하여 선택하세요"}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  PDF 또는 이미지 | 최대 20MB
+                </p>
               </div>
 
               {attachments.length > 0 && (

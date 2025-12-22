@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -16,6 +16,10 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageHeader } from "@/components/common";
+import { useDropzone } from "@/hooks/use-dropzone";
+import { cn } from "@/lib/utils";
+import { toast } from "sonner";
+import { Upload, FileText, X } from "lucide-react";
 
 export default function NewEvaluationPage() {
   const router = useRouter();
@@ -62,6 +66,31 @@ export default function NewEvaluationPage() {
       console.error("Fetch projects error:", error);
     }
   };
+
+  const handleFileDrop = useCallback((files: File[]) => {
+    if (files.length > 0) {
+      setUploadFile(files[0]);
+    }
+  }, []);
+
+  const handleDropError = useCallback((errorMsg: string) => {
+    toast.error(errorMsg);
+  }, []);
+
+  const { isDragging, getRootProps, getInputProps, open } = useDropzone({
+    accept: [
+      "application/pdf",
+      "application/haansofthwp",
+      "application/x-hwp",
+      ".pdf",
+      ".hwp",
+      ".hwpx",
+    ],
+    maxSize: 50 * 1024 * 1024, // 50MB
+    multiple: false,
+    onDrop: handleFileDrop,
+    onError: handleDropError,
+  });
 
   const handleBusinessPlanSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -206,17 +235,54 @@ export default function NewEvaluationPage() {
           <Card className="p-6">
             <form onSubmit={handleUploadSubmit} className="space-y-6">
               <div className="space-y-2">
-                <Label htmlFor="file">파일 선택</Label>
-                <Input
-                  id="file"
-                  type="file"
-                  accept=".pdf,.hwp,.hwpx"
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setUploadFile(e.target.files?.[0] || null)}
-                  required
-                />
-                <p className="text-xs text-muted-foreground">
-                  지원 형식: PDF, HWP, HWPX
-                </p>
+                <Label>파일 선택</Label>
+                {!uploadFile ? (
+                  <div
+                    {...getRootProps()}
+                    className={cn(
+                      "flex flex-col items-center justify-center p-8 border-2 border-dashed rounded-lg cursor-pointer transition-all",
+                      isDragging
+                        ? "border-primary bg-primary/5 ring-2 ring-primary"
+                        : "border-muted-foreground/25 hover:border-muted-foreground/50 hover:bg-muted/50"
+                    )}
+                  >
+                    <input {...getInputProps()} />
+                    <Upload
+                      className={cn(
+                        "h-10 w-10 mb-3 transition-transform",
+                        isDragging ? "text-primary scale-110" : "text-muted-foreground"
+                      )}
+                    />
+                    <p className="text-sm text-muted-foreground text-center mb-1">
+                      {isDragging
+                        ? "여기에 파일을 놓으세요"
+                        : "파일을 드래그하거나 클릭하여 선택하세요"}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      PDF, HWP, HWPX | 최대 50MB
+                    </p>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between p-4 bg-muted rounded-lg">
+                    <div className="flex items-center gap-3">
+                      <FileText className="h-6 w-6 text-muted-foreground" />
+                      <div>
+                        <p className="text-sm font-medium">{uploadFile.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {(uploadFile.size / 1024 / 1024).toFixed(2)} MB
+                        </p>
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setUploadFile(null)}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                )}
               </div>
 
               <div className="space-y-2">

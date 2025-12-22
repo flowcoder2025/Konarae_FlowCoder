@@ -96,10 +96,13 @@ export async function uploadToStorage({
     // 서버 사이드에서는 Service Role 키 사용 (RLS 우회)
     const supabase = createServerClient();
 
-    // 파일 경로 생성
+    // 파일 경로 생성 (ASCII-safe: 한글 제거, 영문/숫자/하이픈/언더스코어만 허용)
+    // 원본 파일명(한글 포함)은 DB에 저장하고, Storage에는 안전한 경로만 사용
     const timestamp = Date.now();
-    const fileName = file.name.replace(/[^a-zA-Z0-9가-힣.-]/g, "_"); // 특수문자 제거
-    const filePath = `${userId}/${companyId}/${documentType}/${timestamp}_${fileName}`;
+    const ext = file.name.split(".").pop()?.toLowerCase() || "bin";
+    const randomId = Math.random().toString(36).substring(2, 10);
+    const safeFileName = `${timestamp}_${randomId}.${ext}`;
+    const filePath = `${userId}/${companyId}/${documentType}/${safeFileName}`;
 
     // Supabase Storage 업로드
     const { data, error } = await supabase.storage
