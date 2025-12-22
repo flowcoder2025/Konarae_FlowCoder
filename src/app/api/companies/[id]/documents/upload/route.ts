@@ -1,6 +1,9 @@
 /**
  * POST /api/companies/[id]/documents/upload
  * 문서 업로드 API
+ *
+ * QStash가 설정되어 있으면 분석 작업을 큐에 넣고 즉시 응답합니다.
+ * 이를 통해 동시 다중 업로드 시에도 연결 풀 고갈을 방지합니다.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -11,6 +14,7 @@ import { uploadToStorage, getStorageFileAsBase64 } from "@/lib/documents/upload"
 import { analyzeDocument } from "@/lib/documents/analyze";
 import { processDocumentEmbeddings } from "@/lib/documents/embedding";
 import { DocumentType } from "@/lib/documents/types";
+import { isQStashConfigured, queueDocumentAnalysis } from "@/lib/qstash";
 
 export async function POST(
   req: NextRequest,
@@ -64,7 +68,10 @@ export async function POST(
       );
     }
 
-    // 5. DB 레코드 생성 (status: uploaded)
+    // 5. DB 레코드 생성
+    // QStash 사용 시 pending, 아니면 uploaded
+    const initialStatus = isQStashConfigured ? "pending" : "uploaded";
+
     const document = await prisma.companyDocument.create({
       data: {
         companyId,
@@ -74,16 +81,34 @@ export async function POST(
         mimeType: file.type,
         fileUrl: uploadResult.fileUrl!,
         uploadedBy: userId,
-        status: "uploaded",
+        status: initialStatus,
       },
     });
 
-    // 6. 비동기 분석 트리거 (백그라운드)
-    // 실제 환경에서는 QStash나 Railway Worker 사용
-    // 여기서는 즉시 분석 (간단한 구현)
-    processDocumentAnalysis(document.id, uploadResult.filePath!, documentType, file.type).catch((err) => {
-      console.error("[POST /documents/upload] Analysis error:", err);
-    });
+    // 6. 분석 트리거
+    if (isQStashConfigured) {
+      // QStash 사용: 큐에 작업 추가 후 즉시 응답
+      // 동시 100명이 업로드해도 연결 풀 고갈 없음
+      const queueResult = await queueDocumentAnalysis({
+        documentId: document.id,
+        filePath: uploadResult.filePath!,
+        documentType,
+        mimeType: file.type,
+      });
+
+      if (!queueResult.success) {
+        console.error("[POST /documents/upload] QStash queue failed:", queueResult.error);
+        // 큐잉 실패 시 Fallback: 인라인 처리
+        processDocumentAnalysis(document.id, uploadResult.filePath!, documentType, file.type).catch((err) => {
+          console.error("[POST /documents/upload] Fallback analysis error:", err);
+        });
+      }
+    } else {
+      // QStash 미설정: 기존 인라인 처리 (연결 풀 이슈 가능)
+      processDocumentAnalysis(document.id, uploadResult.filePath!, documentType, file.type).catch((err) => {
+        console.error("[POST /documents/upload] Analysis error:", err);
+      });
+    }
 
     return NextResponse.json({
       documentId: document.id,

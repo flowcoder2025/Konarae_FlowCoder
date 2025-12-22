@@ -139,3 +139,51 @@ export async function getSchedule(scheduleId: string) {
     return { success: false, error };
   }
 }
+
+// ============================================
+// Document Analysis Queue
+// ============================================
+
+export interface DocumentAnalysisJobPayload {
+  documentId: string;
+  filePath: string;
+  documentType: string;
+  mimeType: string;
+}
+
+/**
+ * Queue document analysis job via QStash
+ * This decouples the upload from analysis, preventing connection pool exhaustion
+ */
+export async function queueDocumentAnalysis(
+  payload: DocumentAnalysisJobPayload
+): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  if (!qstashClient) {
+    console.warn("[QStash] Client not configured, cannot queue document analysis");
+    return { success: false, error: "QStash not configured" };
+  }
+
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.VERCEL_URL;
+  if (!baseUrl) {
+    console.error("[QStash] No base URL configured");
+    return { success: false, error: "Base URL not configured" };
+  }
+
+  try {
+    const result = await qstashClient.publishJSON({
+      url: `${baseUrl.startsWith("http") ? baseUrl : `https://${baseUrl}`}/api/documents/analyze-job`,
+      body: payload,
+      retries: 3,
+      delay: "3s", // 3초 후 실행 (업로드 완료 보장)
+    });
+
+    console.log(`[QStash] Document analysis queued: ${result.messageId}`);
+    return { success: true, messageId: result.messageId };
+  } catch (error) {
+    console.error("[QStash] Failed to queue document analysis:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Queue failed",
+    };
+  }
+}

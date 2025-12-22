@@ -121,6 +121,7 @@ export function DocumentUploadCard({
     }
 
     const statusMap: Record<string, { label: string; variant: any }> = {
+      pending: { label: "대기 중", variant: "secondary" },
       uploaded: { label: "업로드 완료", variant: "secondary" },
       analyzing: { label: "분석 중", variant: "default" },
       analyzed: { label: "분석 완료", variant: "default" },
@@ -140,6 +141,7 @@ export function DocumentUploadCard({
       case "analyzed":
         return <CheckCircle2 className="h-6 w-6 text-green-600" />;
       case "analyzing":
+      case "pending":
         return <Loader2 className="h-6 w-6 text-blue-600 animate-spin" />;
       case "failed":
         return <AlertCircle className="h-6 w-6 text-red-600" />;
@@ -185,7 +187,7 @@ export function DocumentUploadCard({
       )}
 
       {/* 분석 중 안내 메시지 */}
-      {existingDocument?.status === "analyzing" && (
+      {(existingDocument?.status === "analyzing" || existingDocument?.status === "pending") && (
         <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded-lg flex items-start gap-2">
           <Info className="h-4 w-4 text-blue-600 mt-0.5 flex-shrink-0" />
           <p className="text-xs text-blue-700">
