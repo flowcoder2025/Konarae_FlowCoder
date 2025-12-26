@@ -6,7 +6,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { getCached, rateLimit, cacheKeys, cacheTTL } from "@/lib/cache";
+import { getCached, rateLimit, cacheTTL } from "@/lib/cache";
+import { createLogger } from "@/lib/logger";
+import { PAGINATION, RATE_LIMIT } from "@/lib/constants";
+
+const logger = createLogger({ api: "projects" });
 
 export async function GET(req: NextRequest) {
   try {
@@ -15,8 +19,12 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Rate limiting (10 requests per minute per user)
-    const rateLimitResult = await rateLimit(`projects:${session.user.id}`, 10, 60);
+    // Rate limiting
+    const rateLimitResult = await rateLimit(
+      `projects:${session.user.id}`,
+      RATE_LIMIT.REQUESTS_PER_WINDOW,
+      RATE_LIMIT.WINDOW_SECONDS
+    );
     if (!rateLimitResult.success) {
       return NextResponse.json(
         {
@@ -26,7 +34,7 @@ export async function GET(req: NextRequest) {
         {
           status: 429,
           headers: {
-            "X-RateLimit-Limit": "10",
+            "X-RateLimit-Limit": String(RATE_LIMIT.REQUESTS_PER_WINDOW),
             "X-RateLimit-Remaining": "0",
             "X-RateLimit-Reset": rateLimitResult.reset.toString(),
           }
@@ -43,8 +51,8 @@ export async function GET(req: NextRequest) {
     const search = searchParams.get("search");
 
     // Pagination
-    const page = parseInt(searchParams.get("page") || "1");
-    const pageSize = parseInt(searchParams.get("pageSize") || "20");
+    const page = parseInt(searchParams.get("page") || String(PAGINATION.DEFAULT_PAGE));
+    const pageSize = parseInt(searchParams.get("pageSize") || String(PAGINATION.DEFAULT_PAGE_SIZE));
     const skip = (page - 1) * pageSize;
 
     // Build where clause
@@ -124,13 +132,13 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json(result, {
       headers: {
-        "X-RateLimit-Limit": "10",
+        "X-RateLimit-Limit": String(RATE_LIMIT.REQUESTS_PER_WINDOW),
         "X-RateLimit-Remaining": rateLimitResult.remaining.toString(),
         "X-RateLimit-Reset": rateLimitResult.reset.toString(),
       }
     });
   } catch (error) {
-    console.error("[API] Get projects error:", error);
+    logger.error("Failed to fetch projects", { error });
     return NextResponse.json(
       { error: "Failed to fetch projects" },
       { status: 500 }

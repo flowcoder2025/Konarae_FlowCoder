@@ -7,6 +7,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { hybridSearch, type SourceType } from "@/lib/rag";
 import { z } from "zod";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "rag-search" });
 
 const searchSchema = z.object({
   query: z.string().min(1),
@@ -48,7 +51,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    console.error("[API] RAG search error:", error);
+    logger.error("Failed to perform RAG search", { error });
     return NextResponse.json(
       { error: "Failed to perform search" },
       { status: 500 }

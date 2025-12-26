@@ -10,6 +10,9 @@ import { prisma } from "@/lib/prisma";
 import { evaluateBusinessPlan } from "@/lib/evaluation-engine";
 import { sendEvaluationCompleteNotification } from "@/lib/notifications";
 import { z } from "zod";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "evaluations" });
 
 const createEvaluationSchema = z.object({
   businessPlanId: z.string().min(1),
@@ -61,7 +64,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ evaluations });
   } catch (error) {
-    console.error("[API] Get evaluations error:", error);
+    logger.error("Failed to fetch evaluations", { error });
     return NextResponse.json(
       { error: "Failed to fetch evaluations" },
       { status: 500 }
@@ -125,7 +128,7 @@ export async function POST(req: NextRequest) {
       businessPlanId: validatedData.businessPlanId,
       criteria,
     }).catch((error) => {
-      console.error("[API] Evaluation background error:", error);
+      logger.error("Evaluation background error", { error, evaluationId: evaluation.id });
     });
 
     return NextResponse.json({
@@ -141,7 +144,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    console.error("[API] Create evaluation error:", error);
+    logger.error("Failed to create evaluation", { error });
     return NextResponse.json(
       { error: "Failed to create evaluation" },
       { status: 500 }
@@ -191,7 +194,7 @@ async function performEvaluation(
       result.totalScore
     );
   } catch (error) {
-    console.error("[Evaluation] Background processing error:", error);
+    logger.error("Evaluation background processing error", { error, evaluationId });
 
     // Mark as failed
     await prisma.evaluation.update({

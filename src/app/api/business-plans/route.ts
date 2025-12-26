@@ -9,6 +9,9 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { grant } from "@/lib/rebac";
 import { z } from "zod";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "business-plans" });
 
 const createBusinessPlanSchema = z.object({
   companyId: z.string().min(1),
@@ -72,7 +75,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ businessPlans });
   } catch (error) {
-    console.error("[API] Get business plans error:", error);
+    logger.error("Failed to fetch business plans", { error });
     return NextResponse.json(
       { error: "Failed to fetch business plans" },
       { status: 500 }
@@ -132,7 +135,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    console.error("[API] Create business plan error:", error);
+    logger.error("Failed to create business plan", { error });
     return NextResponse.json(
       { error: "Failed to create business plan" },
       { status: 500 }

@@ -10,6 +10,9 @@ import { checkCompanyPermission } from "@/lib/rebac";
 import { executeMatching, storeMatchingResults } from "@/lib/matching";
 import { sendMatchingResultNotification } from "@/lib/notifications";
 import { z } from "zod";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "matching" });
 
 const matchingSchema = z.object({
   companyId: z.string().min(1),
@@ -99,7 +102,7 @@ export async function POST(req: NextRequest) {
           session.user.id,
           results.length
         ).catch((error) => {
-          console.error("[API] Matching notification error:", error);
+          logger.error("Matching notification error", { error });
         });
       }
     }
@@ -127,7 +130,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    console.error("[API] Matching error:", error);
+    logger.error("Failed to execute matching", { error });
     return NextResponse.json(
       { error: "Failed to execute matching" },
       { status: 500 }

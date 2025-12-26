@@ -3,6 +3,9 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { grant } from "@/lib/rebac";
 import { z } from "zod";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "companies" });
 
 // Validation schema
 const createCompanySchema = z.object({
@@ -79,7 +82,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ companies: companiesWithRole });
   } catch (error) {
-    console.error("Error fetching companies:", error);
+    logger.error("Failed to fetch companies", { error });
     return NextResponse.json(
       { error: "기업 목록을 불러오는데 실패했습니다" },
       { status: 500 }
@@ -150,7 +153,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    console.error("Error creating company:", error);
+    logger.error("Failed to create company", { error });
     return NextResponse.json(
       { error: "기업 생성에 실패했습니다" },
       { status: 500 }

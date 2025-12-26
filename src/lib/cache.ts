@@ -4,6 +4,9 @@
  */
 
 import { Redis } from "@upstash/redis";
+import { createLogger } from "./logger";
+
+const logger = createLogger({ module: "cache" });
 
 // Initialize Redis client
 // Only create client if valid URLs are provided (not dummy values)
@@ -37,11 +40,11 @@ export async function getCached<T>(
     // Try to get from cache
     const cached = await redis.get<T>(key);
     if (cached !== null) {
-      console.log(`[Cache] HIT: ${key}`);
+      logger.debug("Cache HIT", { key });
       return cached;
     }
 
-    console.log(`[Cache] MISS: ${key}`);
+    logger.debug("Cache MISS", { key });
 
     // Fetch fresh data
     const data = await fetcher();
@@ -51,7 +54,7 @@ export async function getCached<T>(
 
     return data;
   } catch (error) {
-    console.error("[Cache] Error:", error);
+    logger.error("Cache error", { error, key });
     // Fallback to fetcher on cache error
     return fetcher();
   }
@@ -67,10 +70,10 @@ export async function invalidateCache(pattern: string): Promise<void> {
     const keys = await redis.keys(pattern);
     if (keys.length > 0) {
       await redis.del(...keys);
-      console.log(`[Cache] Invalidated ${keys.length} keys matching: ${pattern}`);
+      logger.info("Cache invalidated", { pattern, keysCount: keys.length });
     }
   } catch (error) {
-    console.error("[Cache] Invalidation error:", error);
+    logger.error("Cache invalidation error", { error, pattern });
   }
 }
 
@@ -119,7 +122,7 @@ export async function rateLimit(
       reset: now + window * 1000,
     };
   } catch (error) {
-    console.error("[RateLimit] Error:", error);
+    logger.error("RateLimit error", { error, identifier });
     // On error, allow request
     return { success: true, remaining: limit, reset: Date.now() + window * 1000 };
   }

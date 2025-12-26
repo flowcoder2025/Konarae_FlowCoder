@@ -3,6 +3,9 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { checkCompanyPermission } from "@/lib/rebac";
 import { z } from "zod";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "company-detail" });
 
 const updateCompanySchema = z.object({
   name: z.string().min(1).optional(),
@@ -106,7 +109,7 @@ export async function GET(
 
     return NextResponse.json(company);
   } catch (error) {
-    console.error("Error fetching company:", error);
+    logger.error("Failed to fetch company", { error });
     return NextResponse.json(
       { error: "기업 정보를 불러오는데 실패했습니다" },
       { status: 500 }
@@ -153,7 +156,7 @@ export async function PATCH(
       );
     }
 
-    console.error("Error updating company:", error);
+    logger.error("Failed to update company", { error });
     return NextResponse.json(
       { error: "기업 정보 수정에 실패했습니다" },
       { status: 500 }
@@ -193,7 +196,7 @@ export async function DELETE(
 
     return NextResponse.json({ message: "기업이 삭제되었습니다" });
   } catch (error) {
-    console.error("Error deleting company:", error);
+    logger.error("Failed to delete company", { error });
     return NextResponse.json(
       { error: "기업 삭제에 실패했습니다" },
       { status: 500 }

@@ -6,6 +6,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "project-detail" });
 
 export async function GET(
   req: NextRequest,
@@ -46,7 +49,7 @@ export async function GET(
 
     return NextResponse.json({ project });
   } catch (error) {
-    console.error("[API] Get project error:", error);
+    logger.error("Failed to fetch project", { error });
     return NextResponse.json(
       { error: "Failed to fetch project" },
       { status: 500 }
