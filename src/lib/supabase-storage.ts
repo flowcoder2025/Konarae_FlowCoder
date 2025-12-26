@@ -4,6 +4,9 @@
  */
 
 import { createClient } from "@supabase/supabase-js";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ lib: "supabase-storage" });
 
 // Supabase 클라이언트 초기화
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -53,7 +56,7 @@ export async function ensureBucketExists(
       await supabase.storage.listBuckets();
 
     if (listError) {
-      console.error("버킷 목록 조회 실패:", listError);
+      logger.error("버킷 목록 조회 실패", { error: listError });
       return false;
     }
 
@@ -78,16 +81,16 @@ export async function ensureBucketExists(
       );
 
       if (createError) {
-        console.error("버킷 생성 실패:", createError);
+        logger.error("버킷 생성 실패", { error: createError });
         return false;
       }
 
-      console.log(`✓ 버킷 생성됨: ${bucketName}`);
+      logger.info(`버킷 생성됨: ${bucketName}`);
     }
 
     return true;
   } catch (error) {
-    console.error("버킷 확인 중 오류:", error);
+    logger.error("버킷 확인 중 오류", { error });
     return false;
   }
 }
@@ -128,7 +131,7 @@ export async function uploadFile(
       });
 
     if (error) {
-      console.error("파일 업로드 실패:", error);
+      logger.error("파일 업로드 실패", { error });
       return { success: false, error: error.message };
     }
 
@@ -137,7 +140,7 @@ export async function uploadFile(
       data: { publicUrl },
     } = supabase.storage.from(BUCKETS.PROJECT_FILES).getPublicUrl(storagePath);
 
-    console.log(`✓ 파일 업로드 성공: ${storagePath}`);
+    logger.info(`파일 업로드 성공: ${storagePath}`);
 
     return {
       success: true,
@@ -145,7 +148,7 @@ export async function uploadFile(
       publicUrl,
     };
   } catch (error) {
-    console.error("파일 업로드 중 오류:", error);
+    logger.error("파일 업로드 중 오류", { error });
     return {
       success: false,
       error: error instanceof Error ? error.message : "Unknown error",
@@ -168,7 +171,7 @@ export async function getSignedUrl(
       .createSignedUrl(storagePath, expiresIn);
 
     if (error) {
-      console.error("서명된 URL 생성 실패:", error);
+      logger.error("서명된 URL 생성 실패", { error });
       return { success: false, error: error.message };
     }
 
@@ -177,7 +180,7 @@ export async function getSignedUrl(
       signedUrl: data.signedUrl,
     };
   } catch (error) {
-    console.error("서명된 URL 생성 중 오류:", error);
+    logger.error("서명된 URL 생성 중 오류", { error });
     return {
       success: false,
       error: error instanceof Error ? error.message : "Unknown error",
@@ -221,13 +224,13 @@ export async function deleteFile(storagePath: string): Promise<boolean> {
       .remove([storagePath]);
 
     if (error) {
-      console.error("파일 삭제 실패:", error);
+      logger.error("파일 삭제 실패", { error });
       return false;
     }
 
     return true;
   } catch (error) {
-    console.error("파일 삭제 중 오류:", error);
+    logger.error("파일 삭제 중 오류", { error });
     return false;
   }
 }
@@ -245,7 +248,7 @@ export async function deleteProjectFiles(projectId: string): Promise<boolean> {
       .list(folderPath);
 
     if (listError) {
-      console.error("파일 목록 조회 실패:", listError);
+      logger.error("파일 목록 조회 실패", { error: listError });
       return false;
     }
 
@@ -262,14 +265,14 @@ export async function deleteProjectFiles(projectId: string): Promise<boolean> {
       .remove(filePaths);
 
     if (deleteError) {
-      console.error("파일 삭제 실패:", deleteError);
+      logger.error("파일 삭제 실패", { error: deleteError });
       return false;
     }
 
-    console.log(`✓ 프로젝트 파일 삭제됨: ${projectId} (${filePaths.length}개)`);
+    logger.info(`프로젝트 파일 삭제됨: ${projectId} (${filePaths.length}개)`);
     return true;
   } catch (error) {
-    console.error("프로젝트 파일 삭제 중 오류:", error);
+    logger.error("프로젝트 파일 삭제 중 오류", { error });
     return false;
   }
 }
@@ -460,18 +463,18 @@ export async function uploadEvaluationFile(
       });
 
     if (error) {
-      console.error("평가 파일 업로드 실패:", error);
+      logger.error("평가 파일 업로드 실패", { error });
       return { success: false, error: error.message };
     }
 
-    console.log(`✓ 평가 파일 업로드 성공: ${storagePath}`);
+    logger.info(`평가 파일 업로드 성공: ${storagePath}`);
 
     return {
       success: true,
       storagePath: data.path,
     };
   } catch (error) {
-    console.error("평가 파일 업로드 중 오류:", error);
+    logger.error("평가 파일 업로드 중 오류", { error });
     return {
       success: false,
       error: error instanceof Error ? error.message : "Unknown error",
@@ -492,7 +495,7 @@ export async function getEvaluationFileSignedUrl(
       .createSignedUrl(storagePath, expiresIn);
 
     if (error) {
-      console.error("평가 파일 서명된 URL 생성 실패:", error);
+      logger.error("평가 파일 서명된 URL 생성 실패", { error });
       return { success: false, error: error.message };
     }
 
@@ -501,7 +504,7 @@ export async function getEvaluationFileSignedUrl(
       signedUrl: data.signedUrl,
     };
   } catch (error) {
-    console.error("평가 파일 서명된 URL 생성 중 오류:", error);
+    logger.error("평가 파일 서명된 URL 생성 중 오류", { error });
     return {
       success: false,
       error: error instanceof Error ? error.message : "Unknown error",

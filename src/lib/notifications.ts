@@ -5,6 +5,9 @@
 
 import { Resend } from "resend";
 import { prisma } from "./prisma";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ lib: "notifications" });
 
 // Initialize Resend
 const resend = process.env.RESEND_API_KEY
@@ -67,7 +70,7 @@ export async function sendNotification(
 
     await Promise.allSettled(promises);
   } catch (error) {
-    console.error("[Notification] Send notification error:", error);
+    logger.error("Send notification error", { error });
   }
 }
 
@@ -78,7 +81,7 @@ async function sendEmailNotification(
   payload: NotificationPayload
 ): Promise<void> {
   if (!resend) {
-    console.warn("[Notification] Resend not configured");
+    logger.warn("Resend not configured");
     return;
   }
 
@@ -89,7 +92,7 @@ async function sendEmailNotification(
     });
 
     if (!user?.email) {
-      console.warn("[Notification] User email not found");
+      logger.warn("User email not found");
       return;
     }
 
@@ -100,9 +103,9 @@ async function sendEmailNotification(
       html: buildEmailHtml(payload, user.name || "사용자"),
     });
 
-    console.log(`[Notification] Email sent to ${user.email}`);
+    logger.info(`Email sent to ${user.email}`);
   } catch (error) {
-    console.error("[Notification] Send email error:", error);
+    logger.error("Send email error", { error });
   }
 }
 
@@ -137,9 +140,9 @@ async function sendDiscordNotification(
       throw new Error(`Discord webhook failed: ${response.statusText}`);
     }
 
-    console.log("[Notification] Discord webhook sent");
+    logger.info("Discord webhook sent");
   } catch (error) {
-    console.error("[Notification] Send Discord error:", error);
+    logger.error("Send Discord error", { error });
   }
 }
 
@@ -195,9 +198,9 @@ async function sendSlackNotification(
       throw new Error(`Slack webhook failed: ${response.statusText}`);
     }
 
-    console.log("[Notification] Slack webhook sent");
+    logger.info("Slack webhook sent");
   } catch (error) {
-    console.error("[Notification] Send Slack error:", error);
+    logger.error("Send Slack error", { error });
   }
 }
 

@@ -6,6 +6,9 @@
 import { openai } from "@ai-sdk/openai";
 import { embed, embedMany } from "ai";
 import { prisma } from "@/lib/prisma";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ lib: "documents-embedding" });
 
 // cuid 생성 함수 (임베딩 ID용)
 function generateCuid(): string {
@@ -114,7 +117,7 @@ export async function generateEmbeddings(
       embeddings: results,
     };
   } catch (error) {
-    console.error("[generateEmbeddings] Error:", error);
+    logger.error("generateEmbeddings error", { error });
     return {
       success: false,
       error:
@@ -141,7 +144,7 @@ export async function generateSingleEmbedding(
 
     return embedding;
   } catch (error) {
-    console.error("[generateSingleEmbedding] Error:", error);
+    logger.error("generateSingleEmbedding error", { error });
     return null;
   }
 }
@@ -190,7 +193,7 @@ export async function saveDocumentEmbeddings(
 
     return { success: true };
   } catch (error) {
-    console.error("[saveDocumentEmbeddings] Error:", error);
+    logger.error("saveDocumentEmbeddings error", { error });
     return {
       success: false,
       error:
@@ -295,7 +298,7 @@ export async function searchSimilarDocuments(
       metadata: r.metadata,
     }));
   } catch (error) {
-    console.error("[searchSimilarDocuments] Error:", error);
+    logger.error("searchSimilarDocuments error", { error });
     return [];
   }
 }

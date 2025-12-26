@@ -2,6 +2,10 @@
  * Performance Monitoring Utilities (PRD Phase 8)
  */
 
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ lib: "performance" });
+
 /**
  * Measure API response time
  */
@@ -11,7 +15,7 @@ export function measurePerformance(name: string) {
   return {
     end: () => {
       const duration = Date.now() - start;
-      console.log(`[Performance] ${name}: ${duration}ms`);
+      logger.info(`${name}: ${duration}ms`);
       return duration;
     },
   };
@@ -22,7 +26,7 @@ export function measurePerformance(name: string) {
  */
 export function logSlowQuery(name: string, duration: number, threshold: number = 1000) {
   if (duration > threshold) {
-    console.warn(`[SlowQuery] ${name} took ${duration}ms (threshold: ${threshold}ms)`);
+    logger.warn(`SlowQuery: ${name} took ${duration}ms (threshold: ${threshold}ms)`);
   }
 }
 
@@ -71,7 +75,7 @@ export async function retryWithBackoff<T>(
       lastError = error as Error;
       if (i < maxRetries - 1) {
         const delay = baseDelay * Math.pow(2, i);
-        console.log(`[Retry] Attempt ${i + 1} failed, retrying in ${delay}ms...`);
+        logger.warn(`Retry attempt ${i + 1} failed, retrying in ${delay}ms...`);
         await new Promise((resolve) => setTimeout(resolve, delay));
       }
     }

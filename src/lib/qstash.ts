@@ -4,6 +4,9 @@
  */
 
 import { Client, Receiver } from "@upstash/qstash";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ lib: "qstash" });
 
 // Check if QStash is configured
 export const isQStashConfigured = Boolean(process.env.QSTASH_TOKEN);
@@ -38,7 +41,7 @@ export async function verifyQStashSignature(
 ): Promise<boolean> {
   if (!signature) return false;
   if (!qstashReceiver) {
-    console.warn("[QStash] Receiver not configured, skipping signature verification");
+    logger.warn("Receiver not configured, skipping signature verification");
     return false;
   }
 
@@ -49,7 +52,7 @@ export async function verifyQStashSignature(
     });
     return true;
   } catch (error) {
-    console.error("[QStash] Signature verification failed:", error);
+    logger.error("Signature verification failed", { error });
     return false;
   }
 }
@@ -66,7 +69,7 @@ export async function createSchedule(
   scheduleId?: string
 ) {
   if (!qstashClient) {
-    console.warn("[QStash] Client not configured, cannot create schedule");
+    logger.warn("Client not configured, cannot create schedule");
     return { success: false, error: "QStash not configured" };
   }
 
@@ -77,10 +80,10 @@ export async function createSchedule(
       ...(scheduleId && { scheduleId }),
     });
 
-    console.log(`[QStash] Schedule created: ${result.scheduleId}`);
+    logger.info(`Schedule created: ${result.scheduleId}`);
     return { success: true, scheduleId: result.scheduleId };
   } catch (error) {
-    console.error("[QStash] Failed to create schedule:", error);
+    logger.error("Failed to create schedule", { error });
     return { success: false, error };
   }
 }
@@ -90,16 +93,16 @@ export async function createSchedule(
  */
 export async function deleteSchedule(scheduleId: string) {
   if (!qstashClient) {
-    console.warn("[QStash] Client not configured, cannot delete schedule");
+    logger.warn("Client not configured, cannot delete schedule");
     return { success: false, error: "QStash not configured" };
   }
 
   try {
     await qstashClient.schedules.delete(scheduleId);
-    console.log(`[QStash] Schedule deleted: ${scheduleId}`);
+    logger.info(`Schedule deleted: ${scheduleId}`);
     return { success: true };
   } catch (error) {
-    console.error("[QStash] Failed to delete schedule:", error);
+    logger.error("Failed to delete schedule", { error });
     return { success: false, error };
   }
 }
@@ -117,7 +120,7 @@ export async function listSchedules() {
     const schedules = await qstashClient.schedules.list();
     return { success: true, schedules };
   } catch (error) {
-    console.error("[QStash] Failed to list schedules:", error);
+    logger.error("Failed to list schedules", { error });
     return { success: false, error };
   }
 }
@@ -127,7 +130,7 @@ export async function listSchedules() {
  */
 export async function getSchedule(scheduleId: string) {
   if (!qstashClient) {
-    console.warn("[QStash] Client not configured, cannot get schedule");
+    logger.warn("Client not configured, cannot get schedule");
     return { success: false, error: "QStash not configured" };
   }
 
@@ -135,7 +138,7 @@ export async function getSchedule(scheduleId: string) {
     const schedule = await qstashClient.schedules.get(scheduleId);
     return { success: true, schedule };
   } catch (error) {
-    console.error("[QStash] Failed to get schedule:", error);
+    logger.error("Failed to get schedule", { error });
     return { success: false, error };
   }
 }
@@ -159,13 +162,13 @@ export async function queueDocumentAnalysis(
   payload: DocumentAnalysisJobPayload
 ): Promise<{ success: boolean; messageId?: string; error?: string }> {
   if (!qstashClient) {
-    console.warn("[QStash] Client not configured, cannot queue document analysis");
+    logger.warn("Client not configured, cannot queue document analysis");
     return { success: false, error: "QStash not configured" };
   }
 
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.VERCEL_URL;
   if (!baseUrl) {
-    console.error("[QStash] No base URL configured");
+    logger.error("No base URL configured");
     return { success: false, error: "Base URL not configured" };
   }
 
@@ -177,10 +180,10 @@ export async function queueDocumentAnalysis(
       delay: "3s", // 3초 후 실행 (업로드 완료 보장)
     });
 
-    console.log(`[QStash] Document analysis queued: ${result.messageId}`);
+    logger.info(`Document analysis queued: ${result.messageId}`);
     return { success: true, messageId: result.messageId };
   } catch (error) {
-    console.error("[QStash] Failed to queue document analysis:", error);
+    logger.error("Failed to queue document analysis", { error });
     return {
       success: false,
       error: error instanceof Error ? error.message : "Queue failed",

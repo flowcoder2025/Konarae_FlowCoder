@@ -8,6 +8,9 @@ import { google } from "@ai-sdk/google";
 import { hybridSearch, storeDocumentEmbeddings, deleteEmbeddings } from "./rag";
 import { prisma } from "./prisma";
 import { formatDateKST } from "./utils";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ lib: "business-plan-generator" });
 
 // Token limits (PRD 12.6) - Reserved for future optimization
 const _CONTEXT_TOKEN_LIMIT = 8000;
@@ -53,7 +56,7 @@ async function extractFormStructure(projectId: string): Promise<FormSection[]> {
     );
 
     if (formAttachments.length === 0) {
-      console.log("[BusinessPlan] No form attachments found, using default sections");
+      logger.info("No form attachments found, using default sections");
       return [...DEFAULT_SECTIONS];
     }
 
@@ -101,22 +104,21 @@ JSON 배열만 출력 (설명 없이):
         jsonStr = arrayMatch[0];
       }
 
-      console.log(`[BusinessPlan] AI response for form extraction: ${jsonStr.slice(0, 200)}...`);
+      logger.info(`AI response for form extraction: ${jsonStr.slice(0, 200)}...`);
 
       const sections = JSON.parse(jsonStr) as FormSection[];
 
       if (Array.isArray(sections) && sections.length > 0) {
-        console.log(`[BusinessPlan] Extracted ${sections.length} sections from form`);
+        logger.info(`Extracted ${sections.length} sections from form`);
         return sections;
       }
     } catch (parseError) {
-      console.error("[BusinessPlan] Failed to parse AI response:", parseError);
-      console.error("[BusinessPlan] Raw response:", text.slice(0, 500));
+      logger.error("Failed to parse AI response", { error: parseError, rawResponse: text.slice(0, 500) });
     }
 
     return [...DEFAULT_SECTIONS];
   } catch (error) {
-    console.error("[BusinessPlan] Extract form structure error:", error);
+    logger.error("Extract form structure error", { error });
     return [...DEFAULT_SECTIONS];
   }
 }
@@ -178,7 +180,7 @@ export async function generateBusinessPlanSections(
 
     // Extract form structure from attachments (dynamic section detection)
     const formSections = await extractFormStructure(input.projectId);
-    console.log(`[BusinessPlan] Using ${formSections.length} sections: ${formSections.map(s => s.title).join(", ")}`);
+    logger.info(`Using ${formSections.length} sections: ${formSections.map(s => s.title).join(", ")}`);
 
     // Build context from RAG with evaluation criteria, reference plans, and attachments (PRD 12.6)
     const { context: ragContext, evaluationCriteria } = await buildRagContext({
@@ -239,7 +241,7 @@ export async function generateBusinessPlanSections(
 
     return sections;
   } catch (error) {
-    console.error("[BusinessPlan] Generate sections error:", error);
+    logger.error("Generate sections error", { error });
     throw new Error("Failed to generate business plan sections");
   }
 }
@@ -410,7 +412,7 @@ ${attachmentsContext ? `## 첨부 자료 분석 결과\n${attachmentsContext}` :
 
     return { context, evaluationCriteria };
   } catch (error) {
-    console.error("[BusinessPlan] Build RAG context error:", error);
+    logger.error("Build RAG context error", { error });
     return { context: "", evaluationCriteria: "" };
   }
 }
@@ -449,7 +451,7 @@ async function extractEvaluationCriteria(projectId: string): Promise<string> {
 
     return projectEvaluationResults || "";
   } catch (error) {
-    console.error("[BusinessPlan] Extract evaluation criteria error:", error);
+    logger.error("Extract evaluation criteria error", { error });
     return "";
   }
 }
@@ -541,10 +543,7 @@ ${params.ragContext}`;
 
     return text.trim();
   } catch (error) {
-    console.error(
-      `[BusinessPlan] Generate section "${params.sectionTitle}" error:`,
-      error
-    );
+    logger.error(`Generate section "${params.sectionTitle}" error`, { error });
     return `[AI 생성 실패] ${params.sectionTitle} 섹션을 생성할 수 없습니다. 수동으로 작성해주세요.`;
   }
 }
@@ -629,7 +628,7 @@ export async function regenerateSection(
 
     return content;
   } catch (error) {
-    console.error("[BusinessPlan] Regenerate section error:", error);
+    logger.error("Regenerate section error", { error });
     throw new Error("Failed to regenerate section");
   }
 }
@@ -676,11 +675,9 @@ export async function generateBusinessPlanEmbeddings(
       }
     );
 
-    console.log(
-      `[BusinessPlan] Generated embeddings for business plan: ${businessPlanId}`
-    );
+    logger.info(`Generated embeddings for business plan: ${businessPlanId}`);
   } catch (error) {
-    console.error("[BusinessPlan] Generate embeddings error:", error);
+    logger.error("Generate embeddings error", { error });
     throw new Error("Failed to generate business plan embeddings");
   }
 }

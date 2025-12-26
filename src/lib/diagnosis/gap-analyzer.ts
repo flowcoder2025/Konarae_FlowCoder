@@ -12,6 +12,9 @@ import {
   GapSeverity,
   RequirementCategory,
 } from "@/types/diagnosis"
+import { createLogger } from "@/lib/logger"
+
+const logger = createLogger({ lib: "diagnosis-gap-analyzer" })
 
 // ============================================
 // 프롬프트 템플릿
@@ -210,7 +213,7 @@ export async function analyzeGaps(
       actions: parsed.actions,
     }
   } catch (error) {
-    console.error("[analyzeGaps] Error:", error)
+    logger.error("analyzeGaps error", { error })
     return {
       success: false,
       fitScore: 0,
@@ -248,7 +251,7 @@ function parseGapAnalysisResponse(text: string): ParsedGapAnalysis | null {
     const endIdx = jsonText.lastIndexOf("}")
 
     if (startIdx === -1 || endIdx === -1) {
-      console.error("[parseGapAnalysisResponse] No JSON object found")
+      logger.error("parseGapAnalysisResponse: No JSON object found")
       return null
     }
 
@@ -288,8 +291,7 @@ function parseGapAnalysisResponse(text: string): ParsedGapAnalysis | null {
 
     return { fitScore, gaps, actions }
   } catch (error) {
-    console.error("[parseGapAnalysisResponse] Parse error:", error)
-    console.log("[parseGapAnalysisResponse] Raw text:", text)
+    logger.error("parseGapAnalysisResponse parse error", { error, rawText: text })
     return null
   }
 }

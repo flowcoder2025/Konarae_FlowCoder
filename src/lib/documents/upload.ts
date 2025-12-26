@@ -11,6 +11,9 @@ import {
   MAX_FILE_SIZE_BYTES,
   DocumentType,
 } from "./types";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ lib: "documents-upload" });
 
 // ============================================
 // 파일 검증
@@ -113,7 +116,7 @@ export async function uploadToStorage({
       });
 
     if (error) {
-      console.error("[uploadToStorage] Supabase error:", error);
+      logger.error("uploadToStorage Supabase error", { error });
       return {
         success: false,
         error: `파일 업로드 실패: ${error.message}`,
@@ -131,7 +134,7 @@ export async function uploadToStorage({
       fileUrl: publicUrl,
     };
   } catch (error) {
-    console.error("[uploadToStorage] Error:", error);
+    logger.error("uploadToStorage error", { error });
     return {
       success: false,
       error: "파일 업로드 중 오류가 발생했습니다.",
@@ -164,7 +167,7 @@ export async function createSignedUrl(
       .createSignedUrl(filePath, 3600); // 1시간
 
     if (error) {
-      console.error("[createSignedUrl] Supabase error:", error);
+      logger.error("createSignedUrl Supabase error", { error });
       return {
         success: false,
         error: `Signed URL 생성 실패: ${error.message}`,
@@ -176,7 +179,7 @@ export async function createSignedUrl(
       signedUrl: data.signedUrl,
     };
   } catch (error) {
-    console.error("[createSignedUrl] Error:", error);
+    logger.error("createSignedUrl error", { error });
     return {
       success: false,
       error: "Signed URL 생성 중 오류가 발생했습니다.",
@@ -207,7 +210,7 @@ export async function deleteFromStorage(
       .remove([filePath]);
 
     if (error) {
-      console.error("[deleteFromStorage] Supabase error:", error);
+      logger.error("deleteFromStorage Supabase error", { error });
       return {
         success: false,
         error: `파일 삭제 실패: ${error.message}`,
@@ -216,7 +219,7 @@ export async function deleteFromStorage(
 
     return { success: true };
   } catch (error) {
-    console.error("[deleteFromStorage] Error:", error);
+    logger.error("deleteFromStorage error", { error });
     return {
       success: false,
       error: "파일 삭제 중 오류가 발생했습니다.",
@@ -261,7 +264,7 @@ export async function getStorageFileAsBase64(
       .download(filePath);
 
     if (error || !data) {
-      console.error("[getStorageFileAsBase64] Download error:", error);
+      logger.error("getStorageFileAsBase64 download error", { error });
       return null;
     }
 
@@ -272,7 +275,7 @@ export async function getStorageFileAsBase64(
 
     return base64Data;
   } catch (error) {
-    console.error("[getStorageFileAsBase64] Error:", error);
+    logger.error("getStorageFileAsBase64 error", { error });
     return null;
   }
 }

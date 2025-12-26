@@ -6,6 +6,9 @@
 import { google } from "@ai-sdk/google"
 import { generateText } from "ai"
 import { ExtractedRequirement } from "@/types/diagnosis"
+import { createLogger } from "@/lib/logger"
+
+const logger = createLogger({ lib: "diagnosis-requirements" })
 
 // ============================================
 // 프롬프트 템플릿
@@ -129,7 +132,7 @@ export async function extractRequirements(
       requirements,
     }
   } catch (error) {
-    console.error("[extractRequirements] Error:", error)
+    logger.error("extractRequirements error", { error })
     return {
       success: false,
       requirements: [],
@@ -163,7 +166,7 @@ function parseRequirementsResponse(text: string): ParsedRequirements | null {
     const endIdx = jsonText.lastIndexOf("}")
 
     if (startIdx === -1 || endIdx === -1) {
-      console.error("[parseRequirementsResponse] No JSON object found")
+      logger.error("parseRequirementsResponse: No JSON object found")
       return null
     }
 
@@ -172,7 +175,7 @@ function parseRequirementsResponse(text: string): ParsedRequirements | null {
     const parsed = JSON.parse(jsonText)
 
     if (!parsed.requirements || !Array.isArray(parsed.requirements)) {
-      console.error("[parseRequirementsResponse] Missing requirements array")
+      logger.error("parseRequirementsResponse: Missing requirements array")
       return null
     }
 
@@ -189,8 +192,7 @@ function parseRequirementsResponse(text: string): ParsedRequirements | null {
 
     return { requirements: validatedRequirements }
   } catch (error) {
-    console.error("[parseRequirementsResponse] Parse error:", error)
-    console.log("[parseRequirementsResponse] Raw text:", text)
+    logger.error("parseRequirementsResponse parse error", { error, rawText: text })
     return null
   }
 }

@@ -10,6 +10,9 @@ import { embed } from "ai";
 import { openai } from "@ai-sdk/openai";
 import { prisma } from "./prisma";
 import { Prisma } from "@prisma/client";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ lib: "rag" });
 
 // Configuration (PRD 12.3)
 const CHUNK_SIZE = 512; // tokens
@@ -56,7 +59,7 @@ export async function generateEmbedding(text: string): Promise<number[]> {
 
     return embedding;
   } catch (error) {
-    console.error("[RAG] Embedding generation error:", error);
+    logger.error("Embedding generation error", { error });
     throw new Error("Failed to generate embedding");
   }
 }
@@ -157,11 +160,9 @@ export async function storeDocumentEmbeddings(
       `;
     }
 
-    console.log(
-      `[RAG] Stored ${chunks.length} embeddings for ${sourceType}:${sourceId}`
-    );
+    logger.info(`Stored ${chunks.length} embeddings for ${sourceType}:${sourceId}`);
   } catch (error) {
-    console.error("[RAG] Store embeddings error:", error);
+    logger.error("Store embeddings error", { error });
     throw new Error("Failed to store embeddings");
   }
 }
@@ -208,7 +209,7 @@ export async function hybridSearch(
       combinedScore: parseFloat(row.combined_score),
     }));
   } catch (error) {
-    console.error("[RAG] Hybrid search error:", error);
+    logger.error("Hybrid search error", { error });
     throw new Error("Failed to perform hybrid search");
   }
 }
@@ -229,9 +230,9 @@ export async function deleteEmbeddings(
       },
     });
 
-    console.log(`[RAG] Deleted ${result.count} embeddings for ${sourceType}:${sourceId}`);
+    logger.info(`Deleted ${result.count} embeddings for ${sourceType}:${sourceId}`);
   } catch (error) {
-    console.error("[RAG] Delete embeddings error:", error);
+    logger.error("Delete embeddings error", { error });
     throw new Error("Failed to delete embeddings");
   }
 }
@@ -252,7 +253,7 @@ export async function getEmbeddingCount(
       },
     });
   } catch (error) {
-    console.error("[RAG] Get count error:", error);
+    logger.error("Get count error", { error });
     return 0;
   }
 }
@@ -289,7 +290,7 @@ export async function getEmbeddingsForSource(
       },
     });
   } catch (error) {
-    console.error("[RAG] Get embeddings error:", error);
+    logger.error("Get embeddings error", { error });
     return [];
   }
 }

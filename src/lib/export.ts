@@ -11,6 +11,9 @@ import fontkit from "@pdf-lib/fontkit";
 import { formatDateKST } from "@/lib/utils";
 import { readFile } from "fs/promises";
 import { join } from "path";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ lib: "export" });
 
 // 로컬 폰트 파일 경로 (public/fonts에 포함) - TTF 형식 사용
 const LOCAL_FONT_PATH = join(process.cwd(), "public", "fonts", "NotoSansKR-Regular.ttf");
@@ -64,10 +67,10 @@ async function loadKoreanFont(): Promise<Uint8Array | null> {
       uint8Array[i] = buffer[i];
     }
     cachedFontBytes = uint8Array.buffer as ArrayBuffer;
-    console.log("[Export] Korean font loaded from local file, size:", buffer.length);
+    logger.info(`Korean font loaded from local file, size: ${buffer.length}`);
     return uint8Array;
   } catch (localError) {
-    console.warn("[Export] Local font not found, trying CDN...", localError);
+    logger.warn("Local font not found, trying CDN", { error: localError });
   }
 
   // 2. CDN 폴백
@@ -77,10 +80,10 @@ async function loadKoreanFont(): Promise<Uint8Array | null> {
       throw new Error(`CDN response: ${response.status}`);
     }
     cachedFontBytes = await response.arrayBuffer();
-    console.log("[Export] Korean font loaded from CDN, size:", cachedFontBytes.byteLength);
+    logger.info(`Korean font loaded from CDN, size: ${cachedFontBytes.byteLength}`);
     return new Uint8Array(cachedFontBytes);
   } catch (cdnError) {
-    console.error("[Export] Failed to load Korean font from all sources:", cdnError);
+    logger.error("Failed to load Korean font from all sources", { error: cdnError });
     return null;
   }
 }
@@ -136,7 +139,7 @@ export async function exportToPDF(
     const koreanFontBytes = await loadKoreanFont();
 
     if (!koreanFontBytes) {
-      console.error("[Export] Korean font not available");
+      logger.error("Korean font not available");
       return {
         success: false,
         error: "PDF 생성에 필요한 한글 폰트를 로드할 수 없습니다. DOCX 형식을 사용해주세요.",
@@ -147,7 +150,7 @@ export async function exportToPDF(
     try {
       font = await pdfDoc.embedFont(koreanFontBytes);
     } catch (fontError) {
-      console.error("[Export] Korean font embedding failed:", fontError);
+      logger.error("Korean font embedding failed", { error: fontError });
       return {
         success: false,
         error: "한글 폰트 임베딩에 실패했습니다. DOCX 형식을 사용해주세요.",
@@ -295,7 +298,7 @@ export async function exportToPDF(
       filename,
     };
   } catch (error) {
-    console.error("[Export] PDF export error:", error);
+    logger.error("PDF export error", { error });
     return {
       success: false,
       error: error instanceof Error ? error.message : "PDF export failed",
@@ -419,7 +422,7 @@ export async function exportToDOCX(
       filename,
     };
   } catch (error) {
-    console.error("[Export] DOCX export error:", error);
+    logger.error("DOCX export error", { error });
     return {
       success: false,
       error: error instanceof Error ? error.message : "DOCX export failed",
@@ -452,7 +455,7 @@ export async function exportToHWP(
         "HWP 직접 내보내기는 지원되지 않습니다. DOCX 파일을 한글(HWP)에서 열어 저장해주세요.",
     };
   } catch (error) {
-    console.error("[Export] HWP export error:", error);
+    logger.error("HWP export error", { error });
     return {
       success: false,
       error: error instanceof Error ? error.message : "HWP export failed",

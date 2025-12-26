@@ -7,6 +7,9 @@ import { generateText } from "ai";
 import { google } from "@ai-sdk/google";
 import { prisma } from "./prisma";
 import { hybridSearch } from "./rag";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ lib: "evaluation-engine" });
 
 export interface EvaluationInput {
   businessPlanId?: string;
@@ -114,7 +117,7 @@ export async function evaluateBusinessPlan(
       feedbacks,
     };
   } catch (error) {
-    console.error("[Evaluation] Evaluate business plan error:", error);
+    logger.error("Evaluate business plan error", { error });
     throw new Error("Failed to evaluate business plan");
   }
 }
@@ -159,7 +162,7 @@ async function buildEvaluationContext(
 
     return context || "추가 컨텍스트 없음";
   } catch (error) {
-    console.error("[Evaluation] Build RAG context error:", error);
+    logger.error("Build RAG context error", { error });
     return "";
   }
 }
@@ -233,10 +236,7 @@ IMPORTANT: 반드시 유효한 JSON 형식으로만 응답하세요. 다른 텍�
         : [],
     };
   } catch (error) {
-    console.error(
-      `[Evaluation] Evaluate criterion "${params.criterion}" error:`,
-      error
-    );
+    logger.error(`Evaluate criterion "${params.criterion}" error`, { error });
 
     // Fallback response
     return {

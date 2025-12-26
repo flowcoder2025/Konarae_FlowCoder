@@ -6,6 +6,9 @@
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
 import { Prisma } from "@prisma/client";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ lib: "api-error" });
 
 export class APIError extends Error {
   constructor(
@@ -40,7 +43,7 @@ export function handleAPIError(
 ): NextResponse<ErrorResponse> {
   // Log error in development
   if (process.env.NODE_ENV === "development") {
-    console.error("[API Error]", error);
+    logger.error("API Error", { error });
   }
 
   // Validation errors (Zod)

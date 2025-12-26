@@ -17,6 +17,9 @@ import {
   type FileType,
 } from "@/lib/supabase-storage";
 import { validateProject } from "@/lib/crawler/validators";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ lib: "crawler-worker" });
 
 /**
  * HTTP Agents with Keep-Alive for connection reuse
@@ -82,7 +85,7 @@ async function fetchWithRetry<T>(
 
       if (attempt < retries - 1 && shouldRetry(error)) {
         const delay = Math.min(initialDelayMs * Math.pow(2, attempt), maxDelayMs);
-        console.log(`    ⚠ Attempt ${attempt + 1} failed (${error.code || error.message}), retrying in ${delay}ms...`);
+        logger.warn(`Attempt ${attempt + 1} failed, retrying in ${delay}ms`, { errorCode: error.code || error.message, delay });
         await sleep(delay);
       }
     }
@@ -119,29 +122,27 @@ export async function processCrawlJob(jobId: string) {
     });
 
     // Actual crawling and parsing
-    console.log(`Starting crawl: ${job.source.url} (${job.source.type})`);
+    logger.info(`Starting crawl: ${job.source.url} (${job.source.type})`);
     const crawledProjects = await crawlAndParse(
       job.source.url,
       job.source.type
     );
 
-    console.log(`Found ${crawledProjects.length} projects`);
+    logger.info(`Found ${crawledProjects.length} projects`);
 
     // Test mode: Limit to sample projects if TEST_MAX_PROJECTS is set
     const maxProjects = process.env.TEST_MAX_PROJECTS ? parseInt(process.env.TEST_MAX_PROJECTS, 10) : undefined;
     const projectsToProcess = maxProjects ? crawledProjects.slice(0, maxProjects) : crawledProjects;
 
     if (maxProjects && crawledProjects.length > maxProjects) {
-      console.log(`\n⚠️  TEST MODE: Processing only first ${maxProjects} projects (total: ${crawledProjects.length})`);
+      logger.warn(`TEST MODE: Processing only first ${maxProjects} projects (total: ${crawledProjects.length})`);
     }
 
     // Save projects to database (includes file processing)
-    console.log(`\n=== Step 3+4: Saving projects and processing files ===`);
+    logger.info("Step 3+4: Saving projects and processing files");
     const { newCount, updatedCount, filesProcessed } = await saveProjects(projectsToProcess);
 
-    console.log(`\n=== Crawl Summary ===`);
-    console.log(`Projects: ${newCount} new, ${updatedCount} updated`);
-    console.log(`Files processed: ${filesProcessed}`);
+    logger.info("Crawl Summary", { newCount, updatedCount, filesProcessed });
 
     // Update job status to completed
     await prisma.crawlJob.update({
@@ -168,10 +169,10 @@ export async function processCrawlJob(jobId: string) {
       filesProcessed,
     };
 
-    console.log(`Crawl job ${jobId} completed successfully`, stats);
+    logger.info(`Crawl job ${jobId} completed successfully`, stats);
     return stats;
   } catch (error) {
-    console.error(`Crawl job ${jobId} failed:`, error);
+    logger.error(`Crawl job ${jobId} failed`, { error });
 
     // Update job status to failed
     await prisma.crawlJob.update({
@@ -262,7 +263,7 @@ function extractFileUrls(
   //   <a href="/afile/fileDownload/gT8Ln" class="btn_down">
   // </div>
   if (isKStartup) {
-    console.log(`    → Using K-Startup file extractor`);
+    logger.debug("Using K-Startup file extractor");
 
     // Method 1: Find .btn_down links (download buttons)
     $('a.btn_down').each((_, element) => {
@@ -289,7 +290,7 @@ function extractFileUrls(
     });
 
     if (fileUrls.length > 0) {
-      console.log(`    → Found ${fileUrls.length} K-Startup file(s)`);
+      logger.debug(`Found ${fileUrls.length} K-Startup file(s)`);
       return fileUrls;
     }
   }
@@ -301,7 +302,7 @@ function extractFileUrls(
   //   <li><a href="/?module=file&act=procFileDownload&file_srl=...">파일명.pdf</a></li>
   // </ul>
   if (isTechnopark) {
-    console.log(`    → Using Technopark file extractor`);
+    logger.debug("Using Technopark file extractor");
 
     // Extract base URL from detailUrl
     const baseUrl = detailUrl ? new URL(detailUrl).origin : 'https://www.technopark.kr';
@@ -321,7 +322,7 @@ function extractFileUrls(
     });
 
     if (fileUrls.length > 0) {
-      console.log(`    → Found ${fileUrls.length} Technopark file(s)`);
+      logger.debug(`Found ${fileUrls.length} Technopark file(s)`);
       return fileUrls;
     }
   }
@@ -402,7 +403,7 @@ async function fetchDetailPage(
     const axios = (await import("axios")).default;
     const { load } = await import("cheerio");
 
-    console.log(`  → Fetching detail page: ${detailUrl}`);
+    logger.debug(`Fetching detail page: ${detailUrl}`);
 
     const response = await fetchWithRetry(
       () => axios.get(detailUrl, {
@@ -430,7 +431,7 @@ async function fetchDetailPage(
       // Convert Set-Cookie array to Cookie header format
       // Example: ['PHPSESSID=xxx; path=/; HttpOnly', 'other=yyy'] → 'PHPSESSID=xxx; other=yyy'
       cookies = setCookieHeader.map(cookie => cookie.split(';')[0]).join('; ');
-      console.log(`  → Saved session cookies for file download`);
+      logger.debug("Saved session cookies for file download");
     }
 
     // Convert relative URLs to absolute
@@ -447,10 +448,10 @@ async function fetchDetailPage(
       }
     });
 
-    console.log(`  → Found ${absoluteUrls.length} file(s)`);
+    logger.debug(`Found ${absoluteUrls.length} file(s)`);
     return { fileUrls: absoluteUrls, cookies };
   } catch (error: any) {
-    console.error(`  ✗ Failed to fetch detail page ${detailUrl}: ${error.code || error.message}`);
+    logger.error(`Failed to fetch detail page ${detailUrl}`, { errorCode: error.code || error.message });
     return { fileUrls: [], cookies: undefined };
   }
 }
@@ -525,7 +526,7 @@ async function repairCorruptedFileName(fileName: string): Promise<string> {
     const latin1Bytes = Buffer.from(step1, "latin1");
     const final = latin1Bytes.toString("utf-8");
     if (hasValidKorean(final) && !isCorruptedFileName(final)) {
-      console.log(`    ✓ Repaired filename (Double CP949): "${fileName}" → "${final}"`);
+      logger.debug(`Repaired filename (Double CP949): "${fileName}" → "${final}"`);
       return final;
     }
   } catch {
@@ -573,7 +574,7 @@ async function repairCorruptedFileName(fileName: string): Promise<string> {
     const latin1Bytes = Buffer.from(step1, "latin1");
     const final = latin1Bytes.toString("utf-8");
     if (hasValidKorean(final) && !isCorruptedFileName(final)) {
-      console.log(`    ✓ Repaired filename (Double EUC-KR): "${fileName}" → "${final}"`);
+      logger.debug(`Repaired filename (Double EUC-KR): "${fileName}" → "${final}"`);
       return final;
     }
   } catch {
@@ -640,7 +641,7 @@ async function repairCorruptedFileName(fileName: string): Promise<string> {
     const cp949Bytes = iconv.encode(fileName, 'cp949');
     const utf8Decoded = cp949Bytes.toString('utf-8');
     if (hasValidKorean(utf8Decoded) && !isCorruptedFileName(utf8Decoded)) {
-      console.log(`    ✓ Repaired filename (CP949→UTF-8): "${fileName}" → "${utf8Decoded}"`);
+      logger.debug(`Repaired filename (CP949→UTF-8): "${fileName}" → "${utf8Decoded}"`);
       return utf8Decoded;
     }
   } catch {
@@ -652,7 +653,7 @@ async function repairCorruptedFileName(fileName: string): Promise<string> {
     const eucKrBytes = iconv.encode(fileName, 'euc-kr');
     const utf8Decoded = eucKrBytes.toString('utf-8');
     if (hasValidKorean(utf8Decoded) && !isCorruptedFileName(utf8Decoded)) {
-      console.log(`    ✓ Repaired filename (EUC-KR→UTF-8): "${fileName}" → "${utf8Decoded}"`);
+      logger.debug(`Repaired filename (EUC-KR→UTF-8): "${fileName}" → "${utf8Decoded}"`);
       return utf8Decoded;
     }
   } catch {
@@ -783,7 +784,7 @@ async function downloadFile(url: string, cookies?: string): Promise<DownloadResu
   try {
     const axios = (await import("axios")).default;
 
-    console.log(`    → Downloading file...`);
+    logger.debug("Downloading file...");
 
     const response = await fetchWithRetry(
       () => axios.get(url, {
@@ -811,22 +812,21 @@ async function downloadFile(url: string, cookies?: string): Promise<DownloadResu
     const fileName = await extractFileNameFromHeader(contentDisposition);
 
     if (fileName) {
-      console.log(`    ✓ Downloaded ${sizeInMB}MB - "${fileName}"`);
+      logger.debug(`Downloaded ${sizeInMB}MB - "${fileName}"`);
     } else {
-      console.log(`    ✓ Downloaded ${sizeInMB}MB`);
+      logger.debug(`Downloaded ${sizeInMB}MB`);
     }
 
     // Debug: Check first 100 bytes to verify file type
     const preview = buffer.slice(0, 100).toString('utf8', 0, 100);
     if (preview.includes('<!DOCTYPE') || preview.includes('<html')) {
-      console.error(`    ✗ Downloaded HTML instead of file!`);
-      console.error(`    Preview: ${preview.substring(0, 200)}`);
+      logger.error("Downloaded HTML instead of file!", { preview: preview.substring(0, 200) });
       return null;
     }
 
     return { buffer, fileName };
   } catch (error: any) {
-    console.error(`    ✗ Download failed:`, error.message);
+    logger.error("Download failed", { error: error.message });
     return null;
   }
 }
@@ -884,11 +884,11 @@ async function parseHwpLocal(buffer: Buffer): Promise<string | null> {
 
     const fullText = textParts.join('\n\n');
     if (fullText.length > 0) {
-      console.log(`    ✓ Local HWP parser extracted ${fullText.length} characters`);
+      logger.debug(`Local HWP parser extracted ${fullText.length} characters`);
       return fullText;
     }
   } catch (error: any) {
-    console.log(`    ⚠ hwp.js failed: ${error.message}`);
+    logger.warn(`hwp.js failed: ${error.message}`);
   }
 
   return null;
@@ -954,11 +954,11 @@ async function parseHwpxLocal(buffer: Buffer): Promise<string | null> {
     const fullText = textParts.join('\n\n');
 
     if (fullText.length > 0) {
-      console.log(`    ✓ Local HWPX parser extracted ${fullText.length} characters`);
+      logger.debug(`Local HWPX parser extracted ${fullText.length} characters`);
       return fullText;
     }
   } catch (error: any) {
-    console.log(`    ⚠ HWPX local parser failed: ${error.message}`);
+    logger.warn(`HWPX local parser failed: ${error.message}`);
   }
 
   return null;
@@ -975,31 +975,30 @@ async function extractFileText(buffer: Buffer): Promise<string | null> {
     const fileType = detectFileType(buffer);
 
     if (fileType === 'unknown') {
-      console.log(`    ✗ Unknown file format`);
+      logger.warn("Unknown file format");
       return null;
     }
 
-    console.log(`    → Detected file type: ${fileType.toUpperCase()}`);
+    logger.debug(`Detected file type: ${fileType.toUpperCase()}`);
 
     // Try text_parser service first
-    console.log(`    → Trying text_parser ${fileType.toUpperCase()} parser...`);
+    logger.debug(`Trying text_parser ${fileType.toUpperCase()} parser...`);
     try {
       const { parseDocument } = await import("@/lib/document-parser");
       const result = await parseDocument(buffer, fileType, 'text');
 
       if (result.success && result.text.length > 0) {
         const textLength = result.text.length;
-        console.log(`    ✓ text_parser extracted ${textLength} characters`);
+        logger.debug(`text_parser extracted ${textLength} characters`);
 
         // Limit text to first 10,000 characters for API efficiency
         const limitedText = result.text.substring(0, 10000);
         return limitedText;
       } else {
-        console.log(`    ⚠ text_parser returned no text, trying local fallback...`);
+        logger.warn("text_parser returned no text, trying local fallback...");
       }
     } catch (parserError: any) {
-      console.log(`    ⚠ text_parser failed: ${parserError.message}`);
-      console.log(`    → Falling back to local parsing...`);
+      logger.warn(`text_parser failed: ${parserError.message}, falling back to local parsing...`);
     }
 
     // Fallback to local parsing
@@ -1011,7 +1010,7 @@ async function extractFileText(buffer: Buffer): Promise<string | null> {
       extractedText = await parseHwpxLocal(buffer);
     } else if (fileType === 'pdf') {
       // Keep PDF parsing as-is or add local fallback later
-      console.log(`    ⚠ PDF local parsing not implemented yet`);
+      logger.warn("PDF local parsing not implemented yet");
       return null;
     }
 
@@ -1021,11 +1020,11 @@ async function extractFileText(buffer: Buffer): Promise<string | null> {
       return limitedText;
     }
 
-    console.log(`    ✗ All parsing methods failed`);
+    logger.warn("All parsing methods failed");
     return null;
 
   } catch (error: any) {
-    console.error(`    ✗ File extraction failed:`, error.message);
+    logger.error("File extraction failed", { error: error.message });
     return null;
   }
 }
@@ -1048,14 +1047,14 @@ async function analyzeWithGemini(text: string): Promise<{
   try {
     // Check if API key is available
     if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
-      console.log(`    ⚠ Gemini API key not configured, skipping AI analysis`);
+      logger.warn("Gemini API key not configured, skipping AI analysis");
       return null;
     }
 
     const { google } = await import("@ai-sdk/google");
     const { generateText } = await import("ai");
 
-    console.log(`    → Analyzing with Gemini AI...`);
+    logger.debug("Analyzing with Gemini AI...");
 
     const model = google("gemini-3-flash-preview");
 
@@ -1100,16 +1099,16 @@ ${text}`;
     // Try to parse JSON response
     const jsonMatch = result.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
-      console.log(`    ✗ Failed to extract JSON from response`);
+      logger.warn("Failed to extract JSON from response");
       return null;
     }
 
     const parsed = JSON.parse(jsonMatch[0]);
-    console.log(`    ✓ AI analysis complete`);
+    logger.debug("AI analysis complete");
 
     return parsed;
   } catch (error: any) {
-    console.error(`    ✗ Gemini analysis failed:`, error.message);
+    logger.error("Gemini analysis failed", { error: error.message });
     return null;
   }
 }
@@ -1191,7 +1190,7 @@ async function processProjectFiles(
   // 파싱 우선순위로 정렬 (공고 > 신청서 > 일반)
   const sortedFiles = sortByParsingPriority(fileInfos);
 
-  console.log(`  → Processing ${sortedFiles.length} file(s)`);
+  logger.debug(`Processing ${sortedFiles.length} file(s)`);
   let firstParsedText: string | null = null;
 
   for (let i = 0; i < sortedFiles.length; i++) {
@@ -1201,15 +1200,15 @@ async function processProjectFiles(
     const needsDownloadToCheck = fileType === 'unknown' || urlFileName.includes('getImageFile');
     const preliminaryShouldParse = shouldParseFile(urlFileName);
 
-    console.log(`  [${i + 1}/${sortedFiles.length}] ${urlFileName}`);
+    logger.debug(`[${i + 1}/${sortedFiles.length}] ${urlFileName}`);
 
     // URL에서 타입을 알 수 없으면 일단 다운로드해서 확인
     if (needsDownloadToCheck) {
-      console.log(`    → Type unknown, downloading to check...`);
+      logger.debug("Type unknown, downloading to check...");
 
       const downloadResult = await downloadFile(url, cookies);
       if (!downloadResult) {
-        console.log(`    ✗ Download failed, recording URL only`);
+        logger.warn("Download failed, recording URL only");
         attachments.push({
           fileName: urlFileName,
           fileType: 'unknown' as FileType,
@@ -1230,8 +1229,7 @@ async function processProjectFiles(
       // 실제 파일명으로 파싱 대상 재판단
       const actualShouldParse = shouldParseFile(finalFileName);
 
-      console.log(`    → Actual filename: "${finalFileName}"`);
-      console.log(`    → Detected type: ${detectedType}, Storage: ${actualShouldParse ? 'YES (핵심문서)' : 'NO (URL만 저장)'}`);
+      logger.debug(`Actual filename: "${finalFileName}", type: ${detectedType}, storage: ${actualShouldParse ? 'YES' : 'NO'}`);
 
       if (!actualShouldParse) {
         // 핵심 문서가 아님 - URL만 저장
@@ -1244,7 +1242,7 @@ async function processProjectFiles(
           shouldParse: false,
           isParsed: false,
         });
-        console.log(`    ✓ URL recorded (not a key document)`);
+        logger.debug("URL recorded (not a key document)");
         continue;
       }
 
@@ -1257,7 +1255,7 @@ async function processProjectFiles(
       );
 
       if (!uploadResult.success || !uploadResult.storagePath) {
-        console.log(`    ✗ Upload failed: ${uploadResult.error}`);
+        logger.error(`Upload failed: ${uploadResult.error}`);
         attachments.push({
           fileName: finalFileName,
           fileType: detectedType as FileType,
@@ -1271,7 +1269,7 @@ async function processProjectFiles(
         continue;
       }
 
-      console.log(`    ✓ Stored: ${uploadResult.storagePath}`);
+      logger.debug(`Stored: ${uploadResult.storagePath}`);
 
       // 텍스트 추출
       let parsedContent: string | undefined;
@@ -1283,15 +1281,15 @@ async function processProjectFiles(
         if (text && text.length > 0) {
           parsedContent = text;
           isParsed = true;
-          console.log(`    ✓ Parsed ${text.length} characters`);
+          logger.debug(`Parsed ${text.length} characters`);
           if (!firstParsedText) firstParsedText = text;
         } else {
           parseError = 'No text extracted';
-          console.log(`    ⚠ No text extracted`);
+          logger.warn("No text extracted");
         }
       } catch (error) {
         parseError = error instanceof Error ? error.message : 'Unknown parsing error';
-        console.log(`    ✗ Parse error: ${parseError}`);
+        logger.error(`Parse error: ${parseError}`);
       }
 
       attachments.push({
@@ -1309,7 +1307,7 @@ async function processProjectFiles(
     }
 
     // URL에서 파일 타입을 알 수 있는 경우 - 기존 로직
-    console.log(`    → Type: ${fileType}, Storage: ${preliminaryShouldParse ? 'YES (핵심문서)' : 'NO (URL만 저장)'}`);
+    logger.debug(`Type: ${fileType}, Storage: ${preliminaryShouldParse ? 'YES' : 'NO'}`);
 
     // ===== 비파싱 대상: URL만 저장 (Storage에 저장하지 않음) =====
     if (!preliminaryShouldParse) {
@@ -1322,7 +1320,7 @@ async function processProjectFiles(
         shouldParse: false,
         isParsed: false,
       });
-      console.log(`    ✓ URL recorded (no download)`);
+      logger.debug("URL recorded (no download)");
       continue;
     }
 
@@ -1331,7 +1329,7 @@ async function processProjectFiles(
     // Step 1: 파일 다운로드 + Content-Disposition 파일명 추출
     const downloadResult = await downloadFile(url, cookies);
     if (!downloadResult) {
-      console.log(`    ✗ Download failed, recording URL only`);
+      logger.warn("Download failed, recording URL only");
       // 다운로드 실패해도 URL은 기록
       attachments.push({
         fileName: urlFileName,
@@ -1363,7 +1361,7 @@ async function processProjectFiles(
     );
 
     if (!uploadResult.success || !uploadResult.storagePath) {
-      console.log(`    ✗ Upload failed: ${uploadResult.error}`);
+      logger.error(`Upload failed: ${uploadResult.error}`);
       // 업로드 실패해도 URL은 기록
       attachments.push({
         fileName: finalFileName,
@@ -1378,8 +1376,7 @@ async function processProjectFiles(
       continue;
     }
 
-    console.log(`    ✓ Stored: ${uploadResult.storagePath}`);
-    console.log(`    ✓ Filename: "${finalFileName}"`);
+    logger.debug(`Stored: ${uploadResult.storagePath}, filename: "${finalFileName}"`);
 
     // Step 4: 텍스트 추출
     let parsedContent: string | undefined;
@@ -1391,7 +1388,7 @@ async function processProjectFiles(
       if (text && text.length > 0) {
         parsedContent = text;
         isParsed = true;
-        console.log(`    ✓ Parsed ${text.length} characters`);
+        logger.debug(`Parsed ${text.length} characters`);
 
         // 첫 번째 파싱된 텍스트를 AI 분석에 사용
         if (!firstParsedText) {
@@ -1399,11 +1396,11 @@ async function processProjectFiles(
         }
       } else {
         parseError = 'No text extracted';
-        console.log(`    ⚠ No text extracted`);
+        logger.warn("No text extracted");
       }
     } catch (error) {
       parseError = error instanceof Error ? error.message : 'Unknown parsing error';
-      console.log(`    ✗ Parse error: ${parseError}`);
+      logger.error(`Parse error: ${parseError}`);
     }
 
     // 첨부파일 정보 저장 (Storage에 저장됨)
@@ -1422,7 +1419,7 @@ async function processProjectFiles(
 
   // Step 5: 첫 번째 파싱된 파일로 AI 분석
   if (firstParsedText) {
-    console.log(`  → Running AI analysis on parsed content...`);
+    logger.debug("Running AI analysis on parsed content...");
     aiAnalysis = await analyzeWithGemini(firstParsedText) || undefined;
   }
 
@@ -1464,7 +1461,7 @@ function isWithinTimeFilter(dateStr: string, hoursFilter: number): boolean {
     // 날짜 파싱
     const uploadDate = new Date(dateStr);
     if (isNaN(uploadDate.getTime())) {
-      console.log(`  ⚠ Invalid date format: ${dateStr}, including anyway`);
+      logger.warn(`Invalid date format: ${dateStr}, including anyway`);
       return true; // 파싱 실패시 포함
     }
 
@@ -1532,7 +1529,7 @@ async function crawlAndParse(
     } else {
       // Web scraping (HTML) - 페이지네이션 지원
       const siteType = detectSiteType(url);
-      console.log(`\n=== Step 1: Crawling ${siteType} with pagination (max ${CRAWLER_CONFIG.MAX_PAGES} pages) ===`);
+      logger.info(`Step 1: Crawling ${siteType} with pagination (max ${CRAWLER_CONFIG.MAX_PAGES} pages)`);
 
       let pageIndex = 1;
       let consecutiveEmptyPages = 0;
@@ -1542,7 +1539,7 @@ async function crawlAndParse(
         const pageUrl = siteType === 'kstartup'
           ? buildKStartupPaginatedUrl(url, pageIndex)
           : buildPaginatedUrl(url, pageIndex);
-        console.log(`\n[Page ${pageIndex}/${CRAWLER_CONFIG.MAX_PAGES}] ${pageUrl}`);
+        logger.debug(`[Page ${pageIndex}/${CRAWLER_CONFIG.MAX_PAGES}] ${pageUrl}`);
 
         try {
           const response = await fetchWithRetry(
@@ -1564,15 +1561,15 @@ async function crawlAndParse(
           const $ = load(response.data);
           const pageProjects = parseHtmlContentWithDateFilter($, url, CRAWLER_CONFIG.HOURS_FILTER);
 
-          console.log(`  → Found ${pageProjects.length} projects (within ${CRAWLER_CONFIG.HOURS_FILTER}h filter)`);
+          logger.debug(`Found ${pageProjects.length} projects (within ${CRAWLER_CONFIG.HOURS_FILTER}h filter)`);
 
           if (pageProjects.length === 0) {
             consecutiveEmptyPages++;
-            console.log(`  ⚠ Empty page (${consecutiveEmptyPages} consecutive)`);
+            logger.debug(`Empty page (${consecutiveEmptyPages} consecutive)`);
 
             // 2페이지 연속 빈 페이지면 중단 (시간 필터로 인한 자연스러운 종료)
             if (consecutiveEmptyPages >= 2) {
-              console.log(`  → Stopping: No more recent projects`);
+              logger.info("Stopping: No more recent projects");
               break;
             }
           } else {
@@ -1587,26 +1584,26 @@ async function crawlAndParse(
             await sleep(CRAWLER_CONFIG.PAGE_DELAY_MS);
           }
         } catch (pageError: any) {
-          console.error(`  ✗ Error fetching page ${pageIndex}: ${pageError.code || pageError.message}`);
+          logger.error(`Error fetching page ${pageIndex}`, { errorCode: pageError.code || pageError.message });
           // Continue with collected projects instead of breaking
-          console.log(`  → Continuing with ${allProjects.length} projects collected so far`);
+          logger.info(`Continuing with ${allProjects.length} projects collected so far`);
           break;
         }
       }
 
-      console.log(`\n=== Pagination complete: ${allProjects.length} projects collected ===`);
+      logger.info(`Pagination complete: ${allProjects.length} projects collected`);
     }
 
     const projects = allProjects;
 
     // Step 2: Fetch detail pages and extract file URLs
-    console.log(`\n=== Step 2: Fetching detail pages for ${projects.length} projects ===`);
+    logger.info(`Step 2: Fetching detail pages for ${projects.length} projects`);
 
     for (let i = 0; i < projects.length; i++) {
       const project = projects[i];
 
       if (project.detailUrl) {
-        console.log(`[${i + 1}/${projects.length}] ${project.name}`);
+        logger.debug(`[${i + 1}/${projects.length}] ${project.name}`);
 
         try {
           const { fileUrls: attachmentUrls, cookies } = await fetchDetailPage(project.detailUrl, url);
@@ -1614,26 +1611,22 @@ async function crawlAndParse(
           projects[i].cookies = cookies;
 
           if (attachmentUrls.length > 0) {
-            console.log(`  ✓ Files found:`);
-            attachmentUrls.forEach((fileUrl, idx) => {
-              const fileName = fileUrl.split('/').pop() || fileUrl;
-              console.log(`    ${idx + 1}. ${fileName}`);
-            });
+            const fileNames = attachmentUrls.map(fileUrl => fileUrl.split('/').pop() || fileUrl);
+            logger.debug(`Files found: ${fileNames.join(', ')}`);
           }
         } catch (error: any) {
-          console.error(`  ✗ Error fetching detail page: ${error.code || error.message}`);
+          logger.error("Error fetching detail page", { errorCode: error.code || error.message });
         }
 
         // Add delay to avoid rate limiting (increased for stability)
         await sleep(CRAWLER_CONFIG.DETAIL_DELAY_MS);
       } else {
-        console.log(`[${i + 1}/${projects.length}] ${project.name} - No detail URL found`);
+        logger.debug(`[${i + 1}/${projects.length}] ${project.name} - No detail URL found`);
       }
     }
 
-    console.log(`\n=== Detail page crawling complete ===`);
     const projectsWithFiles = projects.filter(p => p.attachmentUrls && p.attachmentUrls.length > 0);
-    console.log(`Projects with attachments: ${projectsWithFiles.length}/${projects.length}`);
+    logger.info("Detail page crawling complete", { projectsWithFiles: projectsWithFiles.length, totalProjects: projects.length });
 
     // NOTE: File processing (Step 3+4) now happens in saveProjects()
     // This allows us to:
@@ -1642,10 +1635,10 @@ async function crawlAndParse(
     // 3. Save attachment records linked to project
     // 4. Apply smart parsing only to relevant files
 
-    console.log(`\n=== Returning ${projects.length} projects for processing ===`);
+    logger.info(`Returning ${projects.length} projects for processing`);
     return projects;
   } catch (error) {
-    console.error(`Crawling failed for ${url}:`, error);
+    logger.error(`Crawling failed for ${url}`, { error });
     throw new Error(
       `Failed to crawl ${url}: ${error instanceof Error ? error.message : "Unknown error"}`
     );
@@ -1673,7 +1666,7 @@ function parseKStartupHtml(
 
   // K-Startup 리스트 아이템 선택
   const listItems = $('#bizPbancList ul li.notice');
-  console.log(`  → K-Startup parser: Found ${listItems.length} items`);
+  logger.debug(`K-Startup parser: Found ${listItems.length} items`);
 
   listItems.each((_idx, element) => {
     const $item = $(element);
@@ -2035,7 +2028,7 @@ async function saveProjects(
         });
         projectId = existing.id;
         updatedCount++;
-        console.log(`  ✓ Updated project: ${project.name}`);
+        logger.debug(`Updated project: ${project.name}`);
       } else {
         // Create new project
         const created = await prisma.supportProject.create({
@@ -2048,12 +2041,12 @@ async function saveProjects(
         });
         projectId = created.id;
         newCount++;
-        console.log(`  ✓ Created project: ${project.name}`);
+        logger.debug(`Created project: ${project.name}`);
       }
 
       // Process and save attachments (NEW)
       if (attachmentUrls && attachmentUrls.length > 0) {
-        console.log(`  → Processing ${attachmentUrls.length} attachment(s)...`);
+        logger.debug(`Processing ${attachmentUrls.length} attachment(s)...`);
 
         try {
           // 기존 프로젝트 업데이트 시, 기존 attachments 삭제 (중복 방지)
@@ -2062,7 +2055,7 @@ async function saveProjects(
               where: { projectId },
             });
             if (deletedCount.count > 0) {
-              console.log(`  → Removed ${deletedCount.count} existing attachment(s)`);
+              logger.debug(`Removed ${deletedCount.count} existing attachment(s)`);
             }
           }
 
@@ -2092,7 +2085,7 @@ async function saveProjects(
             filesProcessed++;
           }
 
-          console.log(`  ✓ Saved ${attachments.length} attachment(s) to DB`);
+          logger.debug(`Saved ${attachments.length} attachment(s) to DB`);
 
           // Update project with AI analysis if available
           if (aiAnalysis) {
@@ -2119,17 +2112,17 @@ async function saveProjects(
                 endDate: parseDate(aiAnalysis.endDate),
               },
             });
-            console.log(`  ✓ Updated project with AI analysis (summary, description, eligibility, etc.)`);
+            logger.debug("Updated project with AI analysis (summary, description, eligibility, etc.)");
           }
         } catch (fileError) {
-          console.error(`  ✗ Error processing attachments:`, fileError);
+          logger.error("Error processing attachments", { error: fileError });
         }
 
         // Rate limiting: 2 seconds between projects with files
         await new Promise(resolve => setTimeout(resolve, 2000));
       }
     } catch (error) {
-      console.error(`Failed to save project "${project.name}":`, error);
+      logger.error(`Failed to save project "${project.name}"`, { error });
       // Continue with next project
     }
   }
@@ -2152,13 +2145,13 @@ export async function processPendingJobs() {
     take: 5, // Process 5 jobs at a time
   });
 
-  console.log(`Processing ${pendingJobs.length} pending crawl jobs`);
+  logger.info(`Processing ${pendingJobs.length} pending crawl jobs`);
 
   for (const job of pendingJobs) {
     try {
       await processCrawlJob(job.id);
     } catch (error) {
-      console.error(`Failed to process job ${job.id}:`, error);
+      logger.error(`Failed to process job ${job.id}`, { error });
       // Continue with next job even if one fails
     }
   }

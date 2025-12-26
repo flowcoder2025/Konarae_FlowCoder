@@ -3,6 +3,10 @@
  * Prevents invalid category/region data from being saved
  */
 
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ lib: "crawler-validators" });
+
 // Valid category values (분야)
 export const VALID_CATEGORIES = [
   "인력",
@@ -70,17 +74,13 @@ export function validateCategory(value: string | undefined): ValidCategory {
 
   // Check if it's actually a region name (wrong field)
   if (VALID_REGIONS.includes(trimmed as ValidRegion)) {
-    console.warn(
-      `[Crawler] Region "${trimmed}" found in category field - using "기타"`
-    );
+    logger.warn(`Region "${trimmed}" found in category field - using "기타"`);
     return "기타";
   }
 
   // Check if it looks like a date
   if (/^\d{4}[-./]\d{2}[-./]\d{2}/.test(trimmed)) {
-    console.warn(
-      `[Crawler] Date "${trimmed}" found in category field - using "기타"`
-    );
+    logger.warn(`Date "${trimmed}" found in category field - using "기타"`);
     return "기타";
   }
 
@@ -163,9 +163,7 @@ export function validateCategory(value: string | undefined): ValidCategory {
   };
 
   if (categoryMapping[trimmed]) {
-    console.info(
-      `[Crawler] Mapped category "${trimmed}" → "${categoryMapping[trimmed]}"`
-    );
+    logger.info(`Mapped category "${trimmed}" → "${categoryMapping[trimmed]}"`);
     return categoryMapping[trimmed];
   }
 
@@ -214,15 +212,13 @@ export function validateCategory(value: string | undefined): ValidCategory {
 
   for (const [keyword, category] of partialMatches) {
     if (trimmed.includes(keyword)) {
-      console.info(
-        `[Crawler] Partial match category "${trimmed}" contains "${keyword}" → "${category}"`
-      );
+      logger.info(`Partial match category "${trimmed}" contains "${keyword}" → "${category}"`);
       return category;
     }
   }
 
   // If still unknown, use "기타"
-  console.warn(`[Crawler] Unknown category "${trimmed}" - using "기타"`);
+  logger.warn(`Unknown category "${trimmed}" - using "기타"`);
   return "기타";
 }
 
@@ -245,17 +241,13 @@ export function validateRegion(value: string | undefined): ValidRegion {
 
   // Check if it looks like a date (wrong field)
   if (/^\d{4}[-./]\d{2}[-./]\d{2}/.test(trimmed)) {
-    console.warn(
-      `[Crawler] Date "${trimmed}" found in region field - using "전국"`
-    );
+    logger.warn(`Date "${trimmed}" found in region field - using "전국"`);
     return "전국";
   }
 
   // Check if it's actually a category (wrong field)
   if (VALID_CATEGORIES.includes(trimmed as ValidCategory)) {
-    console.warn(
-      `[Crawler] Category "${trimmed}" found in region field - using "전국"`
-    );
+    logger.warn(`Category "${trimmed}" found in region field - using "전국"`);
     return "전국";
   }
 
@@ -265,9 +257,7 @@ export function validateRegion(value: string | undefined): ValidRegion {
     trimmed.includes("청") ||
     trimmed.includes("원")
   ) {
-    console.warn(
-      `[Crawler] Department "${trimmed}" found in region field - using "전국"`
-    );
+    logger.warn(`Department "${trimmed}" found in region field - using "전국"`);
     return "전국";
   }
 
@@ -307,9 +297,7 @@ export function validateRegion(value: string | undefined): ValidRegion {
   };
 
   if (regionMapping[trimmed]) {
-    console.info(
-      `[Crawler] Mapped region "${trimmed}" → "${regionMapping[trimmed]}"`
-    );
+    logger.info(`Mapped region "${trimmed}" → "${regionMapping[trimmed]}"`);
     return regionMapping[trimmed];
   }
 
@@ -336,15 +324,13 @@ export function validateRegion(value: string | undefined): ValidRegion {
 
   for (const [keyword, region] of partialMatches) {
     if (trimmed.includes(keyword)) {
-      console.info(
-        `[Crawler] Partial match region "${trimmed}" contains "${keyword}" → "${region}"`
-      );
+      logger.info(`Partial match region "${trimmed}" contains "${keyword}" → "${region}"`);
       return region;
     }
   }
 
   // If still unknown, use "전국"
-  console.warn(`[Crawler] Unknown region "${trimmed}" - using "전국"`);
+  logger.warn(`Unknown region "${trimmed}" - using "전국"`);
   return "전국";
 }
 
@@ -435,14 +421,10 @@ export function validateProject<T extends { category?: string; region?: string; 
 
     if (extractedFromName) {
       region = extractedFromName;
-      console.info(
-        `[Crawler] Extracted region "${region}" from project name: "${project.name}"`
-      );
+      logger.info(`Extracted region "${region}" from project name: "${project.name}"`);
     } else if (extractedFromOrg) {
       region = extractedFromOrg;
-      console.info(
-        `[Crawler] Extracted region "${region}" from organization: "${project.organization}"`
-      );
+      logger.info(`Extracted region "${region}" from organization: "${project.organization}"`);
     }
   }
 

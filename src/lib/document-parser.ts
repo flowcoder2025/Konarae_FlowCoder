@@ -8,6 +8,10 @@
  *   - POST /api/v1/extract/hwp-to-text  (순수 텍스트)
  */
 
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ lib: "document-parser" });
+
 // Text Parser 서비스 URL (단일 통합 서비스)
 // Repository: https://github.com/Jerome87hyunil/text_parser
 const TEXT_PARSER_URL = process.env.TEXT_PARSER_URL || "https://hwp-api.onrender.com";
@@ -180,8 +184,7 @@ export async function parseDocument(
     const endpoint = getEndpoint(mode);
     const url = `${TEXT_PARSER_URL}${endpoint}`;
 
-    console.log(`[DocumentParser] Parsing ${type.toUpperCase()} file...`);
-    console.log(`[DocumentParser] Endpoint: ${url}`);
+    logger.info(`Parsing ${type.toUpperCase()} file at ${url}`);
 
     // Use axios for proper form-data streaming support
     const axios = (await import("axios")).default;
@@ -198,7 +201,7 @@ export async function parseDocument(
     // 에러 응답 처리
     if (data.success === false || data.status === "error" || data.error || data.detail) {
       const errorMsg = data.error || data.detail || data.message || "Unknown parser error";
-      console.error(`[DocumentParser] Parser error: ${errorMsg}`);
+      logger.error(`Parser error: ${errorMsg}`);
       return {
         success: false,
         text: "",
@@ -210,11 +213,9 @@ export async function parseDocument(
     const extractedText = extractTextFromResponse(data);
 
     if (!extractedText || extractedText.trim().length === 0) {
-      console.warn(`[DocumentParser] No text extracted from ${type} file`);
+      logger.warn(`No text extracted from ${type} file`);
     } else {
-      console.log(
-        `[DocumentParser] Extracted ${extractedText.length} characters`
-      );
+      logger.info(`Extracted ${extractedText.length} characters`);
     }
 
     return {
@@ -230,7 +231,7 @@ export async function parseDocument(
           ? error.response.data
           : JSON.stringify(error.response.data);
 
-      console.error(`[DocumentParser] ${type.toUpperCase()} parser error:`, {
+      logger.error(`${type.toUpperCase()} parser error`, {
         status: error.response.status,
         statusText: error.response.statusText,
         url: error.config?.url || "unknown",
@@ -245,7 +246,7 @@ export async function parseDocument(
     }
 
     // Network or other errors
-    console.error(`[DocumentParser] Parse error (${type}):`, error.message);
+    logger.error(`Parse error (${type})`, { error: error.message });
     return {
       success: false,
       text: "",
@@ -262,7 +263,7 @@ export async function parseDocumentFromUrl(
   type: ParserType
 ): Promise<ParseResult> {
   try {
-    console.log(`[DocumentParser] Downloading file from URL: ${url}`);
+    logger.info(`Downloading file from URL: ${url}`);
 
     // Download file
     const fileResponse = await fetch(url);
@@ -271,11 +272,11 @@ export async function parseDocumentFromUrl(
     }
 
     const buffer = Buffer.from(await fileResponse.arrayBuffer());
-    console.log(`[DocumentParser] Downloaded ${buffer.length} bytes`);
+    logger.info(`Downloaded ${buffer.length} bytes`);
 
     return parseDocument(buffer, type);
   } catch (error) {
-    console.error("[DocumentParser] Parse from URL error:", error);
+    logger.error("Parse from URL error", { error });
     return {
       success: false,
       text: "",

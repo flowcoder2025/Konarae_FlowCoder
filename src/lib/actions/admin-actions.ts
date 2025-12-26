@@ -9,6 +9,9 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth-utils";
 import { processCrawlJob } from "@/lib/crawler/worker";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ lib: "admin-actions" });
 
 type ActionResult = {
   success: boolean;
@@ -63,10 +66,10 @@ export async function startCrawl(sourceId: string): Promise<ActionResult> {
     const WORKER_API_KEY = process.env.WORKER_API_KEY;
 
     if (!RAILWAY_URL || !WORKER_API_KEY) {
-      console.error("[Admin] Railway configuration missing");
+      logger.error("Railway configuration missing");
       // Fallback to direct execution if Railway not configured
       processCrawlJob(job.id).catch((error) => {
-        console.error("Background crawl job failed:", error);
+        logger.error("Background crawl job failed", { error, jobId: job.id });
       });
     } else {
       // Ensure RAILWAY_URL has https:// protocol
@@ -85,12 +88,12 @@ export async function startCrawl(sourceId: string): Promise<ActionResult> {
         });
 
         if (response.ok) {
-          console.log(`[Admin] Job ${job.id} queued to Railway worker`);
+          logger.info(`Job ${job.id} queued to Railway worker`);
         } else {
-          console.error(`[Admin] Failed to queue job ${job.id}: ${response.status}`);
+          logger.error(`Failed to queue job ${job.id}`, { status: response.status });
         }
       } catch (error) {
-        console.error(`[Admin] Error sending job ${job.id} to Railway:`, error);
+        logger.error(`Error sending job ${job.id} to Railway`, { error });
       }
     }
 
@@ -101,7 +104,7 @@ export async function startCrawl(sourceId: string): Promise<ActionResult> {
       message: "크롤링 작업이 시작되었습니다",
     };
   } catch (error) {
-    console.error("Start crawl error:", error);
+    logger.error("Start crawl error", { error });
     return {
       success: false,
       message: "크롤링 시작 중 오류가 발생했습니다",
@@ -162,7 +165,7 @@ export async function addCrawlSource(data: {
       message: "크롤링 소스가 추가되었습니다",
     };
   } catch (error) {
-    console.error("Add crawl source error:", error);
+    logger.error("Add crawl source error", { error });
     return {
       success: false,
       message: "소스 추가 중 오류가 발생했습니다",
@@ -203,7 +206,7 @@ export async function deleteProject(projectId: string): Promise<ActionResult> {
       message: "프로젝트가 삭제되었습니다",
     };
   } catch (error) {
-    console.error("Delete project error:", error);
+    logger.error("Delete project error", { error });
     return {
       success: false,
       message: "프로젝트 삭제 중 오류가 발생했습니다",
@@ -234,7 +237,7 @@ export async function updateProjectStatus(
       message: "프로젝트 상태가 변경되었습니다",
     };
   } catch (error) {
-    console.error("Update project status error:", error);
+    logger.error("Update project status error", { error });
     return {
       success: false,
       message: "상태 변경 중 오류가 발생했습니다",
@@ -265,7 +268,7 @@ export async function updateUserRole(
       message: "사용자 권한이 변경되었습니다",
     };
   } catch (error) {
-    console.error("Update user role error:", error);
+    logger.error("Update user role error", { error });
     return {
       success: false,
       message: "권한 변경 중 오류가 발생했습니다",
@@ -307,7 +310,7 @@ export async function toggleSourceActive(
       message: source.isActive ? "소스가 비활성화되었습니다" : "소스가 활성화되었습니다",
     };
   } catch (error) {
-    console.error("Toggle source active error:", error);
+    logger.error("Toggle source active error", { error });
     return {
       success: false,
       message: "상태 변경 중 오류가 발생했습니다",
@@ -361,11 +364,11 @@ export async function startAllCrawl(): Promise<ActionResult & { jobCount?: numbe
     const WORKER_API_KEY = process.env.WORKER_API_KEY;
 
     if (!RAILWAY_URL || !WORKER_API_KEY) {
-      console.error("[Admin] Railway configuration missing");
+      logger.error("Railway configuration missing");
       // Fallback to direct execution if Railway not configured
       jobs.forEach((job) => {
         processCrawlJob(job.id).catch((error) => {
-          console.error(`Background crawl job ${job.id} failed:`, error);
+          logger.error(`Background crawl job ${job.id} failed`, { error });
         });
       });
     } else {
@@ -390,19 +393,19 @@ export async function startAllCrawl(): Promise<ActionResult & { jobCount?: numbe
           });
 
           if (response.ok) {
-            console.log(`[Admin] Job ${job.id} queued to Railway worker`);
+            logger.info(`Job ${job.id} queued to Railway worker`);
             successCount++;
           } else {
-            console.error(`[Admin] Failed to queue job ${job.id}: ${response.status}`);
+            logger.error(`Failed to queue job ${job.id}`, { status: response.status });
             failCount++;
           }
         } catch (error) {
-          console.error(`[Admin] Error sending job ${job.id} to Railway:`, error);
+          logger.error(`Error sending job ${job.id} to Railway`, { error });
           failCount++;
         }
       }
 
-      console.log(`[Admin] Railway delegation complete: ${successCount} queued, ${failCount} failed`);
+      logger.info(`Railway delegation complete: ${successCount} queued, ${failCount} failed`);
     }
 
     revalidatePath("/admin/crawler");
@@ -413,7 +416,7 @@ export async function startAllCrawl(): Promise<ActionResult & { jobCount?: numbe
       jobCount: jobs.length,
     };
   } catch (error) {
-    console.error("Start all crawl error:", error);
+    logger.error("Start all crawl error", { error });
     return {
       success: false,
       message: "전체 크롤링 시작 중 오류가 발생했습니다",
@@ -452,7 +455,7 @@ export async function getCrawlStats() {
       },
     };
   } catch (error) {
-    console.error("Get crawl stats error:", error);
+    logger.error("Get crawl stats error", { error });
     return {
       success: false,
       error: error instanceof Error ? error.message : "UNKNOWN_ERROR",

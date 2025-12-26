@@ -7,6 +7,9 @@ import { google } from "@ai-sdk/google";
 import { generateText } from "ai";
 import { DocumentType, ExtractedData } from "./types";
 import { getPromptForDocumentType } from "./prompts";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ lib: "documents-analyze" });
 
 // ============================================
 // 분석 결과 타입
@@ -87,7 +90,7 @@ export async function analyzeDocument(
       confidenceScore,
     };
   } catch (error) {
-    console.error("[analyzeDocument] Error:", error);
+    logger.error("analyzeDocument error", { error });
     return {
       success: false,
       error:
@@ -120,7 +123,7 @@ function parseAnalysisResponse(text: string): ParsedResponse | null {
     const parsed = JSON.parse(jsonText.trim());
 
     if (!parsed.extractedData || !parsed.summary) {
-      console.error("[parseAnalysisResponse] Missing required fields");
+      logger.error("parseAnalysisResponse: Missing required fields");
       return null;
     }
 
@@ -130,8 +133,7 @@ function parseAnalysisResponse(text: string): ParsedResponse | null {
       keyInsights: parsed.keyInsights || [],
     };
   } catch (error) {
-    console.error("[parseAnalysisResponse] Parse error:", error);
-    console.log("[parseAnalysisResponse] Raw text:", text);
+    logger.error("parseAnalysisResponse parse error", { error, rawText: text });
     return null;
   }
 }

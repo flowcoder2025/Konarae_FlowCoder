@@ -5,6 +5,9 @@
 
 import { prisma } from "@/lib/prisma"
 import { consumeCredit, refundCredit } from "@/lib/credits"
+import { createLogger } from "@/lib/logger"
+
+const logger = createLogger({ lib: "diagnosis" })
 import {
   DiagnosisStatus,
   ExtractedRequirement,
@@ -170,7 +173,7 @@ export async function runDiagnosis(
       diagnosisId: diagnosis.id,
     }
   } catch (error) {
-    console.error("[runDiagnosis] Error:", error)
+    logger.error("runDiagnosis error", { error })
 
     // 진단 실패 시 상태 업데이트
     await prisma.gapDiagnosis.update({
