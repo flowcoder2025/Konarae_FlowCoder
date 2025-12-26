@@ -12,6 +12,7 @@ import {
   FileText,
   Users,
   Coins,
+  Target,
 } from "lucide-react";
 
 export default async function AdminLayout({
@@ -50,6 +51,11 @@ export default async function AdminLayout({
       name: "크래딧 관리",
       href: "/admin/credits",
       icon: Coins,
+    },
+    {
+      name: "매칭 현황",
+      href: "/admin/matching",
+      icon: Target,
     },
   ];
 
