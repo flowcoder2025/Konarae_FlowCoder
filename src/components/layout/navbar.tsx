@@ -22,6 +22,7 @@ import {
   Target,
   Search,
   CheckCircle,
+  ClipboardCheck,
   Menu,
   X,
 } from "lucide-react";
@@ -52,6 +53,11 @@ const navItems: NavItem[] = [
     label: "매칭",
     href: "/matching",
     icon: Target,
+  },
+  {
+    label: "진단",
+    href: "/diagnosis",
+    icon: ClipboardCheck,
   },
   {
     label: "사업계획서",
