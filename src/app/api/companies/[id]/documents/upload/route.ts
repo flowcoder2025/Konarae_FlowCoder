@@ -15,6 +15,9 @@ import { analyzeDocument } from "@/lib/documents/analyze";
 import { processDocumentEmbeddings } from "@/lib/documents/embedding";
 import { DocumentType } from "@/lib/documents/types";
 import { isQStashConfigured, queueDocumentAnalysis } from "@/lib/qstash";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "company-documents-upload" });
 
 export async function POST(
   req: NextRequest,
@@ -97,16 +100,16 @@ export async function POST(
       });
 
       if (!queueResult.success) {
-        console.error("[POST /documents/upload] QStash queue failed:", queueResult.error);
+        logger.error("QStash queue failed", { error: queueResult.error });
         // 큐잉 실패 시 Fallback: 인라인 처리
         processDocumentAnalysis(document.id, uploadResult.filePath!, documentType, file.type).catch((err) => {
-          console.error("[POST /documents/upload] Fallback analysis error:", err);
+          logger.error("Fallback analysis error", { error: err });
         });
       }
     } else {
       // QStash 미설정: 기존 인라인 처리 (연결 풀 이슈 가능)
       processDocumentAnalysis(document.id, uploadResult.filePath!, documentType, file.type).catch((err) => {
-        console.error("[POST /documents/upload] Analysis error:", err);
+        logger.error("Analysis error", { error: err });
       });
     }
 
@@ -116,7 +119,7 @@ export async function POST(
       status: document.status,
     });
   } catch (error) {
-    console.error("[POST /documents/upload] Error:", error);
+    logger.error("Failed to upload document", { error });
     return NextResponse.json(
       { error: "문서 업로드 중 오류가 발생했습니다." },
       { status: 500 }
@@ -152,7 +155,7 @@ async function withRetry<T>(
       }
 
       const waitTime = delay * Math.pow(backoff, attempt);
-      console.log(`[withRetry] Attempt ${attempt + 1} failed, retrying in ${waitTime}ms...`);
+      logger.info(`Attempt ${attempt + 1} failed, retrying in ${waitTime}ms`);
       await new Promise(resolve => setTimeout(resolve, waitTime));
     }
   }
@@ -239,10 +242,10 @@ async function processDocumentAnalysis(
       });
     } catch (embeddingError) {
       // 임베딩 실패는 치명적이지 않음 - 로그만 남김
-      console.error("[processDocumentAnalysis] Embedding error (non-fatal):", embeddingError);
+      logger.warn("Embedding error (non-fatal)", { error: embeddingError });
     }
   } catch (error) {
-    console.error("[processDocumentAnalysis] Error:", error);
+    logger.error("Document analysis failed", { error });
 
     // 상태 업데이트: failed (재시도 적용)
     try {
@@ -260,7 +263,7 @@ async function processDocumentAnalysis(
       );
     } catch (updateError) {
       // 실패 상태 업데이트도 실패하면 로그만 남김
-      console.error("[processDocumentAnalysis] Failed to update error status:", updateError);
+      logger.error("Failed to update error status", { error: updateError });
     }
   }
 }

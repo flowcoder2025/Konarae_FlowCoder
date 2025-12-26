@@ -7,6 +7,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { analyzeDocument } from "@/lib/documents/analyze";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "documents-analyze-temp" });
 
 export async function POST(req: NextRequest) {
   try {
@@ -79,7 +82,7 @@ export async function POST(req: NextRequest) {
       insights: analysisResult.keyInsights,
     });
   } catch (error) {
-    console.error("[POST /documents/analyze-temp] Error:", error);
+    logger.error("Analyze temp document error", { error });
     return NextResponse.json(
       { error: "문서 분석 중 오류가 발생했습니다." },
       { status: 500 }

@@ -9,6 +9,9 @@ import { prisma } from "@/lib/prisma";
 import { check } from "@/lib/rebac";
 import { exportBusinessPlan, type BusinessPlanExportData, type ExportFormat } from "@/lib/export";
 import { z } from "zod";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "business-plan-export" });
 
 const exportSchema = z.object({
   format: z.enum(["pdf", "docx", "hwp"]),
@@ -113,7 +116,7 @@ export async function POST(
       );
     }
 
-    console.error("[API] Export business plan error:", error);
+    logger.error("Failed to export business plan", { error });
     return NextResponse.json(
       { error: "Failed to export business plan" },
       { status: 500 }

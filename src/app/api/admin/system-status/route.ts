@@ -13,6 +13,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getParserServiceInfo } from "@/lib/document-parser";
 import { listSchedules, isQStashConfigured } from "@/lib/qstash";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "admin-system-status" });
 
 // Vercel Cron schedules defined in vercel.json
 // These are static and known at build time
@@ -365,7 +368,7 @@ export async function GET(_req: NextRequest) {
 
     return NextResponse.json(response);
   } catch (error) {
-    console.error("[SystemStatus] Error:", error);
+    logger.error("System status error", { error });
     return NextResponse.json(
       {
         status: "down",

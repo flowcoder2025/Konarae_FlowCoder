@@ -6,6 +6,9 @@
 import { NextResponse } from "next/server"
 import { auth } from "@/lib/auth"
 import { getOrCreateCredit } from "@/lib/credits"
+import { createLogger } from "@/lib/logger"
+
+const logger = createLogger({ api: "credits" })
 
 export async function GET() {
   try {
@@ -19,7 +22,7 @@ export async function GET() {
 
     return NextResponse.json(credit)
   } catch (error) {
-    console.error("[GET /api/credits] Error:", error)
+    logger.error("Failed to fetch credits", { error })
     return NextResponse.json(
       { error: "크래딧 조회 중 오류가 발생했습니다" },
       { status: 500 }

@@ -11,6 +11,9 @@ import { prisma } from "@/lib/prisma";
 import { check } from "@/lib/rebac";
 import { generateBusinessPlanEmbeddings } from "@/lib/business-plan-generator";
 import { z } from "zod";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "business-plan-detail" });
 
 const updateBusinessPlanSchema = z.object({
   title: z.string().min(1).optional(),
@@ -69,7 +72,7 @@ export async function GET(
 
     return NextResponse.json({ businessPlan });
   } catch (error) {
-    console.error("[API] Get business plan error:", error);
+    logger.error("Failed to fetch business plan", { error });
     return NextResponse.json(
       { error: "Failed to fetch business plan" },
       { status: 500 }
@@ -125,10 +128,7 @@ export async function PATCH(
     // Generate embeddings when business plan is completed (async, don't block response)
     if (isCompletingPlan && wasNotCompleted) {
       generateBusinessPlanEmbeddings(id).catch((error) => {
-        console.error(
-          "[API] Failed to generate business plan embeddings:",
-          error
-        );
+        logger.error("Failed to generate business plan embeddings", { error });
       });
     }
 
@@ -144,7 +144,7 @@ export async function PATCH(
       );
     }
 
-    console.error("[API] Update business plan error:", error);
+    logger.error("Failed to update business plan", { error });
     return NextResponse.json(
       { error: "Failed to update business plan" },
       { status: 500 }
@@ -187,7 +187,7 @@ export async function DELETE(
       message: "Business plan deleted",
     });
   } catch (error) {
-    console.error("[API] Delete business plan error:", error);
+    logger.error("Failed to delete business plan", { error });
     return NextResponse.json(
       { error: "Failed to delete business plan" },
       { status: 500 }

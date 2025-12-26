@@ -21,6 +21,9 @@ import {
 import { analyzeDocument } from "@/lib/documents/analyze";
 import { processDocumentEmbeddings } from "@/lib/documents/embedding";
 import { DocumentType } from "@/lib/documents/types";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "company-document-detail" });
 
 // ============================================
 // GET: 문서 상세 조회
@@ -78,7 +81,7 @@ export async function GET(
       downloadUrl: signedUrlResult.signedUrl,
     });
   } catch (error) {
-    console.error("[GET /documents/[documentId]] Error:", error);
+    logger.error("Failed to fetch document", { error });
     return NextResponse.json(
       { error: "문서 조회 중 오류가 발생했습니다." },
       { status: 500 }
@@ -182,7 +185,7 @@ export async function PATCH(
       file,
       existingDocument.documentType as DocumentType
     ).catch((err) => {
-      console.error("[PATCH /documents/[documentId]] Analysis error:", err);
+      logger.error("Analysis error", { error: err });
     });
 
     return NextResponse.json({
@@ -192,7 +195,7 @@ export async function PATCH(
       version: updatedDocument.version,
     });
   } catch (error) {
-    console.error("[PATCH /documents/[documentId]] Error:", error);
+    logger.error("Failed to update document", { error });
     return NextResponse.json(
       { error: "문서 수정 중 오류가 발생했습니다." },
       { status: 500 }
@@ -249,7 +252,7 @@ export async function DELETE(
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("[DELETE /documents/[documentId]] Error:", error);
+    logger.error("Failed to delete document", { error });
     return NextResponse.json(
       { error: "문서 삭제 중 오류가 발생했습니다." },
       { status: 500 }
@@ -316,7 +319,7 @@ async function processDocumentAnalysis(
       },
     });
   } catch (error) {
-    console.error("[processDocumentAnalysis] Error:", error);
+    logger.error("Document analysis failed", { error });
 
     await prisma.companyDocument.update({
       where: { id: documentId },

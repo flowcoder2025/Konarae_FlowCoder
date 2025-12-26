@@ -7,6 +7,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "notifications" });
 
 export async function GET(req: NextRequest) {
   try {
@@ -37,7 +40,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ notifications, unreadCount });
   } catch (error) {
-    console.error("[API] Get notifications error:", error);
+    logger.error("Failed to get notifications", { error });
     return NextResponse.json(
       { error: "Failed to get notifications" },
       { status: 500 }

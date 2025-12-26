@@ -7,6 +7,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { storeDocumentEmbeddings, type SourceType } from "@/lib/rag";
 import { z } from "zod";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "rag-embed" });
 
 const embedSchema = z.object({
   sourceType: z.enum(["support_project", "company", "business_plan"]),
@@ -45,7 +48,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    console.error("[API] Embed error:", error);
+    logger.error("Embed error", { error });
     return NextResponse.json(
       { error: "Failed to generate embeddings" },
       { status: 500 }

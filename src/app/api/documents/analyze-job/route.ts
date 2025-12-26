@@ -13,6 +13,9 @@ import { getStorageFileAsBase64 } from "@/lib/documents/upload";
 import { analyzeDocument } from "@/lib/documents/analyze";
 import { processDocumentEmbeddings } from "@/lib/documents/embedding";
 import { DocumentType } from "@/lib/documents/types";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "documents-analyze-job" });
 
 // QStash 타임아웃 설정 (최대 5분)
 export const maxDuration = 300;
@@ -26,7 +29,7 @@ export async function POST(req: NextRequest) {
 
       const isValid = await verifyQStashSignature(signature, body);
       if (!isValid) {
-        console.error("[analyze-job] Invalid QStash signature");
+        logger.error("Invalid QStash signature");
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
       }
 
@@ -39,7 +42,7 @@ export async function POST(req: NextRequest) {
     const payload: DocumentAnalysisJobPayload = await req.json();
     return await processAnalysis(payload);
   } catch (error) {
-    console.error("[analyze-job] Error:", error);
+    logger.error("Analyze job error", { error });
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Analysis failed" },
       { status: 500 }
@@ -50,7 +53,7 @@ export async function POST(req: NextRequest) {
 async function processAnalysis(payload: DocumentAnalysisJobPayload) {
   const { documentId, filePath, documentType, mimeType } = payload;
 
-  console.log(`[analyze-job] Starting analysis for document: ${documentId}`);
+  logger.info(`Starting analysis for document: ${documentId}`);
 
   try {
     // 1. 상태 업데이트: analyzing
@@ -117,10 +120,10 @@ async function processAnalysis(payload: DocumentAnalysisJobPayload) {
         documentId,
       });
     } catch (embeddingError) {
-      console.error("[analyze-job] Embedding error (non-fatal):", embeddingError);
+      logger.warn("Embedding error (non-fatal)", { error: embeddingError });
     }
 
-    console.log(`[analyze-job] Analysis completed for document: ${documentId}`);
+    logger.info(`Analysis completed for document: ${documentId}`);
 
     return NextResponse.json({
       success: true,
@@ -128,7 +131,7 @@ async function processAnalysis(payload: DocumentAnalysisJobPayload) {
       status: "analyzed",
     });
   } catch (error) {
-    console.error(`[analyze-job] Analysis failed for document: ${documentId}`, error);
+    logger.error(`Analysis failed for document: ${documentId}`, { error });
 
     // 상태 업데이트: failed
     try {
@@ -143,7 +146,7 @@ async function processAnalysis(payload: DocumentAnalysisJobPayload) {
         },
       });
     } catch (updateError) {
-      console.error("[analyze-job] Failed to update error status:", updateError);
+      logger.error("Failed to update error status", { error: updateError });
     }
 
     // QStash 재시도를 위해 500 에러 반환

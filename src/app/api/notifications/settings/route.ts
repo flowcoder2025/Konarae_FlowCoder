@@ -8,6 +8,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "notification-settings" });
 
 const updateSettingsSchema = z.object({
   emailEnabled: z.boolean().optional(),
@@ -42,7 +45,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ settings });
   } catch (error) {
-    console.error("[API] Get notification settings error:", error);
+    logger.error("Failed to get notification settings", { error });
     return NextResponse.json(
       { error: "Failed to get notification settings" },
       { status: 500 }
@@ -79,7 +82,7 @@ export async function PATCH(req: NextRequest) {
       );
     }
 
-    console.error("[API] Update notification settings error:", error);
+    logger.error("Failed to update notification settings", { error });
     return NextResponse.json(
       { error: "Failed to update notification settings" },
       { status: 500 }

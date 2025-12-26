@@ -11,6 +11,9 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "admin-crawler-live-status" });
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -197,7 +200,7 @@ export async function GET(_req: NextRequest) {
 
     return NextResponse.json(response);
   } catch (error) {
-    console.error("[CrawlerLiveStatus] Error:", error);
+    logger.error("Crawler live status error", { error });
     return NextResponse.json(
       {
         error: "Failed to fetch crawler status",

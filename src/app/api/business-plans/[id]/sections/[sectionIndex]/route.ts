@@ -8,6 +8,9 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { check } from "@/lib/rebac";
 import { z } from "zod";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "business-plan-section" });
 
 const updateSectionSchema = z.object({
   content: z.string().min(1),
@@ -79,7 +82,7 @@ export async function PATCH(
       );
     }
 
-    console.error("[API] Update business plan section error:", error);
+    logger.error("Failed to update section", { error });
     return NextResponse.json(
       { error: "Failed to update section" },
       { status: 500 }

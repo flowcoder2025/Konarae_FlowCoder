@@ -7,6 +7,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "matching-feedback" });
 
 const feedbackSchema = z.object({
   isRelevant: z.boolean(),
@@ -60,7 +63,7 @@ export async function POST(
       );
     }
 
-    console.error("[API] Submit feedback error:", error);
+    logger.error("Failed to submit feedback", { error });
     return NextResponse.json(
       { error: "Failed to submit feedback" },
       { status: 500 }

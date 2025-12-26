@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { checkCompanyPermission, revoke } from "@/lib/rebac";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "company-member-detail" });
 
 /**
  * DELETE /api/companies/[id]/members/[userId]
@@ -64,7 +67,7 @@ export async function DELETE(
 
     return NextResponse.json({ message: "멤버가 삭제되었습니다" });
   } catch (error) {
-    console.error("Error removing member:", error);
+    logger.error("Failed to remove member", { error });
     return NextResponse.json(
       { error: "멤버 삭제에 실패했습니다" },
       { status: 500 }

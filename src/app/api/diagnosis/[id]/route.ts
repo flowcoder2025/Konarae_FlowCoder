@@ -6,6 +6,9 @@
 import { NextRequest, NextResponse } from "next/server"
 import { auth } from "@/lib/auth"
 import { getDiagnosis } from "@/lib/diagnosis"
+import { createLogger } from "@/lib/logger"
+
+const logger = createLogger({ api: "diagnosis-detail" })
 
 interface Context {
   params: Promise<{ id: string }>
@@ -35,7 +38,7 @@ export async function GET(request: NextRequest, { params }: Context) {
 
     return NextResponse.json(diagnosis)
   } catch (error) {
-    console.error("[GET /api/diagnosis/[id]] Error:", error)
+    logger.error("Failed to fetch diagnosis detail", { error })
     return NextResponse.json(
       { error: "진단 결과 조회 중 오류가 발생했습니다" },
       { status: 500 }

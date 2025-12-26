@@ -9,6 +9,9 @@ import { auth } from "@/lib/auth";
 import { checkCompanyPermission } from "@/lib/rebac";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "matching-preferences" });
 
 const preferencesSchema = z.object({
   companyId: z.string().min(1),
@@ -65,7 +68,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ preferences });
   } catch (error) {
-    console.error("[API] Get preferences error:", error);
+    logger.error("Failed to fetch preferences", { error });
     return NextResponse.json(
       { error: "Failed to fetch preferences" },
       { status: 500 }
@@ -140,7 +143,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    console.error("[API] Save preferences error:", error);
+    logger.error("Failed to save preferences", { error });
     return NextResponse.json(
       { error: "Failed to save preferences" },
       { status: 500 }

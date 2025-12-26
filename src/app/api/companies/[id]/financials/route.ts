@@ -3,6 +3,9 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { checkCompanyPermission } from "@/lib/rebac";
 import { z } from "zod";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "company-financials" });
 
 const createFinancialSchema = z.object({
   fiscalYear: z.number().min(1900).max(2100),
@@ -46,7 +49,7 @@ export async function GET(
 
     return NextResponse.json(financials);
   } catch (error) {
-    console.error("Error fetching financials:", error);
+    logger.error("Failed to fetch financials", { error });
     return NextResponse.json(
       { error: "재무 정보를 불러오는데 실패했습니다" },
       { status: 500 }
@@ -94,7 +97,7 @@ export async function POST(
       );
     }
 
-    console.error("Error creating financial:", error);
+    logger.error("Failed to create financial", { error });
     return NextResponse.json(
       { error: "재무 정보 추가에 실패했습니다" },
       { status: 500 }

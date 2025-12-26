@@ -8,6 +8,9 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { checkCompanyPermission } from "@/lib/rebac";
 import { z } from "zod";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "company-matching-preferences" });
 
 const preferencesSchema = z.object({
   categories: z.array(z.string()).min(1, "최소 1개의 카테고리를 선택해주세요"),
@@ -66,7 +69,7 @@ export async function GET(req: NextRequest, context: RouteContext) {
       },
     });
   } catch (error) {
-    console.error("[API] Get matching preferences error:", error);
+    logger.error("Failed to get matching preferences", { error });
     return NextResponse.json(
       { error: "Failed to get matching preferences" },
       { status: 500 }
@@ -150,7 +153,7 @@ export async function POST(req: NextRequest, context: RouteContext) {
       );
     }
 
-    console.error("[API] Save matching preferences error:", error);
+    logger.error("Failed to save matching preferences", { error });
     return NextResponse.json(
       { error: "Failed to save matching preferences" },
       { status: 500 }
@@ -189,7 +192,7 @@ export async function DELETE(req: NextRequest, context: RouteContext) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("[API] Delete matching preferences error:", error);
+    logger.error("Failed to delete matching preferences", { error });
     return NextResponse.json(
       { error: "Failed to delete matching preferences" },
       { status: 500 }

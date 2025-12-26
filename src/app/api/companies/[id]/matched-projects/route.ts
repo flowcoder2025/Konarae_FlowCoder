@@ -11,6 +11,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { check } from "@/lib/rebac";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "company-matched-projects" });
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -105,7 +108,7 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
       minScore, // Return applied minimum score filter
     });
   } catch (error) {
-    console.error("[API] Get matched projects error:", error);
+    logger.error("Failed to fetch matched projects", { error });
     return NextResponse.json(
       { error: "Failed to fetch matched projects" },
       { status: 500 }

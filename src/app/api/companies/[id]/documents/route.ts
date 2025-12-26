@@ -6,6 +6,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "company-documents" });
 
 export async function GET(
   req: NextRequest,
@@ -72,7 +75,7 @@ export async function GET(
 
     return NextResponse.json({ documents });
   } catch (error) {
-    console.error("[GET /documents] Error:", error);
+    logger.error("Failed to fetch documents", { error });
     return NextResponse.json(
       { error: "문서 목록 조회 중 오류가 발생했습니다." },
       { status: 500 }

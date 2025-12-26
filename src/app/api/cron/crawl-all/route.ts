@@ -11,6 +11,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyQStashSignature } from "@/lib/qstash";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "cron-crawl-all" });
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -50,7 +53,7 @@ async function verifyAuthorization(req: NextRequest): Promise<{ valid: boolean; 
  */
 async function executeCrawlAll(source: string): Promise<NextResponse> {
   try {
-    console.log(`[Cron] Crawl all started via ${source} at`, new Date().toISOString());
+    logger.info(`Crawl all started via ${source}`);
 
     // Get all active sources
     const activeSources = await prisma.crawlSource.findMany({
@@ -58,7 +61,7 @@ async function executeCrawlAll(source: string): Promise<NextResponse> {
     });
 
     if (activeSources.length === 0) {
-      console.log("[Cron] No active sources found");
+      logger.info("No active sources found");
       return NextResponse.json({
         success: true,
         message: "No active sources",
@@ -67,7 +70,7 @@ async function executeCrawlAll(source: string): Promise<NextResponse> {
       });
     }
 
-    console.log(`[Cron] Found ${activeSources.length} active source(s)`);
+    logger.info(`Found ${activeSources.length} active source(s)`);
 
     // Create jobs for all active sources
     const jobs = await Promise.all(
@@ -89,7 +92,7 @@ async function executeCrawlAll(source: string): Promise<NextResponse> {
       })
     );
 
-    console.log(`[Cron] Created ${jobs.length} crawl job(s)`);
+    logger.info(`Created ${jobs.length} crawl job(s)`);
 
     // Delegate jobs to Railway worker
     // Railway has no time limit, can process all jobs in background
@@ -97,7 +100,7 @@ async function executeCrawlAll(source: string): Promise<NextResponse> {
     const WORKER_API_KEY = process.env.WORKER_API_KEY;
 
     if (!RAILWAY_URL || !WORKER_API_KEY) {
-      console.error("[Cron] Railway configuration missing (RAILWAY_CRAWLER_URL or WORKER_API_KEY)");
+      logger.error("Railway configuration missing (RAILWAY_CRAWLER_URL or WORKER_API_KEY)");
       return NextResponse.json(
         {
           error: "Server configuration error",
@@ -110,7 +113,7 @@ async function executeCrawlAll(source: string): Promise<NextResponse> {
     // Ensure RAILWAY_URL has https:// protocol
     if (!RAILWAY_URL.startsWith('http://') && !RAILWAY_URL.startsWith('https://')) {
       RAILWAY_URL = `https://${RAILWAY_URL}`;
-      console.log(`[Cron] Added https:// protocol to RAILWAY_URL: ${RAILWAY_URL}`);
+      logger.info(`Added https:// protocol to RAILWAY_URL: ${RAILWAY_URL}`);
     }
 
     // Send jobs to Railway worker
@@ -129,19 +132,19 @@ async function executeCrawlAll(source: string): Promise<NextResponse> {
         });
 
         if (response.ok) {
-          console.log(`[Cron] Job ${job.jobId} (${job.sourceName}) queued to Railway worker`);
+          logger.info(`Job ${job.jobId} (${job.sourceName}) queued to Railway worker`);
           successCount++;
         } else {
-          console.error(`[Cron] Failed to queue job ${job.jobId}: ${response.status} ${response.statusText}`);
+          logger.error(`Failed to queue job ${job.jobId}: ${response.status} ${response.statusText}`);
           failCount++;
         }
       } catch (error) {
-        console.error(`[Cron] Error sending job ${job.jobId} to Railway:`, error);
+        logger.error(`Error sending job ${job.jobId} to Railway`, { error });
         failCount++;
       }
     }
 
-    console.log(`[Cron] Railway delegation complete: ${successCount} queued, ${failCount} failed`);
+    logger.info(`Railway delegation complete: ${successCount} queued, ${failCount} failed`);
 
     return NextResponse.json({
       success: true,
@@ -152,7 +155,7 @@ async function executeCrawlAll(source: string): Promise<NextResponse> {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    console.error("[Cron] Crawl all error:", error);
+    logger.error("Crawl all error", { error });
     return NextResponse.json(
       {
         error: "Failed to start crawl jobs",
@@ -168,7 +171,7 @@ export async function GET(req: NextRequest) {
   const { valid, source } = await verifyAuthorization(req);
 
   if (!valid) {
-    console.error("[Cron] Unauthorized GET request");
+    logger.error("Unauthorized GET request");
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -180,7 +183,7 @@ export async function POST(req: NextRequest) {
   const { valid, source } = await verifyAuthorization(req);
 
   if (!valid) {
-    console.error("[Cron] Unauthorized POST request");
+    logger.error("Unauthorized POST request");
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

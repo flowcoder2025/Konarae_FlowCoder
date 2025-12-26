@@ -6,6 +6,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "matching-results" });
 
 export async function GET(req: NextRequest) {
   try {
@@ -78,7 +81,7 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (error) {
-    console.error("[API] Get matching results error:", error);
+    logger.error("Failed to fetch matching results", { error });
     return NextResponse.json(
       { error: "Failed to fetch matching results" },
       { status: 500 }

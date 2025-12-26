@@ -13,6 +13,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifyQStashSignature } from "@/lib/qstash";
 import { prisma } from "@/lib/prisma";
 import { executeMatching, storeMatchingResults } from "@/lib/matching";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "cron-matching-refresh" });
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -65,7 +68,7 @@ async function delegateToRailway(
   const WORKER_API_KEY = process.env.WORKER_API_KEY;
 
   if (!RAILWAY_URL || !WORKER_API_KEY) {
-    console.warn("[Cron] Railway not configured, falling back to direct processing");
+    logger.warn("Railway not configured, falling back to direct processing");
     return executeMatchingRefreshDirect(source);
   }
 
@@ -75,7 +78,7 @@ async function delegateToRailway(
   }
 
   try {
-    console.log(`[Cron] Delegating matching refresh to Railway for ${companyCount} companies`);
+    logger.info(`Delegating matching refresh to Railway for ${companyCount} companies`);
 
     const response = await fetch(`${RAILWAY_URL}/matching/batch`, {
       method: "POST",
@@ -95,7 +98,7 @@ async function delegateToRailway(
 
     const result = await response.json();
 
-    console.log(`[Cron] Matching refresh delegated to Railway:`, result);
+    logger.info("Matching refresh delegated to Railway", { result });
 
     return NextResponse.json({
       success: true,
@@ -106,7 +109,7 @@ async function delegateToRailway(
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    console.error("[Cron] Railway delegation failed, falling back to direct:", error);
+    logger.error("Railway delegation failed, falling back to direct", { error });
     return executeMatchingRefreshDirect(source);
   }
 }
@@ -116,10 +119,7 @@ async function delegateToRailway(
  */
 async function executeMatchingRefreshDirect(source: string): Promise<NextResponse> {
   try {
-    console.log(
-      `[Cron] Direct matching refresh started via ${source} at`,
-      new Date().toISOString()
-    );
+    logger.info(`Direct matching refresh started via ${source}`);
 
     // Get companies with matching preferences (only process those with preferences)
     const companies = await prisma.company.findMany({
@@ -148,7 +148,7 @@ async function executeMatchingRefreshDirect(source: string): Promise<NextRespons
     });
 
     if (companies.length === 0) {
-      console.log("[Cron] No companies with preferences found");
+      logger.info("No companies with preferences found");
       return NextResponse.json({
         success: true,
         message: "No companies to process",
@@ -195,19 +195,15 @@ async function executeMatchingRefreshDirect(source: string): Promise<NextRespons
 
         matchesRefreshed++;
 
-        console.log(
-          `[Cron] Refreshed ${results.length} matches for company ${company.id} (${company.name})`
-        );
+        logger.info(`Refreshed ${results.length} matches for company ${company.id} (${company.name})`);
       } catch (error) {
         const errorMsg = `Company ${company.id}: ${error instanceof Error ? error.message : "Unknown error"}`;
-        console.error(`[Cron] Matching refresh error:`, errorMsg);
+        logger.error("Matching refresh error", { errorMsg });
         errors.push(errorMsg);
       }
     }
 
-    console.log(
-      `[Cron] Matching refresh completed: ${matchesRefreshed}/${companies.length} companies, ${resultsStored} total results stored`
-    );
+    logger.info(`Matching refresh completed: ${matchesRefreshed}/${companies.length} companies, ${resultsStored} total results stored`);
 
     return NextResponse.json({
       success: true,
@@ -220,7 +216,7 @@ async function executeMatchingRefreshDirect(source: string): Promise<NextRespons
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    console.error("[Cron] Matching refresh error:", error);
+    logger.error("Matching refresh error", { error });
     return NextResponse.json(
       {
         error: "Failed to refresh matching results",
@@ -250,7 +246,7 @@ async function executeMatchingRefresh(source: string): Promise<NextResponse> {
     });
 
     if (companyCount === 0) {
-      console.log("[Cron] No companies need matching refresh");
+      logger.info("No companies need matching refresh");
       return NextResponse.json({
         success: true,
         message: "No companies need matching refresh",
@@ -259,7 +255,7 @@ async function executeMatchingRefresh(source: string): Promise<NextResponse> {
       });
     }
 
-    console.log(`[Cron] Found ${companyCount} companies needing matching refresh`);
+    logger.info(`Found ${companyCount} companies needing matching refresh`);
 
     // Decide: Railway for large batches (>20), direct for small
     const useRailway =
@@ -273,7 +269,7 @@ async function executeMatchingRefresh(source: string): Promise<NextResponse> {
       return executeMatchingRefreshDirect(source);
     }
   } catch (error) {
-    console.error("[Cron] Matching refresh error:", error);
+    logger.error("Matching refresh error", { error });
     return NextResponse.json(
       {
         error: "Failed to start matching refresh",
@@ -289,7 +285,7 @@ export async function GET(req: NextRequest) {
   const { valid, source } = await verifyAuthorization(req);
 
   if (!valid) {
-    console.error("[Cron] Unauthorized GET request");
+    logger.error("Unauthorized GET request");
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -301,7 +297,7 @@ export async function POST(req: NextRequest) {
   const { valid, source } = await verifyAuthorization(req);
 
   if (!valid) {
-    console.error("[Cron] Unauthorized POST request");
+    logger.error("Unauthorized POST request");
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

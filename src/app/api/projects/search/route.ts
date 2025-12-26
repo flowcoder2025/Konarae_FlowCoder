@@ -7,6 +7,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { hybridSearch } from "@/lib/rag";
 import { prisma } from "@/lib/prisma";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "projects-search" });
 
 export async function GET(req: NextRequest) {
   try {
@@ -88,7 +91,7 @@ export async function GET(req: NextRequest) {
       totalMatches: searchResults.length,
     });
   } catch (error) {
-    console.error("[API] Search projects error:", error);
+    logger.error("Search projects error", { error });
     return NextResponse.json(
       { error: "Failed to search projects" },
       { status: 500 }

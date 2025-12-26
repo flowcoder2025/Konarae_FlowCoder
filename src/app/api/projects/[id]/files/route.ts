@@ -16,6 +16,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSignedUrl } from "@/lib/supabase-storage";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "project-files" });
 
 export async function GET(
   request: NextRequest,
@@ -99,7 +102,7 @@ export async function GET(
       files: filesWithUrls,
     });
   } catch (error) {
-    console.error("Error fetching project files:", error);
+    logger.error("Error fetching project files", { error });
     return NextResponse.json(
       { error: "Failed to fetch project files" },
       { status: 500 }

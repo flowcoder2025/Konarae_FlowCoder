@@ -12,6 +12,9 @@ import {
   regenerateSection,
 } from "@/lib/business-plan-generator";
 import { z } from "zod";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "business-plan-generate" });
 
 const generateSchema = z.object({
   mode: z.enum(["all", "section"]),
@@ -158,7 +161,7 @@ export async function POST(
       );
     }
 
-    console.error("[API] Generate business plan error:", error);
+    logger.error("Failed to generate business plan", { error });
     return NextResponse.json(
       { error: "Failed to generate business plan" },
       { status: 500 }

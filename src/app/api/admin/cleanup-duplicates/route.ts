@@ -10,6 +10,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth-utils";
 import { handleAPIError } from "@/lib/api-error";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "admin-cleanup-duplicates" });
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -30,7 +33,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     const dryRun = body.dryRun !== false; // Default to dry run for safety
 
-    console.log(`[Cleanup Duplicates] Starting ${dryRun ? 'DRY RUN' : 'ACTUAL CLEANUP'}...`);
+    logger.info(`Starting ${dryRun ? 'DRY RUN' : 'ACTUAL CLEANUP'}...`);
 
     // Find all attachments grouped by projectId and sourceUrl
     const attachments = await prisma.projectAttachment.findMany({
@@ -82,7 +85,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    console.log(`[Cleanup Duplicates] Found ${duplicateGroups.length} duplicate groups, ${idsToDelete.length} attachments to delete`);
+    logger.info(`Found ${duplicateGroups.length} duplicate groups, ${idsToDelete.length} attachments to delete`);
 
     // Delete duplicates
     let deletedCount = 0;
@@ -93,7 +96,7 @@ export async function POST(req: NextRequest) {
         },
       });
       deletedCount = result.count;
-      console.log(`[Cleanup Duplicates] Deleted ${deletedCount} duplicate attachments`);
+      logger.info(`Deleted ${deletedCount} duplicate attachments`);
     }
 
     return NextResponse.json({

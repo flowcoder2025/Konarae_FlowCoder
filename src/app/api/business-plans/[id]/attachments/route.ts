@@ -9,6 +9,9 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { check } from "@/lib/rebac";
 import { createClient } from "@supabase/supabase-js";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "business-plan-attachments" });
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -103,7 +106,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
       });
 
     if (uploadError) {
-      console.error("Upload error:", uploadError);
+      logger.error("Upload to storage failed", { error: uploadError });
       return NextResponse.json(
         { error: "Failed to upload file" },
         { status: 500 }
@@ -132,7 +135,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
       attachment,
     });
   } catch (error) {
-    console.error("[API] Upload attachment error:", error);
+    logger.error("Failed to upload attachment", { error });
     return NextResponse.json(
       { error: "Failed to upload attachment" },
       { status: 500 }
@@ -167,7 +170,7 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
 
     return NextResponse.json({ attachments });
   } catch (error) {
-    console.error("[API] Get attachments error:", error);
+    logger.error("Failed to fetch attachments", { error });
     return NextResponse.json(
       { error: "Failed to fetch attachments" },
       { status: 500 }

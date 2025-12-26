@@ -3,6 +3,9 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { checkCompanyPermission, grant } from "@/lib/rebac";
 import { z } from "zod";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "company-members" });
 
 const inviteMemberSchema = z.object({
   email: z.string().email("올바른 이메일 형식이 아닙니다"),
@@ -101,7 +104,7 @@ export async function POST(
       );
     }
 
-    console.error("Error inviting member:", error);
+    logger.error("Failed to invite member", { error });
     return NextResponse.json(
       { error: "멤버 초대에 실패했습니다" },
       { status: 500 }

@@ -11,6 +11,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyQStashSignature } from "@/lib/qstash";
 import { prisma } from "@/lib/prisma";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "cron-generate-embeddings" });
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -49,7 +52,7 @@ async function verifyAuthorization(req: NextRequest): Promise<{ valid: boolean; 
  */
 async function executeEmbeddingGeneration(source: string): Promise<NextResponse> {
   try {
-    console.log(`[Cron] Embedding generation started via ${source} at`, new Date().toISOString());
+    logger.info(`Embedding generation started via ${source}`);
 
     // Count projects needing embeddings
     const projectCount = await prisma.supportProject.count({
@@ -60,7 +63,7 @@ async function executeEmbeddingGeneration(source: string): Promise<NextResponse>
     });
 
     if (projectCount === 0) {
-      console.log("[Cron] No projects need embeddings");
+      logger.info("No projects need embeddings");
       return NextResponse.json({
         success: true,
         message: "No projects need embeddings",
@@ -69,14 +72,14 @@ async function executeEmbeddingGeneration(source: string): Promise<NextResponse>
       });
     }
 
-    console.log(`[Cron] Found ${projectCount} project(s) needing embeddings`);
+    logger.info(`Found ${projectCount} project(s) needing embeddings`);
 
     // Delegate to Railway worker (no time limit)
     let RAILWAY_URL = process.env.RAILWAY_CRAWLER_URL;
     const WORKER_API_KEY = process.env.WORKER_API_KEY;
 
     if (!RAILWAY_URL || !WORKER_API_KEY) {
-      console.error("[Cron] Railway configuration missing");
+      logger.error("Railway configuration missing");
       return NextResponse.json(
         {
           error: "Server configuration error",
@@ -109,7 +112,7 @@ async function executeEmbeddingGeneration(source: string): Promise<NextResponse>
 
     const result = await response.json();
 
-    console.log(`[Cron] Embedding generation delegated to Railway:`, result);
+    logger.info("Embedding generation delegated to Railway", { result });
 
     return NextResponse.json({
       success: true,
@@ -120,7 +123,7 @@ async function executeEmbeddingGeneration(source: string): Promise<NextResponse>
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    console.error("[Cron] Embedding generation error:", error);
+    logger.error("Embedding generation error", { error });
     return NextResponse.json(
       {
         error: "Failed to start embedding generation",
@@ -136,7 +139,7 @@ export async function GET(req: NextRequest) {
   const { valid, source } = await verifyAuthorization(req);
 
   if (!valid) {
-    console.error("[Cron] Unauthorized GET request");
+    logger.error("Unauthorized GET request");
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -148,7 +151,7 @@ export async function POST(req: NextRequest) {
   const { valid, source } = await verifyAuthorization(req);
 
   if (!valid) {
-    console.error("[Cron] Unauthorized POST request");
+    logger.error("Unauthorized POST request");
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

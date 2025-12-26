@@ -11,6 +11,9 @@ import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth-utils";
 import { handleAPIError } from "@/lib/api-error";
 import iconv from "iconv-lite";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "admin-repair-filenames" });
 
 /**
  * Check if a string contains valid Korean characters
@@ -180,7 +183,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     const dryRun = body.dryRun !== false; // Default to dry run for safety
 
-    console.log(`[Repair Filenames] Starting ${dryRun ? 'DRY RUN' : 'ACTUAL REPAIR'}...`);
+    logger.info(`Starting ${dryRun ? 'DRY RUN' : 'ACTUAL REPAIR'}...`);
 
     // Get all attachments
     const attachments = await prisma.projectAttachment.findMany({
@@ -191,7 +194,7 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    console.log(`[Repair Filenames] Found ${attachments.length} attachments`);
+    logger.info(`Found ${attachments.length} attachments`);
 
     const results = {
       total: attachments.length,
@@ -232,7 +235,7 @@ export async function POST(req: NextRequest) {
             status: 'repaired',
           });
 
-          console.log(`[Repair] ${fileName} → ${repaired}`);
+          logger.info(`Repaired: ${fileName} → ${repaired}`);
         } else {
           // Could not repair
           results.failed++;
@@ -243,14 +246,14 @@ export async function POST(req: NextRequest) {
             status: 'failed',
           });
 
-          console.log(`[Failed] ${fileName} - could not repair`);
+          logger.warn(`Failed to repair: ${fileName}`);
         }
       } else {
         results.unchanged++;
       }
     }
 
-    console.log(`[Repair Filenames] Complete:`, {
+    logger.info("Repair filenames complete", {
       total: results.total,
       corrupted: results.corrupted,
       repaired: results.repaired,

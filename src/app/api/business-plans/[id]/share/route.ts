@@ -7,6 +7,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { check, grant } from "@/lib/rebac";
 import { z } from "zod";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "business-plan-share" });
 
 const shareSchema = z.object({
   email: z.string().email(),
@@ -74,7 +77,7 @@ export async function POST(
       );
     }
 
-    console.error("[API] Share business plan error:", error);
+    logger.error("Failed to share business plan", { error });
     return NextResponse.json(
       { error: "Failed to share business plan" },
       { status: 500 }

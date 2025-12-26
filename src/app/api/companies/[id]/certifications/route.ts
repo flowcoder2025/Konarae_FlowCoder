@@ -3,6 +3,9 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { checkCompanyPermission } from "@/lib/rebac";
 import { z } from "zod";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "company-certifications" });
 
 const createCertificationSchema = z.object({
   certificationType: z.string().min(1, "인증 유형은 필수입니다"),
@@ -43,7 +46,7 @@ export async function GET(
 
     return NextResponse.json(certifications);
   } catch (error) {
-    console.error("Error fetching certifications:", error);
+    logger.error("Failed to fetch certifications", { error });
     return NextResponse.json(
       { error: "인증 정보를 불러오는데 실패했습니다" },
       { status: 500 }
@@ -91,7 +94,7 @@ export async function POST(
       );
     }
 
-    console.error("Error creating certification:", error);
+    logger.error("Failed to create certification", { error });
     return NextResponse.json(
       { error: "인증 정보 추가에 실패했습니다" },
       { status: 500 }

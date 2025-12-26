@@ -9,6 +9,9 @@ import { auth } from "@/lib/auth"
 import { runDiagnosis, getUserDiagnoses } from "@/lib/diagnosis"
 import { hasSufficientCredit, getInsufficientCreditMessage, getCreditBalance } from "@/lib/credits"
 import { CREDIT_COSTS } from "@/types/diagnosis"
+import { createLogger } from "@/lib/logger"
+
+const logger = createLogger({ api: "diagnosis" })
 
 /**
  * GET /api/diagnosis - 사용자의 진단 목록 조회
@@ -36,7 +39,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(result)
   } catch (error) {
-    console.error("[GET /api/diagnosis] Error:", error)
+    logger.error("Failed to fetch diagnoses", { error })
     return NextResponse.json(
       { error: "진단 목록 조회 중 오류가 발생했습니다" },
       { status: 500 }
@@ -107,7 +110,7 @@ export async function POST(request: NextRequest) {
       { status: 201 }
     )
   } catch (error) {
-    console.error("[POST /api/diagnosis] Error:", error)
+    logger.error("Failed to create diagnosis", { error })
     return NextResponse.json(
       { error: "진단 요청 중 오류가 발생했습니다" },
       { status: 500 }

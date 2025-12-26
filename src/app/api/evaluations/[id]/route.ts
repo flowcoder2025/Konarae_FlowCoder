@@ -6,6 +6,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "evaluation-detail" });
 
 export async function GET(
   req: NextRequest,
@@ -57,7 +60,7 @@ export async function GET(
 
     return NextResponse.json({ evaluation });
   } catch (error) {
-    console.error("[API] Get evaluation error:", error);
+    logger.error("Failed to fetch evaluation", { error });
     return NextResponse.json(
       { error: "Failed to fetch evaluation" },
       { status: 500 }

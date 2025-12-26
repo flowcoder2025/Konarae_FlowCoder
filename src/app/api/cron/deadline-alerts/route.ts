@@ -10,6 +10,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { sendDeadlineAlert } from "@/lib/notifications";
 import { verifyQStashSignature } from "@/lib/qstash";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "cron-deadline-alerts" });
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -23,11 +26,11 @@ export async function POST(req: NextRequest) {
 
     const isValid = await verifyQStashSignature(signature, body);
     if (!isValid) {
-      console.error("[Cron] Invalid QStash signature");
+      logger.error("Invalid QStash signature");
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    console.log("[Cron] Deadline alerts check started");
+    logger.info("Deadline alerts check started");
 
     // Get all active notification settings
     const settings = await prisma.notificationSetting.findMany({
@@ -73,15 +76,12 @@ export async function POST(req: NextRequest) {
           await sendDeadlineAlert(setting.userId, project.id);
           alertsSent++;
         } catch (error) {
-          console.error(
-            `[Cron] Failed to send deadline alert for project ${project.id}:`,
-            error
-          );
+          logger.error(`Failed to send deadline alert for project ${project.id}`, { error });
         }
       }
     }
 
-    console.log(`[Cron] Deadline alerts check completed: ${alertsSent} alerts sent`);
+    logger.info(`Deadline alerts check completed: ${alertsSent} alerts sent`);
 
     return NextResponse.json({
       success: true,
@@ -89,7 +89,7 @@ export async function POST(req: NextRequest) {
       alertsSent,
     });
   } catch (error) {
-    console.error("[Cron] Deadline alerts error:", error);
+    logger.error("Deadline alerts error", { error });
     return NextResponse.json(
       { error: "Failed to process deadline alerts" },
       { status: 500 }
