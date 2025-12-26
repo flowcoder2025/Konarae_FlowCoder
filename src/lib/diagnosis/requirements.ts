@@ -99,7 +99,7 @@ export async function extractRequirements(
       .replace("{attachmentSection}", attachmentSection)
 
     // Gemini 호출
-    const model = google("gemini-2.5-flash-preview-05-20")
+    const model = google("gemini-3-flash-preview")
 
     const { text } = await generateText({
       model,
