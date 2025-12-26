@@ -11,6 +11,7 @@ import {
   Database,
   FileText,
   Users,
+  Coins,
 } from "lucide-react";
 
 export default async function AdminLayout({
@@ -44,6 +45,11 @@ export default async function AdminLayout({
       name: "사용자 관리",
       href: "/admin/users",
       icon: Users,
+    },
+    {
+      name: "크래딧 관리",
+      href: "/admin/credits",
+      icon: Coins,
     },
   ];
 

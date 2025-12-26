@@ -5,7 +5,7 @@
 
 import { prisma } from "@/lib/prisma";
 import { Card } from "@/components/ui/card";
-import { Users, FileText, Database, Activity } from "lucide-react";
+import { Users, FileText, Database, Activity, Coins } from "lucide-react";
 import Link from "next/link";
 
 export default async function AdminDashboardPage() {
@@ -110,6 +110,16 @@ export default async function AdminDashboardPage() {
               <h3 className="font-semibold">사용자 관리</h3>
               <p className="mt-1 text-sm text-muted-foreground">
                 사용자 계정을 관리하고 권한을 설정합니다
+              </p>
+            </Card>
+          </Link>
+
+          <Link href="/admin/credits">
+            <Card className="p-6 hover:border-primary transition-colors cursor-pointer">
+              <Coins className="h-8 w-8 text-primary mb-3" />
+              <h3 className="font-semibold">크래딧 관리</h3>
+              <p className="mt-1 text-sm text-muted-foreground">
+                사용자 크래딧을 조회하고 부여합니다
               </p>
             </Card>
           </Link>
