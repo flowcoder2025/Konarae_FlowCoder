@@ -37,6 +37,8 @@ model User {
   notifications       Notification[]
   notificationSetting NotificationSetting?
   uploadedDocuments   CompanyDocument[]
+  credit              Credit?
+  gapDiagnoses        GapDiagnosis[]
 }
 
 model Account {
@@ -175,6 +177,7 @@ model Company {
   businessPlans       BusinessPlan[]
   matchingPreferences MatchingPreference[]
   documents           CompanyDocument[]
+  gapDiagnoses        GapDiagnosis[]
 
   @@index([businessNumber])
   @@index([name])
@@ -319,6 +322,7 @@ model SupportProject {
   matchingResults MatchingResult[]
   businessPlans   BusinessPlan[]
   attachments     ProjectAttachment[]
+  gapDiagnoses    GapDiagnosis[]
 
   @@index([category])
   @@index([region])
@@ -742,4 +746,83 @@ model DocumentEmbedding {
   @@index([embedding], map: "idx_embeddings_hnsw")
   @@index([keywords], map: "idx_embeddings_keywords", type: Gin)
   @@map("document_embeddings")
+}
+
+// ============================================
+// Credit System (크래딧 과금)
+// ============================================
+
+/// 사용자 크래딧 잔액
+model Credit {
+  id             String   @id @default(cuid())
+  userId         String   @unique
+  balance        Int      @default(100) // 신규 가입 시 100C 무료 지급
+  totalPurchased Int      @default(0)   // 누적 구매 금액
+  totalUsed      Int      @default(0)   // 누적 사용량
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user         User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions CreditTransaction[]
+
+  @@map("credits")
+}
+
+/// 크래딧 거래 내역
+model CreditTransaction {
+  id           String   @id @default(cuid())
+  creditId     String
+  type         String   // 'signup_bonus' | 'purchase' | 'usage' | 'refund'
+  amount       Int      // +100 (충전), -15 (사용)
+  balanceAfter Int      // 거래 후 잔액
+  description  String   // "부족항목 진단 - 2024 스마트공장 지원사업"
+  relatedType  String?  // 'diagnosis' | 'check' | 'generation'
+  relatedId    String?  // GapDiagnosis.id 등
+  createdAt    DateTime @default(now())
+
+  credit Credit @relation(fields: [creditId], references: [id], onDelete: Cascade)
+
+  @@index([creditId])
+  @@index([createdAt(sort: Desc)])
+  @@map("credit_transactions")
+}
+
+// ============================================
+// Gap Diagnosis System (부족항목 진단)
+// ============================================
+
+/// 부족항목 진단 결과
+model GapDiagnosis {
+  id        String @id @default(cuid())
+  companyId String
+  projectId String
+  userId    String // 요청자
+
+  // 진단 결과
+  fitScore Int?   // 0-100 적합도 점수
+  status   String @default("pending")
+  // pending | processing | completed | failed
+
+  // JSON 필드 (상세 결과)
+  requirements Json? // ExtractedRequirement[] - 추출된 요구사항
+  gaps         Json? // GapItem[] - 부족 항목 목록
+  actions      Json? // ActionItem[] - 개선 액션 목록
+
+  // 메타
+  creditUsed   Int     @default(15)
+  errorMessage String?
+
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  company Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  project SupportProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+  @@index([projectId])
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt(sort: Desc)])
+  @@map("gap_diagnoses")
 }
