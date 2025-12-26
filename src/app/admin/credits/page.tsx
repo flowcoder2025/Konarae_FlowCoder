@@ -9,6 +9,7 @@ import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Coins, TrendingUp, TrendingDown, Users } from "lucide-react"
 import { GrantCreditDialog } from "@/components/admin/grant-credit-dialog"
+import { DeductCreditDialog } from "@/components/admin/deduct-credit-dialog"
 
 export default async function AdminCreditsPage() {
   // 크래딧이 있는 사용자 목록 조회
@@ -52,7 +53,7 @@ export default async function AdminCreditsPage() {
       <div>
         <h1 className="text-3xl font-bold">크래딧 관리</h1>
         <p className="mt-2 text-muted-foreground">
-          사용자 크래딧 현황을 조회하고 부여할 수 있습니다
+          사용자 크래딧 현황을 조회하고 부여/차감할 수 있습니다
         </p>
       </div>
 
@@ -177,8 +178,13 @@ export default async function AdminCreditsPage() {
                         : "-"}
                     </td>
                     <td className="p-4">
-                      <div className="flex justify-end">
+                      <div className="flex justify-end gap-2">
                         <GrantCreditDialog
+                          userId={user.id}
+                          userName={user.name || user.email}
+                          currentBalance={balance}
+                        />
+                        <DeductCreditDialog
                           userId={user.id}
                           userName={user.name || user.email}
                           currentBalance={balance}
