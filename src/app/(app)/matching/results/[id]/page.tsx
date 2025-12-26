@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import Link from "next/link";
 import { PageHeader } from "@/components/common";
+import { StartDiagnosisButton } from "@/components/diagnosis/start-diagnosis-button";
 import type { Metadata } from "next";
 
 interface MatchResultDetailPageProps {
@@ -262,19 +263,25 @@ export default async function MatchResultDetailPage({
       </Card>
 
       {/* Actions */}
-      <div className="flex gap-4">
-        <Link
-          href={`/projects/${result.projectId}`}
-          className="flex-1 text-center py-3 px-4 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
-        >
-          지원사업 상세보기
-        </Link>
-        <Link
-          href={`/business-plans/new?companyId=${result.companyId}&projectId=${result.projectId}`}
-          className="flex-1 text-center py-3 px-4 border border-primary text-primary rounded-md hover:bg-primary/10 transition-colors"
-        >
-          사업계획서 작성
-        </Link>
+      <div className="flex flex-col gap-4">
+        <div className="flex gap-4">
+          <Link
+            href={`/projects/${result.projectId}`}
+            className="flex-1 text-center py-3 px-4 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+          >
+            지원사업 상세보기
+          </Link>
+          <Link
+            href={`/business-plans/new?companyId=${result.companyId}&projectId=${result.projectId}`}
+            className="flex-1 text-center py-3 px-4 border border-primary text-primary rounded-md hover:bg-primary/10 transition-colors"
+          >
+            사업계획서 작성
+          </Link>
+        </div>
+        <StartDiagnosisButton
+          companyId={result.companyId}
+          projectId={result.projectId}
+        />
       </div>
     </div>
   );
