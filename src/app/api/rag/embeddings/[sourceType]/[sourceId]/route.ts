@@ -6,11 +6,19 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { isAdmin } from "@/lib/auth-utils";
+import {
+  checkCompanyPermission,
+  checkBusinessPlanPermission,
+} from "@/lib/rebac";
 import {
   getEmbeddingCount,
   deleteEmbeddings,
   type SourceType,
 } from "@/lib/rag";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "rag-embeddings" });
 
 export async function GET(
   req: NextRequest,
@@ -44,7 +52,7 @@ export async function GET(
       embeddingCount: count,
     });
   } catch (error) {
-    console.error("[API] Get embeddings error:", error);
+    logger.error("Get embeddings failed", { error });
     return NextResponse.json(
       { error: "Failed to get embeddings" },
       { status: 500 }
@@ -73,17 +81,50 @@ export async function DELETE(
       );
     }
 
-    // TODO: Add permission check based on sourceType
-    // For now, only authenticated users can delete
+    // Permission check based on sourceType
+    let hasPermission = false;
+
+    switch (sourceType) {
+      case "support_project":
+        // Only admin can delete support project embeddings
+        hasPermission = await isAdmin(session.user.id);
+        break;
+      case "company":
+        // Company owner or admin can delete company embeddings
+        hasPermission = await checkCompanyPermission(
+          session.user.id,
+          sourceId,
+          "admin"
+        );
+        break;
+      case "business_plan":
+        // Business plan owner can delete embeddings
+        hasPermission = await checkBusinessPlanPermission(
+          session.user.id,
+          sourceId,
+          "owner"
+        );
+        break;
+    }
+
+    if (!hasPermission) {
+      logger.warn("Unauthorized embedding deletion attempt", {
+        userId: session.user.id,
+        sourceType,
+        sourceId,
+      });
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
 
     await deleteEmbeddings(sourceType as SourceType, sourceId);
 
+    logger.info("Embeddings deleted", { sourceType, sourceId });
     return NextResponse.json({
       success: true,
       message: "Embeddings deleted",
     });
   } catch (error) {
-    console.error("[API] Delete embeddings error:", error);
+    logger.error("Delete embeddings failed", { error });
     return NextResponse.json(
       { error: "Failed to delete embeddings" },
       { status: 500 }

@@ -16,6 +16,10 @@
 
 import { hybridSearch } from "./rag";
 import { prisma } from "./prisma";
+import { createLogger } from "./logger";
+import { Prisma } from "@prisma/client";
+
+const logger = createLogger({ module: "matching" });
 
 // Matching weights - Simplified (v2)
 // Removed: timeliness, amount (not meaningful for matching quality)
@@ -125,7 +129,7 @@ async function calculateSemanticScoresBatch(
 
     return scoreMap;
   } catch (error) {
-    console.error("[Matching] Batch semantic score error:", error);
+    logger.error("Batch semantic score error", { error });
     return new Map(); // Return empty map on error
   }
 }
@@ -155,9 +159,9 @@ async function calculateDocumentSimilarityScoresBatch(
     });
 
     if (companyEmbeddingCount === 0) {
-      console.log(
-        `[Matching] No document embeddings for company ${companyId}, skipping document similarity`
-      );
+      logger.debug("No document embeddings for company, skipping document similarity", {
+        companyId,
+      });
       return new Map();
     }
 
@@ -205,13 +209,14 @@ async function calculateDocumentSimilarityScoresBatch(
       scoreMap.set(row.project_id, Math.min(score, 100));
     }
 
-    console.log(
-      `[Matching] Document similarity calculated for ${scoreMap.size}/${projectIds.length} projects`
-    );
+    logger.debug("Document similarity calculated", {
+      matchedProjects: scoreMap.size,
+      totalProjects: projectIds.length,
+    });
 
     return scoreMap;
   } catch (error) {
-    console.error("[Matching] Document similarity score error:", error);
+    logger.error("Document similarity score error", { error, companyId });
     return new Map();
   }
 }
@@ -692,13 +697,14 @@ export async function executeMatching(
       .filter(Boolean)
       .join(" ");
 
-    console.log(
-      `[Matching] Enhanced profile for ${company.name}: ` +
-        `${company.documents.length} docs, ${company.certifications.length} certs`
-    );
+    logger.debug("Enhanced profile built", {
+      companyName: company.name,
+      documentCount: company.documents.length,
+      certificationCount: company.certifications.length,
+    });
 
     // Get active projects
-    const whereClause: any = {
+    const whereClause: Prisma.SupportProjectWhereInput = {
       deletedAt: null,
       status: "active",
     };
@@ -839,7 +845,7 @@ export async function executeMatching(
 
     return results;
   } catch (error) {
-    console.error("[Matching] Execute matching error:", error);
+    logger.error("Execute matching error", { error });
     throw new Error("Failed to execute matching");
   }
 }
@@ -877,11 +883,12 @@ export async function storeMatchingResults(
       })),
     });
 
-    console.log(
-      `[Matching] Stored ${topResults.length} results for company ${companyId}`
-    );
+    logger.info("Matching results stored", {
+      resultCount: topResults.length,
+      companyId,
+    });
   } catch (error) {
-    console.error("[Matching] Store results error:", error);
+    logger.error("Store results error", { error, companyId });
     throw new Error("Failed to store matching results");
   }
 }

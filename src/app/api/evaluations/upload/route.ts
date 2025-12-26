@@ -9,7 +9,11 @@ import { prisma } from "@/lib/prisma";
 import { evaluateBusinessPlan } from "@/lib/evaluation-engine";
 import { parseDocument } from "@/lib/document-parser";
 import { sendEvaluationCompleteNotification } from "@/lib/notifications";
+import { uploadEvaluationFile } from "@/lib/supabase-storage";
+import { createLogger } from "@/lib/logger";
 import { z } from "zod";
+
+const logger = createLogger({ api: "evaluations-upload" });
 
 const uploadEvaluationSchema = z.object({
   criteria: z.string().min(1),
@@ -63,29 +67,53 @@ export async function POST(req: NextRequest) {
       const parseResult = await parseDocument(file, fileType);
       parsedContent = parseResult.text;
     } catch (parseError) {
-      console.error("[Evaluation] Document parse error:", parseError);
+      logger.error("Document parse failed", { error: parseError, fileName: file.name });
       return NextResponse.json(
         { error: "Failed to parse document. Please check the file format." },
         { status: 400 }
       );
     }
 
-    // Create evaluation record
+    // Create evaluation record first to get the ID
     const evaluation = await prisma.evaluation.create({
       data: {
         userId: session.user.id,
-        uploadedFileUrl: file.name, // TODO: Store actual file URL in cloud storage
+        uploadedFileUrl: file.name, // Temporary - will update after upload
         criteria: criteriaText,
         status: "processing",
       },
     });
+
+    // Upload file to Supabase Storage
+    const uploadResult = await uploadEvaluationFile(
+      file,
+      evaluation.id,
+      session.user.id
+    );
+
+    if (uploadResult.success && uploadResult.storagePath) {
+      // Update evaluation with actual storage path
+      await prisma.evaluation.update({
+        where: { id: evaluation.id },
+        data: { uploadedFileUrl: uploadResult.storagePath },
+      });
+      logger.info("Evaluation file uploaded", {
+        evaluationId: evaluation.id,
+        storagePath: uploadResult.storagePath,
+      });
+    } else {
+      logger.warn("File upload failed, using filename only", {
+        evaluationId: evaluation.id,
+        error: uploadResult.error,
+      });
+    }
 
     // Perform evaluation asynchronously
     performUploadEvaluation(evaluation.id, {
       uploadedContent: parsedContent,
       criteria: criteriaText,
     }).catch((error) => {
-      console.error("[API] Upload evaluation background error:", error);
+      logger.error("Upload evaluation background error", { error, evaluationId: evaluation.id });
     });
 
     return NextResponse.json({
@@ -94,7 +122,7 @@ export async function POST(req: NextRequest) {
       message: "File uploaded. Evaluation started.",
     });
   } catch (error) {
-    console.error("[API] Upload evaluation error:", error);
+    logger.error("Upload evaluation failed", { error });
     return NextResponse.json(
       { error: "Failed to upload and evaluate file" },
       { status: 500 }
@@ -143,8 +171,10 @@ async function performUploadEvaluation(
       evaluationId,
       result.totalScore
     );
+
+    logger.info("Evaluation completed", { evaluationId, totalScore: result.totalScore });
   } catch (error) {
-    console.error("[Evaluation] Upload background processing error:", error);
+    logger.error("Upload background processing failed", { error, evaluationId });
 
     // Mark as failed
     await prisma.evaluation.update({

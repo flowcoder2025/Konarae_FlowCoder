@@ -11,6 +11,7 @@ interface LogContext {
   requestId?: string;
   path?: string;
   method?: string;
+  error?: unknown;
   [key: string]: unknown;
 }
 
@@ -75,25 +76,44 @@ class Logger {
     }
   }
 
-  error(message: string, error?: Error, context?: LogContext) {
+  error(message: string, errorOrContext?: Error | LogContext, context?: LogContext) {
     if (this.shouldLog("error")) {
+      // Handle both signatures:
+      // error(message, Error, context?) or error(message, contextWithError)
+      let err: Error | undefined;
+      let ctx: LogContext | undefined;
+
+      if (errorOrContext instanceof Error) {
+        err = errorOrContext;
+        ctx = context;
+      } else if (errorOrContext) {
+        ctx = errorOrContext;
+        // Extract error from context if provided
+        if (ctx.error instanceof Error) {
+          err = ctx.error;
+        } else if (ctx.error) {
+          // Convert unknown error to Error-like object
+          err = new Error(String(ctx.error));
+        }
+      }
+
       const entry: LogEntry = {
         level: "error",
         message,
         timestamp: new Date().toISOString(),
-        context,
-        error: error
+        context: ctx,
+        error: err
           ? {
-              name: error.name,
-              message: error.message,
-              stack: this.isDevelopment ? error.stack : undefined,
+              name: err.name,
+              message: err.message,
+              stack: this.isDevelopment ? err.stack : undefined,
             }
           : undefined,
       };
       console.error(this.formatLog(entry));
 
       // Send to error tracking service in production
-      if (!this.isDevelopment && error) {
+      if (!this.isDevelopment && err) {
         this.sendToErrorTracking(entry);
       }
     }
@@ -118,7 +138,12 @@ export function createLogger(baseContext: LogContext) {
       logger.info(message, { ...baseContext, ...context }),
     warn: (message: string, context?: LogContext) =>
       logger.warn(message, { ...baseContext, ...context }),
-    error: (message: string, error?: Error, context?: LogContext) =>
-      logger.error(message, error, { ...baseContext, ...context }),
+    error: (message: string, errorOrContext?: Error | LogContext, context?: LogContext) => {
+      if (errorOrContext instanceof Error) {
+        logger.error(message, errorOrContext, { ...baseContext, ...context });
+      } else {
+        logger.error(message, { ...baseContext, ...errorOrContext, ...context });
+      }
+    },
   };
 }

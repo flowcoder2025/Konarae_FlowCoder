@@ -21,6 +21,7 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey, {
 export const BUCKETS = {
   PROJECT_FILES: "project-files",
   BUSINESS_PLAN_FILES: "business-plan-files",
+  EVALUATION_FILES: "evaluation-files",
 } as const;
 
 // 파일 타입
@@ -415,4 +416,111 @@ export function sortByParsingPriority<T extends { fileName: string }>(
   return [...files].sort(
     (a, b) => getParsingPriority(b.fileName) - getParsingPriority(a.fileName)
   );
+}
+
+// ============================================
+// 평가 파일 업로드 유틸리티
+// ============================================
+
+/**
+ * 평가용 파일 업로드
+ * @param file 파일 객체 (File)
+ * @param evaluationId 평가 ID
+ * @param userId 사용자 ID
+ */
+export async function uploadEvaluationFile(
+  file: File,
+  evaluationId: string,
+  userId: string
+): Promise<UploadResult> {
+  try {
+    // 버킷 확인/생성
+    await ensureBucketExists(BUCKETS.EVALUATION_FILES);
+
+    // 파일을 Buffer로 변환
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    // 스토리지 경로: evaluations/{userId}/{evaluationId}/{timestamp}_{randomId}.{ext}
+    const timestamp = Date.now();
+    const randomId = Math.random().toString(36).substring(2, 10);
+    const ext = file.name.split('.').pop()?.toLowerCase() || 'bin';
+    const storagePath = `evaluations/${userId}/${evaluationId}/${timestamp}_${randomId}.${ext}`;
+
+    // MIME 타입 결정
+    const fileType = getFileTypeFromName(file.name);
+    const mimeType = getMimeTypeFromFileType(fileType);
+
+    // 업로드
+    const { data, error } = await supabase.storage
+      .from(BUCKETS.EVALUATION_FILES)
+      .upload(storagePath, buffer, {
+        contentType: mimeType,
+        upsert: false,
+      });
+
+    if (error) {
+      console.error("평가 파일 업로드 실패:", error);
+      return { success: false, error: error.message };
+    }
+
+    console.log(`✓ 평가 파일 업로드 성공: ${storagePath}`);
+
+    return {
+      success: true,
+      storagePath: data.path,
+    };
+  } catch (error) {
+    console.error("평가 파일 업로드 중 오류:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+    };
+  }
+}
+
+/**
+ * 평가 파일의 서명된 URL 생성
+ */
+export async function getEvaluationFileSignedUrl(
+  storagePath: string,
+  expiresIn: number = 300
+): Promise<SignedUrlResult> {
+  try {
+    const { data, error } = await supabase.storage
+      .from(BUCKETS.EVALUATION_FILES)
+      .createSignedUrl(storagePath, expiresIn);
+
+    if (error) {
+      console.error("평가 파일 서명된 URL 생성 실패:", error);
+      return { success: false, error: error.message };
+    }
+
+    return {
+      success: true,
+      signedUrl: data.signedUrl,
+    };
+  } catch (error) {
+    console.error("평가 파일 서명된 URL 생성 중 오류:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+    };
+  }
+}
+
+/**
+ * 파일 타입에 따른 MIME 타입 반환 (내부 함수 래퍼)
+ */
+function getMimeTypeFromFileType(fileType: FileType): string {
+  switch (fileType) {
+    case "pdf":
+      return "application/pdf";
+    case "hwp":
+      return "application/x-hwp";
+    case "hwpx":
+      return "application/vnd.hancom.hwpx";
+    default:
+      return "application/octet-stream";
+  }
 }

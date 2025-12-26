@@ -8,6 +8,10 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth-utils";
 import { handleAPIError } from "@/lib/api-error";
+import { triggerCrawl } from "@/lib/railway";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ api: "admin-crawler-start" });
 
 const crawlStartSchema = z.object({
   sourceId: z.string().cuid(),
@@ -61,14 +65,48 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    // TODO: Trigger actual crawl job via Railway service
-    // await fetch(`${process.env.RAILWAY_CRAWLER_URL}/crawl`, {
-    //   method: 'POST',
-    //   headers: { 'Content-Type': 'application/json' },
-    //   body: JSON.stringify({ jobId: job.id, source })
-    // });
+    // Trigger actual crawl job via Railway service
+    const crawlResult = await triggerCrawl(sourceId);
 
-    return NextResponse.json({ job }, { status: 201 });
+    if (crawlResult.success) {
+      // Update job status to running
+      await prisma.crawlJob.update({
+        where: { id: job.id },
+        data: { status: "running" },
+      });
+
+      logger.info("Crawl job triggered", {
+        jobId: job.id,
+        sourceId,
+        sourceName: source.name,
+      });
+    } else {
+      // Update job status to failed if trigger failed
+      await prisma.crawlJob.update({
+        where: { id: job.id },
+        data: {
+          status: "failed",
+          errorMessage: crawlResult.error,
+        },
+      });
+
+      logger.error("Crawl trigger failed", {
+        jobId: job.id,
+        sourceId,
+        error: crawlResult.error,
+      });
+
+      return NextResponse.json(
+        {
+          job,
+          warning: "Job created but trigger failed",
+          error: crawlResult.error,
+        },
+        { status: 202 }
+      );
+    }
+
+    return NextResponse.json({ job, crawlResult }, { status: 201 });
   } catch (error) {
     return handleAPIError(error, req.url);
   }

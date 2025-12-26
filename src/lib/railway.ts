@@ -7,6 +7,10 @@
  * @see src/lib/document-parser.ts
  */
 
+import { createLogger } from "./logger";
+
+const logger = createLogger({ module: "railway" });
+
 // Railway Microservices URLs
 const CRAWLER_SERVICE_URL =
   process.env.RAILWAY_CRAWLER_URL ||
@@ -55,7 +59,7 @@ export async function triggerCrawl(sourceId: string): Promise<CrawlResult> {
       projectsFound: data.projectsFound,
     };
   } catch (error) {
-    console.error("[Railway] Crawl error:", error);
+    logger.error("Crawl error", { error });
     return {
       success: false,
       jobId: "",
@@ -82,7 +86,7 @@ export async function getCrawlJobStatus(jobId: string): Promise<{
 
     return response.json();
   } catch (error) {
-    console.error("[Railway] Get job status error:", error);
+    logger.error("Get job status error", { error, jobId });
     return {
       status: "failed",
       error: error instanceof Error ? error.message : "Get status failed",
@@ -137,7 +141,7 @@ export async function processWithAI(
       result: data,
     };
   } catch (error) {
-    console.error("[Railway] AI processing error:", error);
+    logger.error("AI processing error", { error, task: request.task });
     return {
       success: false,
       error: error instanceof Error ? error.message : "AI processing failed",
@@ -183,7 +187,7 @@ export async function processDocumentWithAI(
       aiResult,
     };
   } catch (error) {
-    console.error("[Railway] Document AI processing error:", error);
+    logger.error("Document AI processing error", { error });
     return {
       success: false,
       error: error instanceof Error ? error.message : "Processing failed",
