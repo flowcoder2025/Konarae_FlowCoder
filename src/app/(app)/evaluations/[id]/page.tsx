@@ -9,6 +9,9 @@ import { FeedbackItem } from "@/components/evaluations/feedback-item";
 import { Card } from "@/components/ui/card";
 import Link from "next/link";
 import { PageHeader } from "@/components/common";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ page: "evaluation-detail" });
 
 const STATUS_LABELS: Record<string, string> = {
   processing: "평가 중",
@@ -53,7 +56,7 @@ export default function EvaluationDetailPage() {
       const data = await res.json();
       setEvaluation(data.evaluation);
     } catch (error) {
-      console.error("Fetch evaluation error:", error);
+      logger.error("Fetch evaluation error", { error });
       alert("평가를 불러올 수 없습니다.");
       router.push("/evaluations");
     } finally {

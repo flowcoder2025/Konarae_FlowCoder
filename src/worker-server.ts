@@ -14,6 +14,9 @@ import { processCrawlJob } from '@/lib/crawler/worker';
 import { prisma } from '@/lib/prisma';
 import { storeDocumentEmbeddings } from '@/lib/rag';
 import { executeMatching, storeMatchingResults } from '@/lib/matching';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ lib: 'worker-server' });
 
 const app = express();
 
@@ -44,8 +47,7 @@ app.use((req, res, next) => {
 
 // 요청 로깅 미들웨어
 app.use((req, res, next) => {
-  const timestamp = new Date().toISOString();
-  console.log(`[${timestamp}] ${req.method} ${req.path}`);
+  logger.debug(`${req.method} ${req.path}`);
   next();
 });
 
@@ -77,7 +79,7 @@ app.post('/crawl', async (req, res) => {
     const expectedAuth = `Bearer ${process.env.WORKER_API_KEY}`;
 
     if (!authHeader || authHeader !== expectedAuth) {
-      console.error('[Worker] Unauthorized request');
+      logger.error('Unauthorized request');
       return res.status(401).json({
         error: 'Unauthorized',
         message: 'Invalid or missing API key',
@@ -87,14 +89,14 @@ app.post('/crawl', async (req, res) => {
     // 2. 요청 검증
     const { jobId } = req.body;
     if (!jobId || typeof jobId !== 'string') {
-      console.error('[Worker] Invalid jobId:', jobId);
+      logger.error('Invalid jobId', { jobId });
       return res.status(400).json({
         error: 'Bad Request',
         message: 'jobId is required and must be a string',
       });
     }
 
-    console.log(`[Worker] Received crawl job: ${jobId}`);
+    logger.info(`Received crawl job: ${jobId}`);
 
     // 3. 즉시 응답 (202 Accepted)
     res.status(202).json({
@@ -105,18 +107,18 @@ app.post('/crawl', async (req, res) => {
     });
 
     // 4. 백그라운드에서 크롤링 실행
-    console.log(`[Worker] Starting background processing for job ${jobId}`);
+    logger.info(`Starting background processing for job ${jobId}`);
 
     processCrawlJob(jobId)
       .then((stats) => {
-        console.log(`[Worker] Job ${jobId} completed successfully:`, stats);
+        logger.info(`Job ${jobId} completed successfully`, { stats });
       })
       .catch((error) => {
-        console.error(`[Worker] Job ${jobId} failed:`, error);
+        logger.error(`Job ${jobId} failed`, { error });
       });
 
   } catch (error) {
-    console.error('[Worker] Unexpected error:', error);
+    logger.error('Unexpected error', { error });
     res.status(500).json({
       error: 'Internal Server Error',
       message: error instanceof Error ? error.message : 'Unknown error',
@@ -149,7 +151,7 @@ app.post('/crawl/batch', async (req, res) => {
       });
     }
 
-    console.log(`[Worker] Received batch crawl: ${jobIds.length} jobs`);
+    logger.info(`Received batch crawl: ${jobIds.length} jobs`);
 
     // 즉시 응답
     res.status(202).json({
@@ -164,15 +166,15 @@ app.post('/crawl/batch', async (req, res) => {
     for (const jobId of jobIds) {
       processCrawlJob(jobId)
         .then((stats) => {
-          console.log(`[Worker] Batch job ${jobId} completed:`, stats);
+          logger.info(`Batch job ${jobId} completed`, { stats });
         })
         .catch((error) => {
-          console.error(`[Worker] Batch job ${jobId} failed:`, error);
+          logger.error(`Batch job ${jobId} failed`, { error });
         });
     }
 
   } catch (error) {
-    console.error('[Worker] Batch processing error:', error);
+    logger.error('Batch processing error', { error });
     res.status(500).json({
       error: 'Internal Server Error',
       message: error instanceof Error ? error.message : 'Unknown error',
@@ -193,13 +195,13 @@ app.post('/generate-embeddings', async (req, res) => {
     // Verify API key
     const authHeader = req.headers.authorization;
     if (!authHeader || authHeader !== `Bearer ${process.env.WORKER_API_KEY}`) {
-      console.error('[Embedding] Unauthorized request');
+      logger.error('Embedding: Unauthorized request');
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
     const { batchSize = 50 } = req.body;
 
-    console.log(`[Embedding] Starting batch embedding generation (batch size: ${batchSize})`);
+    logger.info(`Embedding: Starting batch generation (batch size: ${batchSize})`);
 
     // Get projects needing embeddings
     const projects = await prisma.supportProject.findMany({
@@ -224,7 +226,7 @@ app.post('/generate-embeddings', async (req, res) => {
     });
 
     if (projects.length === 0) {
-      console.log('[Embedding] No projects need embeddings');
+      logger.info('Embedding: No projects need embeddings');
       return res.json({
         success: true,
         message: 'No projects need embeddings',
@@ -233,7 +235,7 @@ app.post('/generate-embeddings', async (req, res) => {
       });
     }
 
-    console.log(`[Embedding] Processing ${projects.length} project(s)`);
+    logger.info(`Embedding: Processing ${projects.length} project(s)`);
 
     let successCount = 0;
     let errorCount = 0;
@@ -256,7 +258,7 @@ app.post('/generate-embeddings', async (req, res) => {
         const content = contentParts.join('\n\n');
 
         if (!content.trim()) {
-          console.warn(`[Embedding] Project ${project.id} has no content to embed`);
+          logger.warn(`Embedding: Project ${project.id} has no content to embed`);
           // Still mark as processed to avoid retry
           await prisma.supportProject.update({
             where: { id: project.id },
@@ -288,11 +290,11 @@ app.post('/generate-embeddings', async (req, res) => {
         });
 
         successCount++;
-        console.log(`[Embedding] ✓ Generated embeddings for: ${project.name}`);
+        logger.info(`Embedding: ✓ Generated for ${project.name}`);
       } catch (error) {
         errorCount++;
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        console.error(`[Embedding] ✗ Failed for project ${project.id}:`, errorMessage);
+        logger.error(`Embedding: ✗ Failed for project ${project.id}`, { error: errorMessage });
         errors.push({
           projectId: project.id,
           error: errorMessage,
@@ -305,7 +307,7 @@ app.post('/generate-embeddings', async (req, res) => {
 
     const duration = Date.now() - startTime;
 
-    console.log(`[Embedding] Batch complete: ${successCount} success, ${errorCount} errors in ${duration}ms`);
+    logger.info(`Embedding: Batch complete - ${successCount} success, ${errorCount} errors in ${duration}ms`);
 
     return res.json({
       success: true,
@@ -319,7 +321,7 @@ app.post('/generate-embeddings', async (req, res) => {
     });
   } catch (error) {
     const duration = Date.now() - startTime;
-    console.error('[Embedding] Batch error:', error);
+    logger.error('Embedding: Batch error', { error });
 
     return res.status(500).json({
       error: 'Embedding generation failed',
@@ -371,7 +373,7 @@ app.get('/embedding-stats', async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    console.error('[Embedding] Stats error:', error);
+    logger.error('Embedding: Stats error', { error });
     return res.status(500).json({
       error: 'Failed to get stats',
       details: error instanceof Error ? error.message : 'Unknown error',
@@ -392,13 +394,13 @@ app.post('/matching/batch', async (req, res) => {
     // Verify API key
     const authHeader = req.headers.authorization;
     if (!authHeader || authHeader !== `Bearer ${process.env.WORKER_API_KEY}`) {
-      console.error('[Matching] Unauthorized request');
+      logger.error('Matching: Unauthorized request');
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
     const { batchSize = 20, maxCompanies = 500 } = req.body;
 
-    console.log(`[Matching] Starting batch matching refresh (batch: ${batchSize}, max: ${maxCompanies})`);
+    logger.info(`Matching: Starting batch refresh (batch: ${batchSize}, max: ${maxCompanies})`);
 
     // Get companies with matching preferences
     const companies = await prisma.company.findMany({
@@ -427,7 +429,7 @@ app.post('/matching/batch', async (req, res) => {
     });
 
     if (companies.length === 0) {
-      console.log('[Matching] No companies with preferences found');
+      logger.info('Matching: No companies with preferences found');
       return res.json({
         success: true,
         message: 'No companies need matching refresh',
@@ -436,7 +438,7 @@ app.post('/matching/batch', async (req, res) => {
       });
     }
 
-    console.log(`[Matching] Processing ${companies.length} company(ies)`);
+    logger.info(`Matching: Processing ${companies.length} company(ies)`);
 
     // Respond immediately (202 Accepted)
     res.status(202).json({
@@ -449,12 +451,12 @@ app.post('/matching/batch', async (req, res) => {
 
     // Process in background
     processMatchingBatch(companies, batchSize, startTime).catch((error) => {
-      console.error('[Matching] Batch processing error:', error);
+      logger.error('Matching: Batch processing error', { error });
     });
 
   } catch (error) {
     const duration = Date.now() - startTime;
-    console.error('[Matching] Batch error:', error);
+    logger.error('Matching: Batch error', { error });
 
     return res.status(500).json({
       error: 'Matching batch failed',
@@ -494,7 +496,7 @@ async function processMatchingBatch(
     const batchNum = Math.floor(i / batchSize) + 1;
     const totalBatches = Math.ceil(companies.length / batchSize);
 
-    console.log(`[Matching] Processing batch ${batchNum}/${totalBatches} (${batch.length} companies)`);
+    logger.info(`Matching: Processing batch ${batchNum}/${totalBatches} (${batch.length} companies)`);
 
     // Process batch sequentially to manage memory
     for (const company of batch) {
@@ -503,11 +505,11 @@ async function processMatchingBatch(
         const firstMember = company.members[0];
 
         if (!preference || !firstMember) {
-          console.warn(`[Matching] Skipping ${company.id}: missing preference or member`);
+          logger.warn(`Matching: Skipping ${company.id} - missing preference or member`);
           continue;
         }
 
-        console.log(`[Matching] Processing: ${company.name} (${company.id})`);
+        logger.debug(`Matching: Processing ${company.name} (${company.id})`);
 
         // Execute matching
         const results = await executeMatching({
@@ -533,12 +535,12 @@ async function processMatchingBatch(
         }
 
         successCount++;
-        console.log(`[Matching] ✓ ${company.name}: ${results.length} matches stored`);
+        logger.info(`Matching: ✓ ${company.name} - ${results.length} matches stored`);
 
       } catch (error) {
         errorCount++;
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        console.error(`[Matching] ✗ Failed for ${company.id}:`, errorMessage);
+        logger.error(`Matching: ✗ Failed for ${company.id}`, { error: errorMessage });
         errors.push({
           companyId: company.id,
           error: errorMessage,
@@ -555,17 +557,13 @@ async function processMatchingBatch(
   const duration = Date.now() - startTime;
   const durationMinutes = Math.round(duration / 1000 / 60 * 10) / 10;
 
-  console.log('');
-  console.log('='.repeat(60));
-  console.log('  📊 Matching Batch Complete');
-  console.log('='.repeat(60));
-  console.log(`  Companies processed: ${successCount + errorCount}`);
-  console.log(`  Successful: ${successCount}`);
-  console.log(`  Failed: ${errorCount}`);
-  console.log(`  Total matches stored: ${totalResultsStored}`);
-  console.log(`  Duration: ${durationMinutes} minutes`);
-  console.log('='.repeat(60));
-  console.log('');
+  logger.info('Matching Batch Complete', {
+    companiesProcessed: successCount + errorCount,
+    successful: successCount,
+    failed: errorCount,
+    totalMatchesStored: totalResultsStored,
+    durationMinutes,
+  });
 }
 
 /**
@@ -616,7 +614,7 @@ app.get('/matching/stats', async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    console.error('[Matching] Stats error:', error);
+    logger.error('Matching: Stats error', { error });
     return res.status(500).json({
       error: 'Failed to get stats',
       details: error instanceof Error ? error.message : 'Unknown error',
@@ -638,7 +636,7 @@ app.use((req, res) => {
  * 에러 핸들러
  */
 app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
-  console.error('[Worker] Unhandled error:', err);
+  logger.error('Unhandled error', { error: err });
   res.status(500).json({
     error: 'Internal Server Error',
     message: err.message,
@@ -652,15 +650,11 @@ app.use((err: Error, req: express.Request, res: express.Response, next: express.
 const PORT = process.env.PORT || 3001;
 
 app.listen(PORT, () => {
-  console.log('');
-  console.log('='.repeat(60));
-  console.log('  🚀 Railway Crawler Worker Started');
-  console.log('='.repeat(60));
-  console.log(`  Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`  Port: ${PORT}`);
-  console.log(`  Health Check: http://localhost:${PORT}/health`);
-  console.log('='.repeat(60));
-  console.log('');
+  logger.info('Railway Crawler Worker Started', {
+    environment: process.env.NODE_ENV || 'development',
+    port: PORT,
+    healthCheck: `http://localhost:${PORT}/health`,
+  });
 });
 
 /**
@@ -668,11 +662,11 @@ app.listen(PORT, () => {
  * Railway 재시작 시 안전하게 종료
  */
 process.on('SIGTERM', () => {
-  console.log('[Worker] SIGTERM received, shutting down gracefully...');
+  logger.info('SIGTERM received, shutting down gracefully...');
   process.exit(0);
 });
 
 process.on('SIGINT', () => {
-  console.log('[Worker] SIGINT received, shutting down gracefully...');
+  logger.info('SIGINT received, shutting down gracefully...');
   process.exit(0);
 });

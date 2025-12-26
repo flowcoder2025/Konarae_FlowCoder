@@ -14,6 +14,9 @@ import {
   DOCUMENT_METADATA,
   DocumentType,
 } from "@/lib/documents/types";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ page: "company-documents-client" });
 
 interface CompanyDocumentsPageClientProps {
   companyId: string;
@@ -38,7 +41,7 @@ export function CompanyDocumentsPageClient({
         setDocuments(data.documents || []);
       }
     } catch (error) {
-      console.error("Failed to fetch documents:", error);
+      logger.error("Failed to fetch documents", { error });
     } finally {
       setLoading(false);
     }

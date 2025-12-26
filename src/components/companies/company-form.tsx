@@ -15,6 +15,9 @@ import { toast } from "sonner";
 import { Lightbulb, Upload, FileText, CheckCircle2, Sparkles } from "lucide-react";
 import { useDropzone } from "@/hooks/use-dropzone";
 import { cn } from "@/lib/utils";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ component: "company-form" });
 
 const companyFormSchema = z.object({
   // 기본 정보
@@ -231,8 +234,8 @@ export function CompanyForm() {
       // 사업자등록증 파일이 있으면 문서로 저장
       if (businessRegFile) {
         try {
-          console.log("[CompanyForm] Uploading document for company:", company.id);
-          console.log("[CompanyForm] File:", businessRegFile.name, businessRegFile.size);
+          logger.info("Uploading document for company", { companyId: company.id });
+          logger.debug("File details", { name: businessRegFile.name, size: businessRegFile.size });
 
           const docFormData = new FormData();
           docFormData.append("file", businessRegFile);
@@ -245,20 +248,20 @@ export function CompanyForm() {
 
           if (!docResponse.ok) {
             const docError = await docResponse.json();
-            console.error("[CompanyForm] Document upload failed:", docError);
+            logger.error("Document upload failed", { error: docError });
             throw new Error(docError.error || "문서 업로드 실패");
           }
 
           const docResult = await docResponse.json();
-          console.log("[CompanyForm] Document uploaded successfully:", docResult);
+          logger.info("Document uploaded successfully", { documentId: docResult?.id });
 
           toast.success("기업이 등록되고 사업자등록증이 저장되었습니다");
         } catch (docError) {
-          console.error("[CompanyForm] Document save error:", docError);
+          logger.error("Document save error", { error: docError });
           toast.warning("기업이 등록되었지만 문서 저장에 실패했습니다");
         }
       } else {
-        console.log("[CompanyForm] No business registration file to upload");
+        logger.debug("No business registration file to upload");
         toast.success("기업이 성공적으로 등록되었습니다");
       }
 

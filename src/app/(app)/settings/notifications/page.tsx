@@ -13,6 +13,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ page: "notification-settings" });
 
 export default function NotificationSettingsPage() {
   const [isLoading, setIsLoading] = useState(true);
@@ -30,7 +33,7 @@ export default function NotificationSettingsPage() {
       const data = await res.json();
       setSettings(data.settings);
     } catch (error) {
-      console.error("Fetch settings error:", error);
+      logger.error("Fetch settings error", { error });
       alert("설정을 불러올 수 없습니다.");
     } finally {
       setIsLoading(false);
@@ -50,7 +53,7 @@ export default function NotificationSettingsPage() {
 
       alert("설정이 저장되었습니다.");
     } catch (error) {
-      console.error("Save settings error:", error);
+      logger.error("Save settings error", { error });
       alert("설정 저장에 실패했습니다.");
     } finally {
       setIsSaving(false);

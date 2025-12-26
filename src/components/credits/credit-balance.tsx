@@ -2,6 +2,9 @@
 
 import { useState, useEffect } from "react"
 import { Coins } from "lucide-react"
+import { createLogger } from "@/lib/logger"
+
+const logger = createLogger({ component: "credit-balance" })
 
 interface CreditBalanceProps {
   className?: string
@@ -29,7 +32,7 @@ export function CreditBalance({
         setBalance(data.balance)
       }
     } catch (error) {
-      console.error("Failed to fetch credit balance:", error)
+      logger.error("Failed to fetch credit balance", { error })
     } finally {
       setIsLoading(false)
     }

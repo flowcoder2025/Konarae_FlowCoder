@@ -7,6 +7,9 @@ import { DeadlineAlert } from "@/components/dashboard/deadline-alert";
 import { QuickActions } from "@/components/dashboard/quick-actions";
 import { Building2, FileCheck, FileText, Target, Coins } from "lucide-react";
 import { getOrCreateCredit } from "@/lib/credits";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ page: "dashboard" });
 
 interface DashboardData {
   stats: {
@@ -219,7 +222,7 @@ export default async function DashboardPage() {
   try {
     data = await getDashboardData(session.user.id);
   } catch (e) {
-    console.error("Failed to load dashboard:", e);
+    logger.error("Failed to load dashboard", { error: e });
     error = true;
   }
 

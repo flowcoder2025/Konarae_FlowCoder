@@ -2,6 +2,9 @@
 
 import { useEffect, useState, useId } from "react";
 import mermaid from "mermaid";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ component: "mermaid-renderer" });
 
 // Initialize mermaid once
 let mermaidInitialized = false;
@@ -279,7 +282,7 @@ export function MermaidRenderer({ chart, className }: MermaidRendererProps) {
           setIsLoading(false);
         }
       } catch (err) {
-        console.error("[Mermaid] Render error:", err);
+        logger.error("Render error", { error: err });
         if (isMounted) {
           setError(err instanceof Error ? err.message : "Mermaid 렌더링 실패");
           setSvg("");

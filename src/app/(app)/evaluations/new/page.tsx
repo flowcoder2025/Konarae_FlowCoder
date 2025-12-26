@@ -20,6 +20,9 @@ import { useDropzone } from "@/hooks/use-dropzone";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { Upload, FileText, X } from "lucide-react";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ page: "evaluation-new" });
 
 export default function NewEvaluationPage() {
   const router = useRouter();
@@ -51,7 +54,7 @@ export default function NewEvaluationPage() {
         setBusinessPlans(data.businessPlans || []);
       }
     } catch (error) {
-      console.error("Fetch business plans error:", error);
+      logger.error("Fetch business plans error", { error });
     }
   };
 
@@ -63,7 +66,7 @@ export default function NewEvaluationPage() {
         setProjects(data.projects || []);
       }
     } catch (error) {
-      console.error("Fetch projects error:", error);
+      logger.error("Fetch projects error", { error });
     }
   };
 
@@ -114,7 +117,7 @@ export default function NewEvaluationPage() {
       const data = await res.json();
       router.push(`/evaluations/${data.evaluation.id}`);
     } catch (error: any) {
-      console.error("Create evaluation error:", error);
+      logger.error("Create evaluation error", { error });
       alert(error.message || "평가 요청에 실패했습니다.");
     } finally {
       setIsSubmitting(false);
@@ -151,7 +154,7 @@ export default function NewEvaluationPage() {
       const data = await res.json();
       router.push(`/evaluations/${data.evaluation.id}`);
     } catch (error: any) {
-      console.error("Upload evaluation error:", error);
+      logger.error("Upload evaluation error", { error });
       alert(error.message || "파일 업로드에 실패했습니다.");
     } finally {
       setIsSubmitting(false);

@@ -8,6 +8,9 @@ import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { PageHeader } from "@/components/common"
 import { DiagnosisResponse, DiagnosisStatus } from "@/types/diagnosis"
+import { createLogger } from "@/lib/logger"
+
+const logger = createLogger({ page: "diagnosis-list" })
 
 const STATUS_LABELS: Record<DiagnosisStatus, string> = {
   pending: "대기 중",
@@ -57,7 +60,7 @@ export default function DiagnosisListPage() {
       setDiagnoses(data.diagnoses)
       setTotal(data.total)
     } catch (error) {
-      console.error("Fetch diagnoses error:", error)
+      logger.error("Fetch diagnoses error", { error })
     } finally {
       setIsLoading(false)
     }

@@ -17,6 +17,9 @@ import { SectionEditor } from "@/components/business-plans/section-editor";
 import Link from "next/link";
 import { PageHeader } from "@/components/common";
 import { Loader2, Sparkles, AlertTriangle, FileDown } from "lucide-react";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ page: "business-plan-detail" });
 
 const STATUS_LABELS: Record<string, string> = {
   draft: "초안",
@@ -66,7 +69,7 @@ export default function BusinessPlanDetailPage() {
       const data = await res.json();
       setBusinessPlan(data.businessPlan);
     } catch (error) {
-      console.error("Fetch business plan error:", error);
+      logger.error("Fetch business plan error", { error });
       alert("사업계획서를 불러올 수 없습니다.");
       router.push("/business-plans");
     } finally {
@@ -99,7 +102,7 @@ export default function BusinessPlanDetailPage() {
       await fetchBusinessPlan();
       alert("사업계획서가 성공적으로 생성되었습니다.");
     } catch (error) {
-      console.error("Generate business plan error:", error);
+      logger.error("Generate business plan error", { error });
       alert("사업계획서 생성에 실패했습니다. 잠시 후 다시 시도해주세요.");
     } finally {
       setIsGenerating(false);
@@ -136,7 +139,7 @@ export default function BusinessPlanDetailPage() {
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
     } catch (error) {
-      console.error("Export business plan error:", error);
+      logger.error("Export business plan error", { error });
       alert("내보내기에 실패했습니다.");
     } finally {
       setIsExporting(false);

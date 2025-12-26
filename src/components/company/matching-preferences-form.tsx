@@ -9,6 +9,9 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Settings2, Loader2, Check, X, Plus, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ component: "matching-preferences-form" });
 
 // 유효한 카테고리 (validators.ts와 동기화)
 const CATEGORIES = [
@@ -100,7 +103,7 @@ export function MatchingPreferencesForm({
         setExcludeKeywords(data.preferences.excludeKeywords || []);
       }
     } catch (err) {
-      console.error("Error fetching preferences:", err);
+      logger.error("Error fetching preferences", { error: err });
     } finally {
       setLoading(false);
     }

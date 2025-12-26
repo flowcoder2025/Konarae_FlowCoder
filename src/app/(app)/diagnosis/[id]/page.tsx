@@ -26,6 +26,9 @@ import {
   AlertTriangle,
   ArrowRight,
 } from "lucide-react"
+import { createLogger } from "@/lib/logger"
+
+const logger = createLogger({ page: "diagnosis-detail" })
 
 export default function DiagnosisDetailPage() {
   const router = useRouter()
@@ -52,7 +55,7 @@ export default function DiagnosisDetailPage() {
       const data = await res.json()
       setDiagnosis(data)
     } catch (error) {
-      console.error("Fetch diagnosis error:", error)
+      logger.error("Fetch diagnosis error", { error })
       router.push("/diagnosis")
     } finally {
       setIsLoading(false)

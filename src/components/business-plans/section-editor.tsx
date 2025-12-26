@@ -8,6 +8,9 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card } from "@/components/ui/card";
 import { MermaidRenderer } from "@/components/ui/mermaid-renderer";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ component: "section-editor" });
 
 interface SectionEditorProps {
   section: {
@@ -49,7 +52,7 @@ export function SectionEditor({
       setIsEditing(false);
       onUpdate();
     } catch (error) {
-      console.error("Save section error:", error);
+      logger.error("Save section error", { error });
       alert("섹션 저장에 실패했습니다.");
     } finally {
       setIsSaving(false);
@@ -83,7 +86,7 @@ export function SectionEditor({
       setContent(data.content);
       onUpdate();
     } catch (error) {
-      console.error("Regenerate section error:", error);
+      logger.error("Regenerate section error", { error });
       alert("섹션 재생성에 실패했습니다.");
     } finally {
       setIsRegenerating(false);

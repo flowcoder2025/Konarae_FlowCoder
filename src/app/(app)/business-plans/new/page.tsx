@@ -32,6 +32,9 @@ import {
 import { useDropzone } from "@/hooks/use-dropzone";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger({ page: "business-plan-new" });
 
 interface Company {
   id: string;
@@ -141,7 +144,7 @@ function NewBusinessPlanForm() {
         setCompanies(data.companies || []);
       }
     } catch (error) {
-      console.error("Fetch companies error:", error);
+      logger.error("Fetch companies error", { error });
     } finally {
       setIsLoadingCompanies(false);
     }
@@ -162,7 +165,7 @@ function NewBusinessPlanForm() {
         }
       }
     } catch (error) {
-      console.error("Fetch matched projects error:", error);
+      logger.error("Fetch matched projects error", { error });
       setNoMatchingMessage("지원사업을 불러오는데 실패했습니다.");
     } finally {
       setIsLoadingProjects(false);
@@ -180,7 +183,7 @@ function NewBusinessPlanForm() {
         setExistingPlans(data.businessPlans || []);
       }
     } catch (error) {
-      console.error("Fetch existing plans error:", error);
+      logger.error("Fetch existing plans error", { error });
     } finally {
       setIsLoadingExistingPlans(false);
     }
@@ -198,7 +201,7 @@ function NewBusinessPlanForm() {
         setSearchResults(data.projects || []);
       }
     } catch (error) {
-      console.error("Search projects error:", error);
+      logger.error("Search projects error", { error });
     } finally {
       setIsSearching(false);
     }
@@ -329,7 +332,7 @@ function NewBusinessPlanForm() {
 
       router.push(`/business-plans/${businessPlanId}`);
     } catch (error) {
-      console.error("Create business plan error:", error);
+      logger.error("Create business plan error", { error });
       alert("사업계획서 생성에 실패했습니다.");
     } finally {
       setIsSubmitting(false);
