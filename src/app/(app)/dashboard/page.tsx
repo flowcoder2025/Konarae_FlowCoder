@@ -5,7 +5,8 @@ import { StatCard } from "@/components/dashboard/stat-card";
 import { RecentActivity } from "@/components/dashboard/recent-activity";
 import { DeadlineAlert } from "@/components/dashboard/deadline-alert";
 import { QuickActions } from "@/components/dashboard/quick-actions";
-import { Building2, FileCheck, FileText, Target } from "lucide-react";
+import { Building2, FileCheck, FileText, Target, Coins } from "lucide-react";
+import { getOrCreateCredit } from "@/lib/credits";
 
 interface DashboardData {
   stats: {
@@ -13,6 +14,7 @@ interface DashboardData {
     matchingResultsCount: number;
     businessPlansCount: number;
     evaluationsCount: number;
+    creditBalance: number;
   };
   recent: {
     matching: Array<{
@@ -64,6 +66,7 @@ async function getDashboardData(userId: string): Promise<DashboardData> {
     matchingResultsCount,
     businessPlansCount,
     evaluationsCount,
+    creditData,
     recentMatching,
     recentPlans,
     recentEvaluations,
@@ -93,6 +96,9 @@ async function getDashboardData(userId: string): Promise<DashboardData> {
     prisma.evaluation.count({
       where: { userId },
     }),
+
+    // Credit balance
+    getOrCreateCredit(userId),
 
     // Recent 5 matching results
     prisma.matchingResult.findMany({
@@ -160,6 +166,7 @@ async function getDashboardData(userId: string): Promise<DashboardData> {
       matchingResultsCount,
       businessPlansCount,
       evaluationsCount,
+      creditBalance: creditData.balance,
     },
     recent: {
       matching: recentMatching.map((m) => ({
@@ -235,7 +242,13 @@ export default async function DashboardPage() {
       {data && (
         <>
           {/* Stats Cards */}
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
+            <StatCard
+              title="보유 크래딧"
+              value={`${data.stats.creditBalance.toLocaleString()}C`}
+              icon={Coins}
+              description="진단 및 서비스 이용"
+            />
             <StatCard
               title="등록된 기업"
               value={data.stats.companiesCount}

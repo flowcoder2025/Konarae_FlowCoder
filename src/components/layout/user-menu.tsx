@@ -23,7 +23,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { User, Settings, Shield, LogOut, ChevronDown } from "lucide-react";
+import { User, Settings, Shield, LogOut, ChevronDown, Coins } from "lucide-react";
+import { CreditBalance } from "@/components/credits/credit-balance";
 
 interface UserMenuProps {
   user: {
@@ -88,6 +89,13 @@ export function UserMenu({ user, isAdmin = false }: UserMenuProps) {
             <p className="text-xs leading-none text-muted-foreground">
               {user.email}
             </p>
+          </div>
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel className="font-normal">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-muted-foreground">보유 크래딧</span>
+            <CreditBalance size="sm" showIcon={true} />
           </div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
