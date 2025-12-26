@@ -4,11 +4,13 @@
  */
 
 import { Suspense } from "react";
+import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { formatDateKST } from "@/lib/utils";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { MatchingFilters } from "@/components/admin/matching-filters";
+import { MatchingPagination } from "@/components/admin/matching-pagination";
 import {
   Target,
   TrendingUp,
@@ -17,8 +19,12 @@ import {
   CheckCircle,
   AlertCircle,
   MinusCircle,
+  ExternalLink,
 } from "lucide-react";
 import { Prisma } from "@prisma/client";
+
+// 페이지당 표시할 결과 수
+const PAGE_SIZE = 50;
 
 // 신뢰도별 배지 스타일
 const confidenceBadgeVariant = {
@@ -45,12 +51,16 @@ interface PageProps {
     minScore?: string;
     maxScore?: string;
     search?: string;
+    page?: string;
   }>;
 }
 
 export default async function AdminMatchingPage({ searchParams }: PageProps) {
   const params = await searchParams;
-  const { confidence, minScore, maxScore, search } = params;
+  const { confidence, minScore, maxScore, search, page } = params;
+
+  // 페이지 번호 파싱 (기본값 1)
+  const currentPage = Math.max(1, parseInt(page || "1", 10));
 
   // 필터 조건 구성
   const whereClause: Prisma.MatchingResultWhereInput = {};
@@ -115,10 +125,15 @@ export default async function AdminMatchingPage({ searchParams }: PageProps) {
   // 필터링된 결과 수
   const filteredCount = await prisma.matchingResult.count({ where: whereClause });
 
-  // 필터링된 매칭 결과 목록 (상위 100개)
+  // 페이지네이션 계산
+  const totalPages = Math.ceil(filteredCount / PAGE_SIZE);
+  const skip = (currentPage - 1) * PAGE_SIZE;
+
+  // 필터링된 매칭 결과 목록 (페이지네이션 적용)
   const recentResults = await prisma.matchingResult.findMany({
     where: whereClause,
-    take: 100,
+    skip,
+    take: PAGE_SIZE,
     orderBy: { createdAt: "desc" },
     include: {
       user: {
@@ -337,9 +352,13 @@ export default async function AdminMatchingPage({ searchParams }: PageProps) {
                     </td>
                     <td className="p-4">
                       <div>
-                        <div className="font-medium line-clamp-1 max-w-[200px]">
+                        <Link
+                          href={`/projects/${result.projectId}`}
+                          className="font-medium line-clamp-1 max-w-[200px] hover:text-primary hover:underline inline-flex items-center gap-1 group"
+                        >
                           {result.project.name}
-                        </div>
+                          <ExternalLink className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+                        </Link>
                         <div className="text-xs text-muted-foreground">
                           {result.project.organization}
                         </div>
@@ -423,6 +442,14 @@ export default async function AdminMatchingPage({ searchParams }: PageProps) {
             </div>
           )}
         </div>
+
+        {/* Pagination */}
+        <MatchingPagination
+          currentPage={currentPage}
+          totalPages={totalPages}
+          total={filteredCount}
+          pageSize={PAGE_SIZE}
+        />
       </Card>
     </div>
   );
