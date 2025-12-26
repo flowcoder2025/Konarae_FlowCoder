@@ -39,8 +39,8 @@ export async function analyzeDocument(
   try {
     const prompt = getPromptForDocumentType(documentType);
 
-    // Gemini 2.5 Pro 모델 사용 (Vision 지원)
-    const model = google("gemini-2.0-flash-exp");
+    // Gemini 3 Flash 모델 사용 (Vision 지원)
+    const model = google("gemini-3-flash-preview");
 
     // Base64를 Data URL로 변환 (mimeType 포함)
     const dataUrl = `data:${mimeType};base64,${fileBase64}`;

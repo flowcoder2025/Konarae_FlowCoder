@@ -65,7 +65,7 @@ async function extractFormStructure(projectId: string): Promise<FormSection[]> {
 
     // Use Gemini to extract section structure from the form
     const { text } = await generateText({
-      model: google("gemini-2.5-flash"),
+      model: google("gemini-3-flash-preview"),
       system: `정부 지원사업 신청서 양식에서 작성 섹션을 추출하세요.
 
 규칙:
