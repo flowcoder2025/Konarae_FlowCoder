@@ -28,6 +28,8 @@ interface HomeData {
     daysLeft: number | null;
     budget: number | null;
     matchScore?: number;
+    companyId?: string;
+    matchingResultId?: string;
   }>;
   activeProjects: Array<{
     id: string;
@@ -107,6 +109,8 @@ async function getHomeData(userId: string): Promise<HomeData> {
           : null,
         budget: m.project.amountMax ? Number(m.project.amountMax) : null,
         matchScore: m.totalScore,
+        companyId: m.companyId,
+        matchingResultId: m.id,
       }))
     : upcomingProjects.map((p) => ({
         id: p.id,

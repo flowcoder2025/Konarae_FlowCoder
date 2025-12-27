@@ -11,8 +11,11 @@ import {
   Sparkles,
   Building,
   Coins,
+  Rocket,
+  Loader2,
 } from "lucide-react";
 import Link from "next/link";
+import { useStartProject } from "@/hooks/use-user-project";
 
 interface RecommendedProject {
   id: string;
@@ -22,6 +25,8 @@ interface RecommendedProject {
   daysLeft: number | null;
   budget: number | null;
   matchScore?: number;
+  companyId?: string;
+  matchingResultId?: string;
 }
 
 interface MatchingPreviewProps {
@@ -81,6 +86,13 @@ export function MatchingPreview({ recommendations, hasCompany }: MatchingPreview
 
 function ProjectRecommendationCard({ project }: { project: RecommendedProject }) {
   const isUrgent = project.daysLeft !== null && project.daysLeft <= 7;
+  const { startProject, isLoading } = useStartProject();
+  const canStartProject = Boolean(project.companyId);
+
+  const handleStartProject = async () => {
+    if (!project.companyId) return;
+    await startProject(project.companyId, project.id, project.matchingResultId);
+  };
 
   return (
     <Card className="hover:border-primary/50 transition-colors group">
@@ -132,12 +144,28 @@ function ProjectRecommendationCard({ project }: { project: RecommendedProject })
               상세보기
             </Link>
           </Button>
-          <Button size="sm" className="flex-1" asChild>
-            <Link href={`/projects/${project.id}?action=start`}>
-              지원 준비
-              <ArrowRight className="h-4 w-4 ml-1" />
-            </Link>
-          </Button>
+          {canStartProject ? (
+            <Button
+              size="sm"
+              className="flex-1"
+              onClick={handleStartProject}
+              disabled={isLoading}
+            >
+              {isLoading ? (
+                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+              ) : (
+                <Rocket className="h-4 w-4 mr-1" />
+              )}
+              {isLoading ? "시작 중..." : "지원 준비"}
+            </Button>
+          ) : (
+            <Button size="sm" className="flex-1" asChild>
+              <Link href={`/projects/${project.id}?action=start`}>
+                지원 준비
+                <ArrowRight className="h-4 w-4 ml-1" />
+              </Link>
+            </Button>
+          )}
         </div>
       </CardContent>
     </Card>
