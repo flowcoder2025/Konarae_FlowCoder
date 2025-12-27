@@ -13,6 +13,8 @@ import {
   FileText,
   Calculator,
   FileSpreadsheet,
+  ChevronLeft,
+  SkipForward,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -28,6 +30,8 @@ interface Step4VerifyProps {
   projectId: string;
   creditCost: number;
   onComplete: () => void;
+  onSkip?: () => void;
+  onPrevious?: () => void;
 }
 
 const CATEGORY_ICONS = {
@@ -69,6 +73,8 @@ export function Step4Verify({
   projectId,
   creditCost,
   onComplete,
+  onSkip,
+  onPrevious,
 }: Step4VerifyProps) {
   const [isRunning, setIsRunning] = useState(false);
   const [verificationComplete, setVerificationComplete] = useState(false);
@@ -169,6 +175,18 @@ export function Step4Verify({
             </Button>
           </CardContent>
         </Card>
+
+        {/* Actions - 이전 단계 & 건너뛰기 */}
+        <div className="flex justify-between items-center pt-4 border-t">
+          <Button variant="outline" onClick={onPrevious}>
+            <ChevronLeft className="h-4 w-4 mr-2" />
+            이전 단계
+          </Button>
+          <Button variant="outline" onClick={onSkip}>
+            <SkipForward className="h-4 w-4 mr-2" />
+            이 단계 건너뛰기
+          </Button>
+        </div>
       </div>
     );
   }
@@ -253,32 +271,46 @@ export function Step4Verify({
 
       {/* Actions */}
       <div className="flex justify-between items-center pt-4 border-t">
-        <div>
-          {failCount > 0 ? (
-            <p className="text-sm text-red-600">
-              실패 항목을 수정한 후 다시 검증해주세요
-            </p>
-          ) : warningCount > 0 ? (
-            <p className="text-sm text-yellow-600">
-              주의 항목을 확인 후 진행하세요
-            </p>
-          ) : (
-            <p className="text-sm text-green-600">
-              모든 검증을 통과했습니다
-            </p>
-          )}
-        </div>
-        <div className="flex gap-2">
-          {failCount > 0 && (
-            <Button variant="outline" onClick={handleStartVerification}>
-              <Loader2 className="h-4 w-4 mr-2" />
-              재검증 ({creditCost}C)
-            </Button>
-          )}
-          <Button onClick={onComplete} disabled={failCount > 0}>
-            <CheckCircle2 className="h-4 w-4 mr-2" />
-            다음 단계로
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={onPrevious}>
+            <ChevronLeft className="h-4 w-4 mr-2" />
+            이전 단계
           </Button>
+        </div>
+        <div className="flex items-center gap-3">
+          <div>
+            {failCount > 0 ? (
+              <p className="text-sm text-red-600">
+                실패 항목이 있지만 건너뛸 수 있습니다
+              </p>
+            ) : warningCount > 0 ? (
+              <p className="text-sm text-yellow-600">
+                주의 항목을 확인 후 진행하세요
+              </p>
+            ) : (
+              <p className="text-sm text-green-600">
+                모든 검증을 통과했습니다
+              </p>
+            )}
+          </div>
+          <div className="flex gap-2">
+            {failCount > 0 && (
+              <>
+                <Button variant="outline" onClick={handleStartVerification}>
+                  <Loader2 className="h-4 w-4 mr-2" />
+                  재검증 ({creditCost}C)
+                </Button>
+                <Button variant="outline" onClick={onSkip}>
+                  <SkipForward className="h-4 w-4 mr-2" />
+                  건너뛰기
+                </Button>
+              </>
+            )}
+            <Button onClick={onComplete}>
+              <CheckCircle2 className="h-4 w-4 mr-2" />
+              다음 단계로
+            </Button>
+          </div>
         </div>
       </div>
     </div>

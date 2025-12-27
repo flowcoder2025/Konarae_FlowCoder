@@ -18,6 +18,8 @@ interface StepContentProps {
   companyId: string;
   existingPlanId: string | null;
   onStepComplete: (step: number) => void;
+  onStepSkip?: (step: number) => void;
+  onPrevious?: () => void;
 }
 
 export function StepContent({
@@ -28,8 +30,16 @@ export function StepContent({
   companyId,
   existingPlanId,
   onStepComplete,
+  onStepSkip,
+  onPrevious,
 }: StepContentProps) {
   const currentStepConfig = steps[currentStep - 1];
+
+  const handleSkip = () => {
+    if (onStepSkip) {
+      onStepSkip(currentStep);
+    }
+  };
 
   const renderStepContent = () => {
     switch (currentStep) {
@@ -47,6 +57,8 @@ export function StepContent({
             projectId={projectId}
             creditCost={currentStepConfig.creditCost || 50}
             onComplete={() => onStepComplete(2)}
+            onSkip={handleSkip}
+            onPrevious={onPrevious}
           />
         );
       case 3:
@@ -64,6 +76,8 @@ export function StepContent({
             projectId={projectId}
             creditCost={currentStepConfig.creditCost || 30}
             onComplete={() => onStepComplete(4)}
+            onSkip={handleSkip}
+            onPrevious={onPrevious}
           />
         );
       case 5:
@@ -87,7 +101,14 @@ export function StepContent({
             {currentStep}
           </div>
           <div>
-            <CardTitle>{currentStepConfig.label}</CardTitle>
+            <div className="flex items-center gap-2">
+              <CardTitle>{currentStepConfig.label}</CardTitle>
+              {currentStepConfig.isOptional && (
+                <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded">
+                  선택
+                </span>
+              )}
+            </div>
             <CardDescription>{currentStepConfig.description}</CardDescription>
           </div>
         </div>

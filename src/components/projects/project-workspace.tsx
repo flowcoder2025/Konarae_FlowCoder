@@ -25,6 +25,7 @@ const STEPS: StepConfig[] = [
     description: "AI가 부족한 정보와 증빙을 찾아드려요",
     icon: ClipboardCheck,
     creditCost: 50,
+    isOptional: true,
   },
   {
     number: 3,
@@ -38,6 +39,7 @@ const STEPS: StepConfig[] = [
     description: "AI가 최종 점검을 도와드려요",
     icon: FileCheck,
     creditCost: 30,
+    isOptional: true,
   },
   {
     number: 5,
@@ -67,18 +69,7 @@ export function ProjectWorkspace({
   const [currentStep, setCurrentStep] = useState(initialStep);
   const [stepCompletions, setStepCompletions] = useState(initialCompletions);
 
-  const handleStepComplete = async (completedStep: number) => {
-    // Update local state optimistically
-    const newCompletions = [...stepCompletions];
-    newCompletions[completedStep - 1] = true;
-    setStepCompletions(newCompletions);
-
-    const nextStep = completedStep < STEPS.length ? completedStep + 1 : completedStep;
-    if (completedStep < STEPS.length) {
-      setCurrentStep(nextStep);
-    }
-
-    // Save to API
+  const saveProgress = async (stepNumber: number, completed: boolean, nextStep: number) => {
     try {
       const stepFieldMap: Record<number, string> = {
         1: "step1Completed",
@@ -92,22 +83,64 @@ export function ProjectWorkspace({
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          [stepFieldMap[completedStep]]: true,
+          [stepFieldMap[stepNumber]]: completed,
           currentStep: nextStep,
         }),
       });
 
-      if (!response.ok) {
-        // Revert on error
-        console.error("Failed to save progress");
-        setStepCompletions(stepCompletions);
-        setCurrentStep(currentStep);
-      }
-    } catch (error) {
-      console.error("Failed to save progress:", error);
-      // Revert on error
+      return response.ok;
+    } catch {
+      return false;
+    }
+  };
+
+  const handleStepComplete = async (completedStep: number) => {
+    // Update local state optimistically
+    const newCompletions = [...stepCompletions];
+    newCompletions[completedStep - 1] = true;
+    setStepCompletions(newCompletions);
+
+    const nextStep = completedStep < STEPS.length ? completedStep + 1 : completedStep;
+    if (completedStep < STEPS.length) {
+      setCurrentStep(nextStep);
+    }
+
+    // Save to API
+    const success = await saveProgress(completedStep, true, nextStep);
+    if (!success) {
+      console.error("Failed to save progress");
       setStepCompletions(stepCompletions);
       setCurrentStep(currentStep);
+    }
+  };
+
+  const handleStepSkip = async (skippedStep: number) => {
+    // 건너뛴 단계는 완료 처리하지 않고 다음 단계로 이동
+    const nextStep = skippedStep < STEPS.length ? skippedStep + 1 : skippedStep;
+    setCurrentStep(nextStep);
+
+    // Save only currentStep (step not completed)
+    try {
+      await fetch(`/api/user-projects/${projectId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ currentStep: nextStep }),
+      });
+    } catch (error) {
+      console.error("Failed to save progress:", error);
+    }
+  };
+
+  const handleStepClick = (stepNumber: number) => {
+    // 완료된 스텝이거나 현재 스텝 이하만 이동 가능
+    if (stepCompletions[stepNumber - 1] || stepNumber <= currentStep) {
+      setCurrentStep(stepNumber);
+    }
+  };
+
+  const handlePrevious = () => {
+    if (currentStep > 1) {
+      setCurrentStep(currentStep - 1);
     }
   };
 
@@ -119,6 +152,9 @@ export function ProjectWorkspace({
           <CardTitle>진행 현황</CardTitle>
           <CardDescription>
             5단계를 완료하면 제출 준비가 끝납니다
+            <span className="text-xs ml-2 text-muted-foreground">
+              (완료된 단계를 클릭하여 이동할 수 있습니다)
+            </span>
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -126,6 +162,7 @@ export function ProjectWorkspace({
             steps={STEPS}
             currentStep={currentStep}
             stepCompletions={stepCompletions}
+            onStepClick={handleStepClick}
           />
         </CardContent>
       </Card>
@@ -139,6 +176,8 @@ export function ProjectWorkspace({
         companyId={companyId}
         existingPlanId={existingPlanId}
         onStepComplete={handleStepComplete}
+        onStepSkip={handleStepSkip}
+        onPrevious={handlePrevious}
       />
     </div>
   );
