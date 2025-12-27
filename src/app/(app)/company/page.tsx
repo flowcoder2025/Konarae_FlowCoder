@@ -2,23 +2,25 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { redirect } from "next/navigation";
 import { createLogger } from "@/lib/logger";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Building2,
   Plus,
   FileText,
-  Settings,
   Edit,
   Upload,
-  CheckCircle2,
-  AlertCircle,
-  ChevronRight,
   FolderOpen,
 } from "lucide-react";
 import Link from "next/link";
+import {
+  CompanySelector,
+  CompanyProfileCard,
+  DocumentStatsCards,
+  DocumentTypeCard,
+} from "@/components/company";
+import type { CompanyOption } from "@/components/company";
 
 const logger = createLogger({ page: "company" });
 
@@ -56,9 +58,33 @@ interface CompanyData {
   }>;
 }
 
-async function getCompanyData(userId: string): Promise<CompanyData | null> {
-  const companyMember = await prisma.companyMember.findFirst({
+interface Props {
+  searchParams: Promise<{ id?: string }>;
+}
+
+async function getUserCompanies(userId: string): Promise<CompanyOption[]> {
+  const memberships = await prisma.companyMember.findMany({
     where: { userId },
+    include: {
+      company: { select: { id: true, name: true } },
+    },
+    orderBy: { invitedAt: "asc" },
+  });
+
+  return memberships.map((m) => ({
+    id: m.company.id,
+    name: m.company.name,
+    isOwner: m.role === "owner",
+  }));
+}
+
+async function getCompanyData(userId: string, companyId?: string): Promise<CompanyData | null> {
+  const whereClause = companyId
+    ? { userId, companyId }
+    : { userId };
+
+  const companyMember = await prisma.companyMember.findFirst({
+    where: whereClause,
     include: {
       company: {
         include: {
@@ -98,30 +124,39 @@ async function getCompanyData(userId: string): Promise<CompanyData | null> {
   };
 }
 
-export default async function CompanyPage() {
+export default async function CompanyPage({ searchParams }: Props) {
   const session = await auth();
 
   if (!session?.user?.id) {
     redirect("/login");
   }
 
+  const { id: selectedCompanyId } = await searchParams;
+
+  let companies: CompanyOption[] = [];
   let company: CompanyData | null = null;
   let error = false;
 
   try {
-    company = await getCompanyData(session.user.id);
+    companies = await getUserCompanies(session.user.id);
+    if (companies.length > 0) {
+      const targetCompanyId = selectedCompanyId || companies[0].id;
+      company = await getCompanyData(session.user.id, targetCompanyId);
+    }
   } catch (e) {
     logger.error("Failed to load company data", { error: e });
     error = true;
   }
 
   // If no company, show registration CTA
-  if (!company && !error) {
+  if (companies.length === 0 && !error) {
     return (
       <div className="container mx-auto py-8 max-w-3xl">
         <Card>
           <CardContent className="py-16 text-center">
-            <Building2 className="h-16 w-16 mx-auto text-muted-foreground mb-4" />
+            <div className="w-20 h-20 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4">
+              <Building2 className="h-10 w-10 text-primary" />
+            </div>
             <h1 className="text-2xl font-bold mb-2">기업을 등록해주세요</h1>
             <p className="text-muted-foreground mb-6 max-w-md mx-auto">
               기업 정보를 등록하면 맞춤 지원사업을 추천받고,
@@ -159,6 +194,10 @@ export default async function CompanyPage() {
     documentsByType[doc.type].push(doc);
   });
 
+  // Calculate document stats
+  const analyzedCount = company.documents.filter((d) => d.hasAnalysis).length;
+  const pendingCount = company.documents.filter((d) => !d.hasAnalysis).length;
+
   return (
     <div className="container mx-auto py-8 space-y-6 max-w-5xl">
       {/* Header */}
@@ -168,8 +207,16 @@ export default async function CompanyPage() {
             <Building2 className="h-8 w-8 text-primary" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold">{company.name}</h1>
-            <p className="text-muted-foreground">
+            {/* Company Selector for multiple companies */}
+            {companies.length > 1 ? (
+              <CompanySelector
+                companies={companies}
+                currentCompanyId={company.id}
+              />
+            ) : (
+              <h1 className="text-2xl font-bold">{company.name}</h1>
+            )}
+            <p className="text-muted-foreground mt-1">
               {company.registrationNumber || "사업자번호 미등록"}
             </p>
           </div>
@@ -187,116 +234,39 @@ export default async function CompanyPage() {
       {/* Tabs */}
       <Tabs defaultValue="profile" className="space-y-6">
         <TabsList>
-          <TabsTrigger value="profile">
-            <Building2 className="h-4 w-4 mr-2" />
+          <TabsTrigger value="profile" className="gap-2">
+            <Building2 className="h-4 w-4" />
             기업 정보
           </TabsTrigger>
-          <TabsTrigger value="documents">
-            <FileText className="h-4 w-4 mr-2" />
+          <TabsTrigger value="documents" className="gap-2">
+            <FileText className="h-4 w-4" />
             증빙 보관함
-            <Badge variant="secondary" className="ml-2">
+            <span className="ml-1 text-xs bg-muted px-1.5 rounded">
               {company.documentsCount}
-            </Badge>
+            </span>
           </TabsTrigger>
         </TabsList>
 
         {/* Profile Tab */}
         <TabsContent value="profile" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>기본 정보</CardTitle>
-              <CardDescription>
-                지원사업 매칭에 사용되는 기업 정보입니다
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <dl className="grid gap-4 md:grid-cols-2">
-                <div>
-                  <dt className="text-sm text-muted-foreground">기업명</dt>
-                  <dd className="font-medium">{company.name}</dd>
-                </div>
-                <div>
-                  <dt className="text-sm text-muted-foreground">사업자등록번호</dt>
-                  <dd className="font-medium">
-                    {company.registrationNumber || "-"}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-sm text-muted-foreground">업종</dt>
-                  <dd className="font-medium">{company.industry || "-"}</dd>
-                </div>
-                <div>
-                  <dt className="text-sm text-muted-foreground">기업 규모</dt>
-                  <dd className="font-medium">{company.size || "-"}</dd>
-                </div>
-                <div>
-                  <dt className="text-sm text-muted-foreground">대표자명</dt>
-                  <dd className="font-medium">
-                    {company.representativeName || "-"}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-sm text-muted-foreground">설립일</dt>
-                  <dd className="font-medium">
-                    {company.foundedAt
-                      ? new Date(company.foundedAt).toLocaleDateString("ko-KR")
-                      : "-"}
-                  </dd>
-                </div>
-                <div className="md:col-span-2">
-                  <dt className="text-sm text-muted-foreground">주소</dt>
-                  <dd className="font-medium">{company.address || "-"}</dd>
-                </div>
-              </dl>
-            </CardContent>
-          </Card>
+          <CompanyProfileCard
+            company={{
+              name: company.name,
+              registrationNumber: company.registrationNumber,
+              industry: company.industry,
+              size: company.size,
+              address: company.address,
+              representativeName: company.representativeName,
+              foundedAt: company.foundedAt,
+            }}
+          />
 
           {/* Quick Stats */}
-          <div className="grid gap-4 md:grid-cols-3">
-            <Card>
-              <CardContent className="py-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center">
-                    <CheckCircle2 className="h-5 w-5 text-green-600" />
-                  </div>
-                  <div>
-                    <p className="text-2xl font-bold">
-                      {company.documents.filter((d) => d.hasAnalysis).length}
-                    </p>
-                    <p className="text-sm text-muted-foreground">분석 완료 서류</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="py-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-yellow-100 flex items-center justify-center">
-                    <AlertCircle className="h-5 w-5 text-yellow-600" />
-                  </div>
-                  <div>
-                    <p className="text-2xl font-bold">
-                      {company.documents.filter((d) => !d.hasAnalysis).length}
-                    </p>
-                    <p className="text-sm text-muted-foreground">분석 대기</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="py-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
-                    <FileText className="h-5 w-5 text-blue-600" />
-                  </div>
-                  <div>
-                    <p className="text-2xl font-bold">{company.documentsCount}</p>
-                    <p className="text-sm text-muted-foreground">전체 서류</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
+          <DocumentStatsCards
+            totalDocuments={company.documentsCount}
+            analyzedDocuments={analyzedCount}
+            pendingDocuments={pendingCount}
+          />
         </TabsContent>
 
         {/* Documents Tab */}
@@ -309,7 +279,7 @@ export default async function CompanyPage() {
               </p>
             </div>
             <Button asChild>
-              <Link href={`/companies/${company.id}/documents/upload`}>
+              <Link href={`/companies/${company.id}/documents`}>
                 <Upload className="h-4 w-4 mr-2" />
                 서류 업로드
               </Link>
@@ -324,7 +294,7 @@ export default async function CompanyPage() {
                   아직 업로드된 서류가 없습니다
                 </p>
                 <Button variant="outline" asChild>
-                  <Link href={`/companies/${company.id}/documents/upload`}>
+                  <Link href={`/companies/${company.id}/documents`}>
                     첫 서류 업로드하기
                   </Link>
                 </Button>
@@ -333,52 +303,13 @@ export default async function CompanyPage() {
           ) : (
             <div className="grid gap-4 md:grid-cols-2">
               {Object.entries(documentsByType).map(([type, docs]) => (
-                <Card key={type}>
-                  <CardHeader className="py-4">
-                    <div className="flex items-center justify-between">
-                      <CardTitle className="text-base">
-                        {DOCUMENT_TYPE_LABELS[type] || type}
-                      </CardTitle>
-                      <Badge variant="secondary">{docs.length}</Badge>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="py-0 pb-4">
-                    <div className="space-y-2">
-                      {docs.slice(0, 3).map((doc) => (
-                        <Link
-                          key={doc.id}
-                          href={`/companies/${company.id}/documents/${doc.id}`}
-                          className="flex items-center justify-between p-2 rounded-lg hover:bg-muted transition-colors"
-                        >
-                          <div className="flex items-center gap-2 min-w-0">
-                            <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
-                            <span className="text-sm truncate">{doc.fileName}</span>
-                          </div>
-                          <div className="flex items-center gap-2 shrink-0">
-                            {doc.hasAnalysis ? (
-                              <Badge variant="outline" className="text-green-600">
-                                분석완료
-                              </Badge>
-                            ) : (
-                              <Badge variant="outline" className="text-yellow-600">
-                                대기중
-                              </Badge>
-                            )}
-                            <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                          </div>
-                        </Link>
-                      ))}
-                      {docs.length > 3 && (
-                        <Link
-                          href={`/companies/${company.id}/documents?type=${type}`}
-                          className="block text-center text-sm text-primary hover:underline py-2"
-                        >
-                          +{docs.length - 3}개 더보기
-                        </Link>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
+                <DocumentTypeCard
+                  key={type}
+                  typeId={type}
+                  typeLabel={DOCUMENT_TYPE_LABELS[type] || type}
+                  documents={docs}
+                  companyId={company.id}
+                />
               ))}
             </div>
           )}
