@@ -1,9 +1,11 @@
 "use client";
 
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ArrowRight, Sparkles, Target, Shield, Zap } from "lucide-react";
 import Link from "next/link";
+import { QuickOnboarding } from "./quick-onboarding";
 
 interface WelcomeHeroProps {
   userName: string | null;
@@ -11,6 +13,8 @@ interface WelcomeHeroProps {
 }
 
 export function WelcomeHero({ userName, hasCompany }: WelcomeHeroProps) {
+  const [showQuickOnboarding, setShowQuickOnboarding] = useState(false);
+
   // Returning user with company
   if (hasCompany) {
     return (
@@ -21,6 +25,15 @@ export function WelcomeHero({ userName, hasCompany }: WelcomeHeroProps) {
         <p className="text-muted-foreground">
           오늘도 지원사업 성공을 위해 함께해요
         </p>
+      </div>
+    );
+  }
+
+  // Show QuickOnboarding form
+  if (showQuickOnboarding) {
+    return (
+      <div className="max-w-xl mx-auto">
+        <QuickOnboarding />
       </div>
     );
   }
@@ -50,18 +63,24 @@ export function WelcomeHero({ userName, hasCompany }: WelcomeHeroProps) {
           </p>
 
           <div className="flex justify-center gap-4 pt-4">
-            <Button size="lg" asChild>
-              <Link href="/company">
-                시작하기
+            <Button size="lg" onClick={() => setShowQuickOnboarding(true)}>
+              빠른 시작
+              <Sparkles className="h-4 w-4 ml-2" />
+            </Button>
+            <Button size="lg" variant="outline" asChild>
+              <Link href="/companies/new">
+                상세 정보 입력
                 <ArrowRight className="h-4 w-4 ml-2" />
               </Link>
             </Button>
-            <Button size="lg" variant="outline" asChild>
-              <Link href="/projects">
-                지원사업 둘러보기
-              </Link>
-            </Button>
           </div>
+
+          <p className="text-sm text-muted-foreground">
+            또는{" "}
+            <Link href="/projects" className="text-primary hover:underline">
+              지원사업 먼저 둘러보기
+            </Link>
+          </p>
         </div>
 
         {/* Feature highlights */}
