@@ -16,13 +16,12 @@ import { Button } from "@/components/ui/button";
 import { UserMenu } from "./user-menu";
 import { cn } from "@/lib/utils";
 import {
-  LayoutDashboard,
+  Home,
   Building2,
-  FileText,
-  Target,
   Search,
-  CheckCircle,
-  ClipboardCheck,
+  FolderKanban,
+  Kanban,
+  Settings,
   Menu,
   X,
 } from "lucide-react";
@@ -35,14 +34,9 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   {
-    label: "대시보드",
-    href: "/dashboard",
-    icon: LayoutDashboard,
-  },
-  {
-    label: "기업 관리",
-    href: "/companies",
-    icon: Building2,
+    label: "홈",
+    href: "/home",
+    icon: Home,
   },
   {
     label: "지원사업",
@@ -50,24 +44,24 @@ const navItems: NavItem[] = [
     icon: Search,
   },
   {
-    label: "매칭",
-    href: "/matching",
-    icon: Target,
+    label: "내 프로젝트",
+    href: "/my-projects",
+    icon: FolderKanban,
   },
   {
-    label: "진단",
-    href: "/diagnosis",
-    icon: ClipboardCheck,
+    label: "파이프라인",
+    href: "/pipeline",
+    icon: Kanban,
   },
   {
-    label: "사업계획서",
-    href: "/business-plans",
-    icon: FileText,
+    label: "기업설정",
+    href: "/company",
+    icon: Building2,
   },
   {
-    label: "평가",
-    href: "/evaluations",
-    icon: CheckCircle,
+    label: "설정",
+    href: "/settings",
+    icon: Settings,
   },
 ];
 
@@ -84,8 +78,8 @@ export function Navbar({ user }: NavbarProps) {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   const isActive = (href: string) => {
-    if (href === "/dashboard") {
-      return pathname === "/dashboard";
+    if (href === "/home") {
+      return pathname === "/home";
     }
     return pathname.startsWith(href);
   };
@@ -94,7 +88,7 @@ export function Navbar({ user }: NavbarProps) {
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <div className="container mx-auto px-4 md:px-6 lg:px-8 max-w-7xl flex h-14 items-center">
         {/* Logo */}
-        <Link href="/dashboard" className="flex items-center gap-2 mr-6">
+        <Link href="/home" className="flex items-center gap-2 mr-6">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
             <span className="text-sm font-bold text-primary-foreground">K</span>
           </div>
