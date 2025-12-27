@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { auth } from "@/lib/auth"
 import { prisma } from "@/lib/prisma"
 import { createLogger } from "@/lib/logger"
+import type { Prisma } from "@prisma/client"
 
 const logger = createLogger({ api: "user-projects-detail" })
 
@@ -167,8 +168,8 @@ export async function PATCH(request: NextRequest, { params }: Context) {
       )
     }
 
-    // 업데이트 데이터 구성
-    const updateData: Record<string, unknown> = {}
+    // 업데이트 데이터 구성 (Prisma 타입으로 타입 안전성 보장)
+    const updateData: Prisma.UserProjectUpdateInput = {}
 
     // 단계 업데이트
     if (typeof body.currentStep === "number") {
@@ -215,18 +216,26 @@ export async function PATCH(request: NextRequest, { params }: Context) {
       updateData.status = body.status
     }
 
-    // 연결된 작업물 ID 업데이트
+    // 연결된 작업물 ID 업데이트 (Prisma relation 문법 사용)
     if (body.businessPlanId !== undefined) {
-      updateData.businessPlanId = body.businessPlanId
+      updateData.businessPlan = body.businessPlanId
+        ? { connect: { id: body.businessPlanId } }
+        : { disconnect: true }
     }
     if (body.diagnosisId !== undefined) {
-      updateData.diagnosisId = body.diagnosisId
+      updateData.diagnosis = body.diagnosisId
+        ? { connect: { id: body.diagnosisId } }
+        : { disconnect: true }
     }
     if (body.evaluationId !== undefined) {
-      updateData.evaluationId = body.evaluationId
+      updateData.evaluation = body.evaluationId
+        ? { connect: { id: body.evaluationId } }
+        : { disconnect: true }
     }
     if (body.matchingResultId !== undefined) {
-      updateData.matchingResultId = body.matchingResultId
+      updateData.matchingResult = body.matchingResultId
+        ? { connect: { id: body.matchingResultId } }
+        : { disconnect: true }
     }
 
     // 업데이트할 내용이 없는 경우

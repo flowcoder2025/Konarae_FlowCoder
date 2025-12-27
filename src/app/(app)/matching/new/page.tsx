@@ -54,11 +54,25 @@ export default function MatchingNewPage() {
 
     fetch(`/api/companies/${companyId}`)
       .then((res) => {
-        if (!res.ok) throw new Error("기업 정보를 불러올 수 없습니다");
+        if (!res.ok) {
+          console.error("[Matching] Company fetch failed:", {
+            status: res.status,
+            statusText: res.statusText,
+            companyId,
+          });
+          throw new Error("기업 정보를 불러올 수 없습니다");
+        }
         return res.json();
       })
       .then((data) => setCompany({ id: data.id, name: data.name }))
-      .catch((err) => setError(err.message));
+      .catch((err) => {
+        console.error("[Matching] Company fetch error:", {
+          message: err.message,
+          companyId,
+          type: err.name,
+        });
+        setError(err.message);
+      });
   }, [companyId]);
 
   const executeMatching = async () => {
@@ -78,14 +92,27 @@ export default function MatchingNewPage() {
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
+        const errorData = await response.json().catch(() => ({}));
+        console.error("[Matching] Matching API failed:", {
+          status: response.status,
+          statusText: response.statusText,
+          companyId,
+          errorData,
+        });
         throw new Error(errorData.error || "매칭 실행에 실패했습니다");
       }
 
       const data: MatchingResponse = await response.json();
       setResults(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "알 수 없는 오류가 발생했습니다");
+      const errorMessage = err instanceof Error ? err.message : "알 수 없는 오류가 발생했습니다";
+      console.error("[Matching] Matching execution error:", {
+        message: errorMessage,
+        companyId,
+        type: err instanceof Error ? err.name : "Unknown",
+        stack: err instanceof Error ? err.stack : undefined,
+      });
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -134,9 +161,22 @@ export default function MatchingNewPage() {
       {error && (
         <Card className="mb-6 border-destructive">
           <CardContent className="pt-6">
-            <div className="flex items-center gap-2 text-destructive">
-              <AlertCircle className="h-5 w-5" />
-              <span>{error}</span>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-destructive">
+                <AlertCircle className="h-5 w-5" />
+                <span>{error}</span>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setError(null);
+                  executeMatching();
+                }}
+                disabled={loading}
+              >
+                다시 시도
+              </Button>
             </div>
           </CardContent>
         </Card>

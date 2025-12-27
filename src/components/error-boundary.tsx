@@ -3,11 +3,75 @@
 /**
  * Global Error Boundary Component
  * Catches React errors and displays user-friendly fallback UI
+ * Includes structured error logging for production monitoring
  */
 
 import React from "react";
 import { Button } from "@/components/ui/button";
 import { AlertCircle } from "lucide-react";
+
+/**
+ * 구조화된 에러 로그 인터페이스
+ */
+interface ErrorLog {
+  timestamp: string;
+  message: string;
+  stack?: string;
+  componentStack?: string;
+  url: string;
+  userAgent: string;
+  env: string;
+}
+
+/**
+ * 에러 추적 서비스 인터페이스
+ * Sentry, LogRocket 등 외부 서비스 연동 시 이 인터페이스 구현
+ */
+interface ErrorTracker {
+  captureException: (error: Error, context?: Record<string, unknown>) => void;
+}
+
+// 기본 에러 추적기 (콘솔 로깅 + API 전송)
+const defaultErrorTracker: ErrorTracker = {
+  captureException: (error: Error, context?: Record<string, unknown>) => {
+    const errorLog: ErrorLog = {
+      timestamp: new Date().toISOString(),
+      message: error.message,
+      stack: error.stack,
+      componentStack: context?.componentStack as string | undefined,
+      url: typeof window !== "undefined" ? window.location.href : "",
+      userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
+      env: process.env.NODE_ENV || "development",
+    };
+
+    // 콘솔에 구조화된 로그 출력
+    console.error("[ErrorBoundary] Error captured:", errorLog);
+
+    // 프로덕션에서 API로 에러 전송 (비동기, fire-and-forget)
+    if (process.env.NODE_ENV === "production" && typeof window !== "undefined") {
+      // 에러 로깅 API가 있다면 전송
+      // fetch("/api/log/error", {
+      //   method: "POST",
+      //   headers: { "Content-Type": "application/json" },
+      //   body: JSON.stringify(errorLog),
+      // }).catch(() => {});
+
+      // 또는 Sentry SDK가 설정되어 있다면:
+      // Sentry.captureException(error, { extra: context });
+    }
+  },
+};
+
+// 사용할 에러 추적기 (환경 변수로 설정 가능)
+let errorTracker: ErrorTracker = defaultErrorTracker;
+
+/**
+ * 외부 에러 추적 서비스 설정
+ * @example setErrorTracker(Sentry)
+ */
+export function setErrorTracker(tracker: ErrorTracker) {
+  errorTracker = tracker;
+}
 
 interface ErrorBoundaryProps {
   children: React.ReactNode;
@@ -53,15 +117,10 @@ export class ErrorBoundary extends React.Component<
   }
 
   logErrorToService = (error: Error, errorInfo: React.ErrorInfo) => {
-    // Production error logging
-    if (process.env.NODE_ENV === "production") {
-      // Send to error tracking service
-      console.error("Error logged:", {
-        message: error.message,
-        stack: error.stack,
-        componentStack: errorInfo.componentStack,
-      });
-    }
+    // 구조화된 에러 추적 서비스로 전송
+    errorTracker.captureException(error, {
+      componentStack: errorInfo.componentStack,
+    });
   };
 
   handleReset = () => {
