@@ -1,8 +1,21 @@
 "use client";
 
+import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   FileText,
   Plus,
@@ -13,8 +26,10 @@ import {
   Target,
   Calendar,
   Users,
+  Loader2,
 } from "lucide-react";
 import Link from "next/link";
+import { toast } from "sonner";
 
 interface BusinessPlanSection {
   id: string;
@@ -71,6 +86,16 @@ export function Step3Plan({
   existingPlanId,
   onComplete,
 }: Step3PlanProps) {
+  const router = useRouter();
+
+  // AI 초안 생성 모달 상태
+  const [showAiModal, setShowAiModal] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [aiFormData, setAiFormData] = useState({
+    title: "",
+    newBusinessDescription: "",
+  });
+
   // Mock data - in real implementation, fetch from API
   const sections: BusinessPlanSection[] = PLAN_SECTIONS.map((section, idx) => ({
     ...section,
@@ -80,6 +105,68 @@ export function Step3Plan({
 
   const completedCount = sections.filter((s) => s.completed).length;
   const progress = (completedCount / sections.length) * 100;
+
+  // 새로 작성하기 - /business-plans/new 페이지로 이동
+  const handleNewPlan = () => {
+    const params = new URLSearchParams();
+    if (companyId) params.set("companyId", companyId);
+    if (projectId) params.set("projectId", projectId);
+    router.push(`/business-plans/new?${params.toString()}`);
+  };
+
+  // AI 초안 생성 - 모달에서 간단한 정보 입력 후 바로 생성
+  const handleAiGenerate = async () => {
+    if (!aiFormData.title.trim() || !aiFormData.newBusinessDescription.trim()) {
+      toast.error("제목과 사업 설명을 입력해주세요");
+      return;
+    }
+
+    setIsGenerating(true);
+    try {
+      // 1. 사업계획서 생성
+      const createRes = await fetch("/api/business-plans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          companyId,
+          projectId,
+          title: aiFormData.title,
+          newBusinessDescription: aiFormData.newBusinessDescription,
+        }),
+      });
+
+      if (!createRes.ok) {
+        throw new Error("사업계획서 생성 실패");
+      }
+
+      const { businessPlan } = await createRes.json();
+
+      // 2. AI 생성 시작
+      const generateRes = await fetch(
+        `/api/business-plans/${businessPlan.id}/generate`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mode: "all" }),
+        }
+      );
+
+      if (!generateRes.ok) {
+        // 생성 실패해도 상세 페이지로 이동 (수동 생성 가능)
+        toast.error("AI 생성 시작 실패. 상세 페이지에서 다시 시도해주세요.");
+      } else {
+        toast.success("AI가 사업계획서를 생성하고 있습니다");
+      }
+
+      // 3. 상세 페이지로 이동
+      setShowAiModal(false);
+      router.push(`/business-plans/${businessPlan.id}`);
+    } catch (error) {
+      toast.error("사업계획서 생성에 실패했습니다");
+    } finally {
+      setIsGenerating(false);
+    }
+  };
 
   if (!existingPlanId) {
     return (
@@ -109,17 +196,91 @@ export function Step3Plan({
               빠르게 시작하세요
             </p>
             <div className="flex justify-center gap-3">
-              <Button variant="outline">
+              <Button variant="outline" onClick={() => setShowAiModal(true)}>
                 <Sparkles className="h-4 w-4 mr-2" />
                 AI 초안 생성
               </Button>
-              <Button>
+              <Button onClick={handleNewPlan}>
                 <Plus className="h-4 w-4 mr-2" />
                 새로 작성하기
               </Button>
             </div>
           </CardContent>
         </Card>
+
+        {/* AI 초안 생성 모달 */}
+        <Dialog open={showAiModal} onOpenChange={setShowAiModal}>
+          <DialogContent className="sm:max-w-[500px]">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Sparkles className="h-5 w-5 text-primary" />
+                AI 초안 생성
+              </DialogTitle>
+              <DialogDescription>
+                간단한 정보를 입력하면 AI가 사업계획서 초안을 작성합니다.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="ai-title">사업계획서 제목 *</Label>
+                <Input
+                  id="ai-title"
+                  value={aiFormData.title}
+                  onChange={(e) =>
+                    setAiFormData((prev) => ({ ...prev, title: e.target.value }))
+                  }
+                  placeholder="예: 2025년 AI 기반 고객 관리 시스템 개발"
+                  disabled={isGenerating}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="ai-description">신규 사업 설명 *</Label>
+                <Textarea
+                  id="ai-description"
+                  value={aiFormData.newBusinessDescription}
+                  onChange={(e) =>
+                    setAiFormData((prev) => ({
+                      ...prev,
+                      newBusinessDescription: e.target.value,
+                    }))
+                  }
+                  placeholder="신규 사업의 목적, 내용, 기대 효과를 간략히 작성해주세요"
+                  className="min-h-[120px]"
+                  disabled={isGenerating}
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setShowAiModal(false)}
+                disabled={isGenerating}
+              >
+                취소
+              </Button>
+              <Button
+                onClick={handleAiGenerate}
+                disabled={
+                  isGenerating ||
+                  !aiFormData.title.trim() ||
+                  !aiFormData.newBusinessDescription.trim()
+                }
+              >
+                {isGenerating ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    생성 중...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="h-4 w-4 mr-2" />
+                    AI로 작성하기
+                  </>
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     );
   }
