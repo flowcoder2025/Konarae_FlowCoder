@@ -1,8 +1,7 @@
-import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
-import { redirect, notFound } from "next/navigation";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { redirect, notFound } from "next/navigation"
+import { getUserProject } from "@/lib/user-projects"
+import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
 import {
   FileText,
   ClipboardCheck,
@@ -12,10 +11,10 @@ import {
   Building2,
   Calendar,
   ExternalLink,
-} from "lucide-react";
-import Link from "next/link";
-import { ProjectWorkspace } from "@/components/projects";
-import type { StepConfig } from "@/components/projects";
+} from "lucide-react"
+import Link from "next/link"
+import { ProjectWorkspace } from "@/components/projects"
+import type { StepConfig } from "@/components/projects"
 
 // Step configuration
 const STEPS: StepConfig[] = [
@@ -51,94 +50,38 @@ const STEPS: StepConfig[] = [
     description: "파일을 정리하고 제출 준비를 완료해요",
     icon: Package,
   },
-];
-
-interface ProjectDetail {
-  id: string;
-  projectName: string;
-  projectAgency: string;
-  projectUrl: string | null;
-  companyName: string;
-  companyId: string;
-  currentStep: number;
-  stepCompletions: boolean[];
-  deadline: string | null;
-  daysLeft: number | null;
-  matchScore: number;
-  existingPlanId: string | null;
-}
+]
 
 interface Props {
-  params: Promise<{ id: string }>;
+  params: Promise<{ id: string }>
 }
 
-async function getProjectDetail(userId: string, projectId: string): Promise<ProjectDetail | null> {
-  // For now, use MatchingResult as the project source
-  // TODO: Replace with UserProject after migration
-  const matchingResult = await prisma.matchingResult.findFirst({
-    where: {
-      id: projectId,
-      company: {
-        members: { some: { userId } },
-      },
-    },
-    include: {
-      company: { select: { id: true, name: true } },
-      project: {
-        select: {
-          name: true,
-          organization: true,
-          deadline: true,
-          sourceUrl: true,
-        },
-      },
-    },
-  });
-
-  if (!matchingResult) return null;
-
-  // Check for existing business plan
-  const existingPlan = await prisma.businessPlan.findFirst({
-    where: {
-      companyId: matchingResult.company.id,
-      // Add project reference when UserProject model is available
-    },
-    select: { id: true },
-    orderBy: { createdAt: "desc" },
-  });
-
-  return {
-    id: matchingResult.id,
-    projectName: matchingResult.project.name,
-    projectAgency: matchingResult.project.organization,
-    projectUrl: matchingResult.project.sourceUrl,
-    companyName: matchingResult.company.name,
-    companyId: matchingResult.company.id,
-    currentStep: 1,
-    stepCompletions: [false, false, false, false, false],
-    deadline: matchingResult.project.deadline?.toISOString() || null,
-    daysLeft: matchingResult.project.deadline
-      ? Math.ceil((new Date(matchingResult.project.deadline).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
-      : null,
-    matchScore: matchingResult.totalScore,
-    existingPlanId: existingPlan?.id || null,
-  };
+function calculateDaysLeft(deadline: Date | null): number | null {
+  if (!deadline) return null
+  const days = Math.ceil((new Date(deadline).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+  return days > 0 ? days : null
 }
 
 export default async function ProjectDetailPage({ params }: Props) {
-  const session = await auth();
+  const { id } = await params
 
-  if (!session?.user?.id) {
-    redirect("/login");
+  const userProject = await getUserProject(id)
+
+  if (!userProject) {
+    notFound()
   }
 
-  const { id } = await params;
+  const daysLeft = calculateDaysLeft(userProject.project.deadline)
+  const matchScore = userProject.matchingResult?.totalScore || 0
 
-  const project = await getProjectDetail(session.user.id, id);
-
-  if (!project) {
-    notFound();
-  }
+  // Convert step completions to array format
+  const stepCompletions = [
+    userProject.step1Completed,
+    userProject.step2Completed,
+    userProject.step3Completed,
+    userProject.step4Completed,
+    userProject.step5Completed,
+  ]
 
   return (
     <div className="container mx-auto py-8 space-y-6 max-w-5xl">
@@ -156,29 +99,35 @@ export default async function ProjectDetailPage({ params }: Props) {
       <div className="space-y-4">
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1">
-            <h1 className="text-2xl font-bold">{project.projectName}</h1>
+            <h1 className="text-2xl font-bold">{userProject.project.name}</h1>
             <div className="flex items-center gap-4 text-muted-foreground">
               <span className="flex items-center gap-1">
                 <Building2 className="h-4 w-4" />
-                {project.companyName}
+                {userProject.company.name}
               </span>
-              <span>{project.projectAgency}</span>
+              <span>{userProject.project.organization}</span>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {project.daysLeft !== null && project.daysLeft > 0 && (
-              <Badge variant={project.daysLeft <= 7 ? "destructive" : "secondary"}>
+            {daysLeft !== null && (
+              <Badge variant={daysLeft <= 7 ? "destructive" : "secondary"}>
                 <Calendar className="h-3 w-3 mr-1" />
-                D-{project.daysLeft}
+                D-{daysLeft}
               </Badge>
             )}
-            <Badge variant="outline">적합도 {project.matchScore}점</Badge>
+            {matchScore > 0 && (
+              <Badge variant="outline">적합도 {matchScore}점</Badge>
+            )}
           </div>
         </div>
 
-        {project.projectUrl && (
+        {(userProject.project.websiteUrl || userProject.project.detailUrl) && (
           <Button variant="outline" size="sm" asChild>
-            <a href={project.projectUrl} target="_blank" rel="noopener noreferrer">
+            <a
+              href={userProject.project.detailUrl || userProject.project.websiteUrl || "#"}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
               공고 원문 보기
               <ExternalLink className="h-4 w-4 ml-2" />
             </a>
@@ -188,14 +137,14 @@ export default async function ProjectDetailPage({ params }: Props) {
 
       {/* Project Workspace */}
       <ProjectWorkspace
-        projectId={project.id}
-        projectUrl={project.projectUrl}
-        companyId={project.companyId}
-        existingPlanId={project.existingPlanId}
-        initialStep={project.currentStep}
-        initialCompletions={project.stepCompletions}
+        projectId={userProject.id}
+        projectUrl={userProject.project.detailUrl || userProject.project.websiteUrl}
+        companyId={userProject.companyId}
+        existingPlanId={userProject.businessPlan?.id || null}
+        initialStep={userProject.currentStep}
+        initialCompletions={stepCompletions}
         steps={STEPS}
       />
     </div>
-  );
+  )
 }

@@ -1,83 +1,64 @@
-import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
-import { redirect } from "next/navigation";
-import { createLogger } from "@/lib/logger";
-import { Button } from "@/components/ui/button";
-import { Kanban, Plus } from "lucide-react";
-import Link from "next/link";
-import { PipelineBoard } from "@/components/pipeline";
-import type { PipelineProject } from "@/components/pipeline";
+import { redirect } from "next/navigation"
+import { getUserProjectsByStatus } from "@/lib/user-projects"
+import { Button } from "@/components/ui/button"
+import { Kanban, Plus } from "lucide-react"
+import Link from "next/link"
+import { PipelineBoard } from "@/components/pipeline"
+import type { PipelineProject } from "@/components/pipeline"
 
-const logger = createLogger({ page: "pipeline" });
+function calculateDaysLeft(deadline: Date | null): number | null {
+  if (!deadline) return null
+  const days = Math.ceil((new Date(deadline).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+  return days > 0 ? days : null
+}
 
-async function getPipelineData(userId: string): Promise<Record<string, PipelineProject[]>> {
-  const userCompanies = await prisma.companyMember.findMany({
-    where: { userId },
-    select: { companyId: true },
-  });
+// Status mapping (lowercase DB values to uppercase display values)
+const STATUS_MAP: Record<string, string> = {
+  exploring: "EXPLORING",
+  preparing: "PREPARING",
+  writing: "WRITING",
+  verifying: "VERIFYING",
+  submitted: "SUBMITTED",
+  closed: "SUBMITTED", // Map closed to submitted column
+}
 
-  const companyIds = userCompanies.map((cm) => cm.companyId);
+export default async function PipelinePage() {
+  const projectsByStatus = await getUserProjectsByStatus()
 
-  const matchingResults = await prisma.matchingResult.findMany({
-    where: { companyId: { in: companyIds } },
-    include: {
-      company: { select: { name: true } },
-      project: {
-        select: {
-          name: true,
-          deadline: true,
-        },
-      },
-    },
-    orderBy: { totalScore: "desc" },
-  });
+  if (!projectsByStatus) {
+    redirect("/login")
+  }
 
-  // Group by status (for now, all are EXPLORING since we don't have UserProject yet)
-  const grouped: Record<string, PipelineProject[]> = {
+  // Transform data for PipelineBoard
+  const pipelineData: Record<string, PipelineProject[]> = {
     EXPLORING: [],
     PREPARING: [],
     WRITING: [],
     VERIFYING: [],
     SUBMITTED: [],
-  };
-
-  matchingResults.forEach((m) => {
-    const project: PipelineProject = {
-      id: m.id,
-      projectName: m.project.name,
-      companyName: m.company.name,
-      status: "EXPLORING",
-      currentStep: 1,
-      deadline: m.project.deadline?.toISOString() || null,
-      daysLeft: m.project.deadline
-        ? Math.ceil((new Date(m.project.deadline).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
-        : null,
-      matchScore: m.totalScore,
-    };
-    grouped.EXPLORING.push(project);
-  });
-
-  return grouped;
-}
-
-export default async function PipelinePage() {
-  const session = await auth();
-
-  if (!session?.user?.id) {
-    redirect("/login");
   }
 
-  let pipelineData: Record<string, PipelineProject[]> = {};
-  let error = false;
+  // Process each status group
+  Object.entries(projectsByStatus).forEach(([status, projects]) => {
+    const displayStatus = STATUS_MAP[status] || "EXPLORING"
 
-  try {
-    pipelineData = await getPipelineData(session.user.id);
-  } catch (e) {
-    logger.error("Failed to load pipeline data", { error: e });
-    error = true;
-  }
+    projects.forEach((project) => {
+      const pipelineProject: PipelineProject = {
+        id: project.id,
+        projectName: project.project.name,
+        companyName: project.company.name,
+        status: displayStatus,
+        currentStep: project.currentStep,
+        deadline: project.project.deadline?.toISOString() || null,
+        daysLeft: calculateDaysLeft(project.project.deadline),
+        matchScore: project.matchingResult?.totalScore || 0,
+      }
 
-  const totalProjects = Object.values(pipelineData).reduce((sum, arr) => sum + arr.length, 0);
+      if (pipelineData[displayStatus]) {
+        pipelineData[displayStatus].push(pipelineProject)
+      }
+    })
+  })
 
   return (
     <div className="container mx-auto py-8 space-y-6 max-w-[1400px]">
@@ -100,14 +81,8 @@ export default async function PipelinePage() {
         </Button>
       </div>
 
-      {error && (
-        <div className="p-4 bg-destructive/10 text-destructive rounded-lg">
-          데이터를 불러오는 중 오류가 발생했습니다. 페이지를 새로고침해주세요.
-        </div>
-      )}
-
       {/* Pipeline Board */}
-      {!error && <PipelineBoard data={pipelineData} />}
+      <PipelineBoard data={pipelineData} />
     </div>
-  );
+  )
 }
