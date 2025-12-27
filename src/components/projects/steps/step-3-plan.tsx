@@ -121,6 +121,16 @@ export function Step3Plan({
       return;
     }
 
+    if (!companyId) {
+      toast.error("기업 정보가 필요합니다. 먼저 기업을 선택해주세요.");
+      return;
+    }
+
+    if (!projectId) {
+      toast.error("지원사업 정보가 필요합니다. 지원사업을 먼저 선택해주세요.");
+      return;
+    }
+
     setIsGenerating(true);
     try {
       // 1. 사업계획서 생성
@@ -136,7 +146,8 @@ export function Step3Plan({
       });
 
       if (!createRes.ok) {
-        throw new Error("사업계획서 생성 실패");
+        const errorData = await createRes.json();
+        throw new Error(errorData.error || "사업계획서 생성 실패");
       }
 
       const { businessPlan } = await createRes.json();
@@ -152,8 +163,12 @@ export function Step3Plan({
       );
 
       if (!generateRes.ok) {
-        // 생성 실패해도 상세 페이지로 이동 (수동 생성 가능)
-        toast.error("AI 생성 시작 실패. 상세 페이지에서 다시 시도해주세요.");
+        const errorData = await generateRes.json();
+        // 생성 실패해도 상세 페이지로 이동 (수동 생성 또는 빈 템플릿 사용 가능)
+        toast.error(
+          errorData.error ||
+          "AI 생성 시작 실패. 상세 페이지에서 빈 템플릿으로 시작하거나 다시 시도해주세요."
+        );
       } else {
         toast.success("AI가 사업계획서를 생성하고 있습니다");
       }
@@ -162,7 +177,8 @@ export function Step3Plan({
       setShowAiModal(false);
       router.push(`/business-plans/${businessPlan.id}`);
     } catch (error) {
-      toast.error("사업계획서 생성에 실패했습니다");
+      const errorMessage = error instanceof Error ? error.message : "사업계획서 생성에 실패했습니다";
+      toast.error(errorMessage);
     } finally {
       setIsGenerating(false);
     }

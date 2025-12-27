@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card } from "@/components/ui/card";
 import { MermaidRenderer } from "@/components/ui/mermaid-renderer";
 import { createLogger } from "@/lib/logger";
+import { Trash2 } from "lucide-react";
 
 const logger = createLogger({ component: "section-editor" });
 
@@ -21,12 +22,14 @@ interface SectionEditorProps {
   };
   businessPlanId: string;
   onUpdate: () => void;
+  onDelete?: () => void;
 }
 
 export function SectionEditor({
   section,
   businessPlanId,
   onUpdate,
+  onDelete,
 }: SectionEditorProps) {
   const [content, setContent] = useState(section.content);
   const [isEditing, setIsEditing] = useState(false);
@@ -111,6 +114,16 @@ export function SectionEditor({
               <Button variant="outline" size="sm" onClick={() => setIsEditing(true)}>
                 수정
               </Button>
+              {onDelete && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={onDelete}
+                  className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              )}
             </>
           ) : (
             <>

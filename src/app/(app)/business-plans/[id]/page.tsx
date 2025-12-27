@@ -5,6 +5,8 @@ import { useRouter, useParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Dialog,
   DialogContent,
@@ -16,8 +18,9 @@ import {
 import { SectionEditor } from "@/components/business-plans/section-editor";
 import Link from "next/link";
 import { PageHeader } from "@/components/common";
-import { Loader2, Sparkles, AlertTriangle, FileDown } from "lucide-react";
+import { Loader2, Sparkles, AlertTriangle, FileDown, Plus, FileText } from "lucide-react";
 import { createLogger } from "@/lib/logger";
+import { toast } from "sonner";
 
 const logger = createLogger({ page: "business-plan-detail" });
 
@@ -40,6 +43,10 @@ export default function BusinessPlanDetailPage() {
   );
   const [isExporting, setIsExporting] = useState(false);
   const [showHwpModal, setShowHwpModal] = useState(false);
+  const [showAddSectionModal, setShowAddSectionModal] = useState(false);
+  const [newSectionTitle, setNewSectionTitle] = useState("");
+  const [isAddingSection, setIsAddingSection] = useState(false);
+  const [isInitializingTemplate, setIsInitializingTemplate] = useState(false);
 
   // 페이지 이탈 경고 (생성 중일 때)
   useEffect(() => {
@@ -142,6 +149,88 @@ export default function BusinessPlanDetailPage() {
       alert("내보내기에 실패했습니다.");
     } finally {
       setIsExporting(false);
+    }
+  };
+
+  // 빈 템플릿으로 시작
+  const handleInitializeTemplate = async () => {
+    setIsInitializingTemplate(true);
+    try {
+      const res = await fetch(`/api/business-plans/${id}/sections`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "template" }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "템플릿 초기화 실패");
+      }
+
+      toast.success("기본 템플릿이 생성되었습니다. 각 섹션을 수정해주세요.");
+      await fetchBusinessPlan();
+    } catch (error) {
+      logger.error("Initialize template error", { error });
+      toast.error(error instanceof Error ? error.message : "템플릿 초기화에 실패했습니다.");
+    } finally {
+      setIsInitializingTemplate(false);
+    }
+  };
+
+  // 새 섹션 추가
+  const handleAddSection = async () => {
+    if (!newSectionTitle.trim()) {
+      toast.error("섹션 제목을 입력해주세요.");
+      return;
+    }
+
+    setIsAddingSection(true);
+    try {
+      const res = await fetch(`/api/business-plans/${id}/sections`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: newSectionTitle.trim(),
+          content: `## ${newSectionTitle.trim()}\n\n내용을 작성해주세요.`,
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error("섹션 추가 실패");
+      }
+
+      toast.success("새 섹션이 추가되었습니다.");
+      setShowAddSectionModal(false);
+      setNewSectionTitle("");
+      await fetchBusinessPlan();
+    } catch (error) {
+      logger.error("Add section error", { error });
+      toast.error("섹션 추가에 실패했습니다.");
+    } finally {
+      setIsAddingSection(false);
+    }
+  };
+
+  // 섹션 삭제
+  const handleDeleteSection = async (sectionIndex: number) => {
+    if (!confirm("이 섹션을 삭제하시겠습니까?")) {
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/business-plans/${id}/sections/${sectionIndex}`, {
+        method: "DELETE",
+      });
+
+      if (!res.ok) {
+        throw new Error("섹션 삭제 실패");
+      }
+
+      toast.success("섹션이 삭제되었습니다.");
+      await fetchBusinessPlan();
+    } catch (error) {
+      logger.error("Delete section error", { error });
+      toast.error("섹션 삭제에 실패했습니다.");
     }
   };
 
@@ -282,26 +371,109 @@ export default function BusinessPlanDetailPage() {
               section={section}
               businessPlanId={id}
               onUpdate={fetchBusinessPlan}
+              onDelete={() => handleDeleteSection(section.sectionIndex)}
             />
           ))}
+
+          {/* 섹션 추가 버튼 */}
+          <div className="flex justify-center pt-4">
+            <Button
+              variant="outline"
+              onClick={() => setShowAddSectionModal(true)}
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              새 섹션 추가
+            </Button>
+          </div>
         </div>
       ) : (
         <div className="text-center py-12 border rounded-lg">
-          {isGenerating ? (
-            <p className="text-muted-foreground">생성 중...</p>
+          {isGenerating || isInitializingTemplate ? (
+            <div className="flex flex-col items-center gap-2">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              <p className="text-muted-foreground">
+                {isGenerating ? "AI 생성 중..." : "템플릿 생성 중..."}
+              </p>
+            </div>
           ) : (
             <>
-              <p className="text-muted-foreground mb-4">
-                아직 작성된 섹션이 없습니다
+              <div className="w-16 h-16 rounded-full bg-muted/50 flex items-center justify-center mx-auto mb-4">
+                <FileText className="h-8 w-8 text-muted-foreground" />
+              </div>
+              <h3 className="font-semibold text-lg mb-2">사업계획서 작성 시작</h3>
+              <p className="text-muted-foreground mb-6 max-w-md mx-auto">
+                AI를 사용해 자동 생성하거나, 빈 템플릿으로 직접 작성할 수 있습니다.
               </p>
-              <Button onClick={handleGenerateAll}>
-                <Sparkles className="h-4 w-4 mr-2" />
-                AI로 사업계획서 생성하기
-              </Button>
+              <div className="flex justify-center gap-3">
+                <Button variant="outline" onClick={handleInitializeTemplate}>
+                  <FileText className="h-4 w-4 mr-2" />
+                  빈 템플릿으로 시작
+                </Button>
+                <Button onClick={handleGenerateAll}>
+                  <Sparkles className="h-4 w-4 mr-2" />
+                  AI로 자동 생성
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground mt-4">
+                빈 템플릿을 선택하면 무료로 직접 작성할 수 있습니다
+              </p>
             </>
           )}
         </div>
       )}
+
+      {/* 새 섹션 추가 모달 */}
+      <Dialog open={showAddSectionModal} onOpenChange={setShowAddSectionModal}>
+        <DialogContent className="sm:max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle>새 섹션 추가</DialogTitle>
+            <DialogDescription>
+              추가할 섹션의 제목을 입력해주세요.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <div className="space-y-2">
+              <Label htmlFor="new-section-title">섹션 제목</Label>
+              <Input
+                id="new-section-title"
+                value={newSectionTitle}
+                onChange={(e) => setNewSectionTitle(e.target.value)}
+                placeholder="예: 기대 효과"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !isAddingSection) {
+                    handleAddSection();
+                  }
+                }}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowAddSectionModal(false);
+                setNewSectionTitle("");
+              }}
+              disabled={isAddingSection}
+            >
+              취소
+            </Button>
+            <Button onClick={handleAddSection} disabled={isAddingSection || !newSectionTitle.trim()}>
+              {isAddingSection ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  추가 중...
+                </>
+              ) : (
+                <>
+                  <Plus className="h-4 w-4 mr-2" />
+                  추가
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
