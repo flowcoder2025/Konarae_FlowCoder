@@ -18,6 +18,7 @@ import { hybridSearch } from "./rag";
 import { prisma } from "./prisma";
 import { createLogger } from "./logger";
 import { Prisma } from "@prisma/client";
+import { extractRegionFromAddress, isRegionMatch, type RegionCode } from "./region";
 
 const logger = createLogger({ module: "matching" });
 
@@ -504,6 +505,7 @@ export async function executeMatching(
       select: {
         id: true,
         name: true,
+        address: true, // 지역 필터링용 주소 추가
         companyType: true,
         companySize: true,
         businessCategory: true,
@@ -601,8 +603,13 @@ export async function executeMatching(
       .filter(Boolean)
       .join(" ");
 
+    // 기업 주소에서 지역 코드 추출 (v3: 자동 지역 필터링)
+    const companyRegion = extractRegionFromAddress(company.address);
+
     logger.debug("Enhanced profile built", {
       companyName: company.name,
+      companyAddress: company.address,
+      companyRegion,
       documentCount: company.documents.length,
       certificationCount: company.certifications.length,
     });
@@ -619,6 +626,7 @@ export async function executeMatching(
         whereClause.category = { in: input.preferences.categories };
       }
 
+      // v3: 명시적 regions 설정이 있으면 사용, 없으면 기업 주소 기반 필터링
       if (input.preferences.regions?.length) {
         whereClause.region = { in: input.preferences.regions };
       }
@@ -644,6 +652,7 @@ export async function executeMatching(
         organization: true,
         category: true,
         subCategory: true,
+        region: true, // v3: 지역 필터링용
         target: true,
         eligibility: true,
         amountMin: true,
@@ -652,14 +661,28 @@ export async function executeMatching(
         isPermanent: true,
         summary: true,
       },
-      take: 100, // Limit for performance
+      take: 200, // v3: 지역 필터링 후 결과 보장을 위해 증가
+    });
+
+    // v3: 지역 필터링 적용 (preferences.regions가 없을 때 자동 필터링)
+    // - "전국" 사업은 항상 포함
+    // - 기업 지역과 일치하는 지역 사업만 포함
+    const filteredProjects = !input.preferences?.regions?.length && companyRegion
+      ? projects.filter((p) => isRegionMatch(companyRegion, p.region))
+      : projects;
+
+    logger.debug("Region filtering applied", {
+      originalCount: projects.length,
+      filteredCount: filteredProjects.length,
+      companyRegion,
+      hasExplicitRegionPreference: !!input.preferences?.regions?.length,
     });
 
     // Calculate scores for each project
     const results: MatchingResultData[] = [];
 
     // Batch score calculations (optimized - parallel)
-    const projectIds = projects.map((p) => p.id);
+    const projectIds = filteredProjects.map((p) => p.id);
 
     // 병렬로 두 가지 유사도 점수 계산
     const [semanticScoreMap, documentSimilarityScoreMap] = await Promise.all([
@@ -667,7 +690,7 @@ export async function executeMatching(
       calculateDocumentSimilarityScoresBatch(company.id, projectIds),
     ]);
 
-    for (const project of projects) {
+    for (const project of filteredProjects) {
       // 텍스트 기반 유사도
       const semanticScore = semanticScoreMap.get(project.id) || 0;
 
@@ -763,9 +786,9 @@ export async function storeMatchingResults(
   results: MatchingResultData[]
 ): Promise<void> {
   try {
-    // Delete old results for this company
+    // Delete old results for this company (모든 사용자의 결과 삭제 - @@unique([companyId, projectId]) 충돌 방지)
     await prisma.matchingResult.deleteMany({
-      where: { userId, companyId },
+      where: { companyId },
     });
 
     // Store new results (top 50)
