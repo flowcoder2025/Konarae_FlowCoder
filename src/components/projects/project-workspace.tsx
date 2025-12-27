@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { ProjectStepper, StepContent } from "@/components/projects";
 import type { StepConfig } from "@/components/projects";
+import { toast } from "sonner";
 import {
   FileText,
   ClipboardCheck,
@@ -95,10 +96,16 @@ export function ProjectWorkspace({
   };
 
   const handleStepComplete = async (completedStep: number) => {
-    // Update local state optimistically
-    const newCompletions = [...stepCompletions];
-    newCompletions[completedStep - 1] = true;
-    setStepCompletions(newCompletions);
+    // 롤백을 위한 이전 상태 저장
+    const prevCompletions = [...stepCompletions];
+    const prevStep = currentStep;
+
+    // Update local state optimistically (함수형 setter로 최신 상태 사용)
+    setStepCompletions((prev) => {
+      const newCompletions = [...prev];
+      newCompletions[completedStep - 1] = true;
+      return newCompletions;
+    });
 
     const nextStep = completedStep < STEPS.length ? completedStep + 1 : completedStep;
     if (completedStep < STEPS.length) {
@@ -108,26 +115,36 @@ export function ProjectWorkspace({
     // Save to API
     const success = await saveProgress(completedStep, true, nextStep);
     if (!success) {
-      console.error("Failed to save progress");
-      setStepCompletions(stepCompletions);
-      setCurrentStep(currentStep);
+      // 실패 시 저장된 이전 상태로 롤백
+      setStepCompletions(prevCompletions);
+      setCurrentStep(prevStep);
+      toast.error("진행 상태 저장에 실패했습니다. 다시 시도해 주세요.");
     }
   };
 
   const handleStepSkip = async (skippedStep: number) => {
+    // 롤백을 위한 이전 상태 저장
+    const prevStep = currentStep;
+
     // 건너뛴 단계는 완료 처리하지 않고 다음 단계로 이동
     const nextStep = skippedStep < STEPS.length ? skippedStep + 1 : skippedStep;
     setCurrentStep(nextStep);
 
     // Save only currentStep (step not completed)
     try {
-      await fetch(`/api/user-projects/${projectId}`, {
+      const response = await fetch(`/api/user-projects/${projectId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ currentStep: nextStep }),
       });
-    } catch (error) {
-      console.error("Failed to save progress:", error);
+
+      if (!response.ok) {
+        setCurrentStep(prevStep);
+        toast.error("진행 상태 저장에 실패했습니다. 다시 시도해 주세요.");
+      }
+    } catch {
+      setCurrentStep(prevStep);
+      toast.error("진행 상태 저장에 실패했습니다. 다시 시도해 주세요.");
     }
   };
 
