@@ -26,6 +26,15 @@ const VALID_STATUSES = [
   "closed",
 ] as const
 
+// currentStep → status 자동 매핑
+const STEP_TO_STATUS_MAP: Record<number, string> = {
+  1: "exploring",
+  2: "preparing",
+  3: "writing",
+  4: "verifying",
+  5: "submitted",
+}
+
 /**
  * GET /api/user-projects/[id] - 프로젝트 상세 조회
  */
@@ -170,6 +179,14 @@ export async function PATCH(request: NextRequest, { params }: Context) {
         )
       }
       updateData.currentStep = body.currentStep
+
+      // 명시적 status가 없으면 currentStep 기반으로 자동 동기화
+      if (!body.status) {
+        const mappedStatus = STEP_TO_STATUS_MAP[body.currentStep]
+        if (mappedStatus) {
+          updateData.status = mappedStatus
+        }
+      }
     }
 
     // 단계별 완료 상태 업데이트
