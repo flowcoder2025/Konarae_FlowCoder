@@ -5,6 +5,7 @@ import { getOrCreateCredit } from "@/lib/credits";
 import { createLogger } from "@/lib/logger";
 import { Badge } from "@/components/ui/badge";
 import { Sparkles } from "lucide-react";
+import { calculateDaysLeft } from "@/lib/utils";
 import {
   WelcomeHero,
   NextActionGuide,
@@ -51,7 +52,8 @@ interface HomeData {
 }
 
 async function getHomeData(userId: string): Promise<HomeData> {
-  const [user, userCompanies, matchingResults, upcomingProjects] = await Promise.all([
+  // Parallel data fetching - all queries run concurrently
+  const [user, userCompanies, matchingResults, upcomingProjects, creditData] = await Promise.all([
     prisma.user.findUnique({
       where: { id: userId },
       select: { name: true },
@@ -92,9 +94,9 @@ async function getHomeData(userId: string): Promise<HomeData> {
       orderBy: { deadline: "asc" },
       take: 6,
     }),
+    getOrCreateCredit(userId),
   ]);
 
-  const creditData = await getOrCreateCredit(userId);
   const hasCompany = userCompanies.length > 0;
 
   // Build recommendations from matching results or upcoming projects
@@ -104,9 +106,7 @@ async function getHomeData(userId: string): Promise<HomeData> {
         title: m.project.name,
         agency: m.project.organization,
         deadline: m.project.deadline?.toISOString() || null,
-        daysLeft: m.project.deadline
-          ? Math.ceil((new Date(m.project.deadline).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
-          : null,
+        daysLeft: calculateDaysLeft(m.project.deadline),
         budget: m.project.amountMax ? Number(m.project.amountMax) : null,
         matchScore: m.totalScore,
         companyId: m.companyId,
@@ -117,9 +117,7 @@ async function getHomeData(userId: string): Promise<HomeData> {
         title: p.name,
         agency: p.organization,
         deadline: p.deadline?.toISOString() || null,
-        daysLeft: p.deadline
-          ? Math.ceil((new Date(p.deadline).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
-          : null,
+        daysLeft: calculateDaysLeft(p.deadline),
         budget: p.amountMax ? Number(p.amountMax) : null,
       }));
 
@@ -136,24 +134,19 @@ async function getHomeData(userId: string): Promise<HomeData> {
   // Add deadline alerts as tasks
   upcomingProjects
     .filter((p) => {
-      if (!p.deadline) return false;
-      const daysLeft = Math.ceil(
-        (new Date(p.deadline).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
-      );
-      return daysLeft <= 7;
+      const days = calculateDaysLeft(p.deadline);
+      return days !== null && days <= 7;
     })
     .slice(0, 2)
     .forEach((p) => {
-      const daysLeft = Math.ceil(
-        (new Date(p.deadline!).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
-      );
+      const days = calculateDaysLeft(p.deadline)!;
       pendingTasks.push({
         type: "deadline",
         projectId: p.id,
         projectName: p.name,
-        description: `마감 ${daysLeft}일 전`,
-        urgency: daysLeft <= 3 ? "high" : "medium",
-        daysLeft,
+        description: `마감 ${days}일 전`,
+        urgency: days <= 3 ? "high" : "medium",
+        daysLeft: days,
       });
     });
 
@@ -171,9 +164,7 @@ async function getHomeData(userId: string): Promise<HomeData> {
       currentStep: 1,
       status: "EXPLORING",
       deadline: m.project.deadline?.toISOString() || null,
-      daysLeft: m.project.deadline
-        ? Math.ceil((new Date(m.project.deadline).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
-        : null,
+      daysLeft: calculateDaysLeft(m.project.deadline),
     })),
     pendingTasks,
   };

@@ -50,3 +50,15 @@ export function formatDateTimeShortKST(date: Date | string | null): string {
     minute: "2-digit",
   })
 }
+
+/**
+ * 마감일까지 남은 일수를 계산합니다.
+ * @param deadline - 마감일 (Date, string, null)
+ * @returns 남은 일수 (양수). 이미 지난 경우 null 반환
+ */
+export function calculateDaysLeft(deadline: Date | string | null): number | null {
+  if (!deadline) return null
+  const d = typeof deadline === "string" ? new Date(deadline) : deadline
+  const days = Math.ceil((d.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+  return days > 0 ? days : null
+}

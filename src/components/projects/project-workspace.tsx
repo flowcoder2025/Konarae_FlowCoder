@@ -28,21 +28,47 @@ export function ProjectWorkspace({
   const [stepCompletions, setStepCompletions] = useState(initialCompletions);
 
   const handleStepComplete = async (completedStep: number) => {
-    // Update local state
+    // Update local state optimistically
     const newCompletions = [...stepCompletions];
     newCompletions[completedStep - 1] = true;
     setStepCompletions(newCompletions);
 
-    // Move to next step if not at the end
+    const nextStep = completedStep < steps.length ? completedStep + 1 : completedStep;
     if (completedStep < steps.length) {
-      setCurrentStep(completedStep + 1);
+      setCurrentStep(nextStep);
     }
 
-    // TODO: Save to API
-    // await fetch(`/api/projects/${projectId}/progress`, {
-    //   method: 'PATCH',
-    //   body: JSON.stringify({ step: completedStep, completed: true }),
-    // });
+    // Save to API
+    try {
+      const stepFieldMap: Record<number, string> = {
+        1: "step1Completed",
+        2: "step2Completed",
+        3: "step3Completed",
+        4: "step4Completed",
+        5: "step5Completed",
+      };
+
+      const response = await fetch(`/api/user-projects/${projectId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          [stepFieldMap[completedStep]]: true,
+          currentStep: nextStep,
+        }),
+      });
+
+      if (!response.ok) {
+        // Revert on error
+        console.error("Failed to save progress");
+        setStepCompletions(stepCompletions);
+        setCurrentStep(currentStep);
+      }
+    } catch (error) {
+      console.error("Failed to save progress:", error);
+      // Revert on error
+      setStepCompletions(stepCompletions);
+      setCurrentStep(currentStep);
+    }
   };
 
   return (

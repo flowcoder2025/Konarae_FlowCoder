@@ -15,6 +15,7 @@ import {
 import Link from "next/link"
 import { ProjectWorkspace } from "@/components/projects"
 import type { StepConfig } from "@/components/projects"
+import { calculateDaysLeft } from "@/lib/utils"
 
 // Step configuration
 const STEPS: StepConfig[] = [
@@ -54,12 +55,6 @@ const STEPS: StepConfig[] = [
 
 interface Props {
   params: Promise<{ id: string }>
-}
-
-function calculateDaysLeft(deadline: Date | null): number | null {
-  if (!deadline) return null
-  const days = Math.ceil((new Date(deadline).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
-  return days > 0 ? days : null
 }
 
 export default async function ProjectDetailPage({ params }: Props) {

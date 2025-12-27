@@ -108,23 +108,24 @@ export async function POST(request: Request) {
       return true;
     });
 
-    // Create matching results with simple scoring
-    const matchingResults = await Promise.all(
-      filteredProjects.map(async (project, index) => {
-        // Check if result already exists
-        const existing = await prisma.matchingResult.findUnique({
-          where: {
-            companyId_projectId: {
-              companyId,
-              projectId: project.id,
-            },
-          },
-        });
+    // Batch check for existing matching results (N+1 → 1 query optimization)
+    const projectIds = filteredProjects.map((p) => p.id);
+    const existingResults = await prisma.matchingResult.findMany({
+      where: {
+        companyId,
+        projectId: { in: projectIds },
+      },
+    });
+    const existingProjectIds = new Set(existingResults.map((r) => r.projectId));
 
-        if (existing) {
-          return existing;
-        }
+    // Filter out projects that already have results
+    const newProjects = filteredProjects.filter(
+      (p) => !existingProjectIds.has(p.id)
+    );
 
+    // Create matching results for new projects only
+    const newResults = await Promise.all(
+      newProjects.map(async (project, index) => {
         // Simple scoring based on category match and recency
         const baseScore = 70;
         const categoryBonus = categories.some(
@@ -175,6 +176,9 @@ export async function POST(request: Request) {
         });
       })
     );
+
+    // Combine existing and new results
+    const matchingResults = [...existingResults, ...newResults];
 
     logger.info("Quick matching completed", {
       companyId,

@@ -5,12 +5,7 @@ import { Kanban, Plus } from "lucide-react"
 import Link from "next/link"
 import { PipelineBoard } from "@/components/pipeline"
 import type { PipelineProject } from "@/components/pipeline"
-
-function calculateDaysLeft(deadline: Date | null): number | null {
-  if (!deadline) return null
-  const days = Math.ceil((new Date(deadline).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
-  return days > 0 ? days : null
-}
+import { calculateDaysLeft } from "@/lib/utils"
 
 // Status mapping (lowercase DB values to uppercase display values)
 const STATUS_MAP: Record<string, string> = {

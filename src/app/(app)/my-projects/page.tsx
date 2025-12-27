@@ -17,6 +17,7 @@ import {
   ArrowRight,
 } from "lucide-react"
 import Link from "next/link"
+import { calculateDaysLeft } from "@/lib/utils"
 
 const logger = createLogger({ page: "my-projects" })
 
@@ -37,12 +38,6 @@ const STATUS_STYLES: Record<string, { bg: string; text: string; label: string }>
   verifying: { bg: "bg-orange-100", text: "text-orange-700", label: "검증 중" },
   submitted: { bg: "bg-green-100", text: "text-green-700", label: "제출 완료" },
   closed: { bg: "bg-gray-100", text: "text-gray-700", label: "마감됨" },
-}
-
-function calculateDaysLeft(deadline: Date | null): number | null {
-  if (!deadline) return null
-  const days = Math.ceil((new Date(deadline).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
-  return days > 0 ? days : null
 }
 
 interface ProjectCardProps {
