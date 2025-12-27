@@ -15,8 +15,8 @@
     "db:migrate": "prisma migrate dev",
     "db:studio": "prisma studio",
     "db:seed": "tsx prisma/seed.ts",
-    "worker": "tsx src/worker-server.ts",
-    "worker:dev": "tsx watch src/worker-server.ts",
+    "worker": "tsx --tsconfig tsconfig.worker.json src/worker-server.ts",
+    "worker:dev": "tsx watch --tsconfig tsconfig.worker.json src/worker-server.ts",
     "postinstall": "prisma generate"
   },
   "dependencies": {
