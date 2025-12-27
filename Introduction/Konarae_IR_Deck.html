@@ -1,0 +1,1171 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Konarae IR Deck (Fixed)</title>
+  <style>
+    /* ===== ROOT VARIABLES (TDS Design System) ===== */
+    :root {
+      /* Main Colors */
+      --color-primary: #000000;
+      --color-secondary: #FFFFFF;
+      --color-bg-slide: #FFFFFF;
+      --color-bg-light: #F9FAFB; /* 연회색 배경 */
+      --color-bg-dark: #111111;
+      
+      /* Text Colors */
+      --color-text-main: #111111;
+      --color-text-sub: #555555;
+      --color-text-muted: #888888;
+      
+      /* Semantic Colors */
+      --color-accent-blue: #2563EB;
+      --color-success: #10B981;
+      --color-warning: #F59E0B;
+      --color-error: #EF4444;
+      --color-border: #E5E7EB;
+      
+      /* Typography */
+      --font-main: -apple-system, BlinkMacSystemFont, "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+      
+      /* Effects */
+      --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+      --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+      
+      /* Radii */
+      --radius-md: 8px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background-color: #e5e5e5;
+      font-family: var(--font-main);
+      color: var(--color-text-main);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 40px 0;
+    }
+
+    /* ===== SLIDE CONTAINER (16:9) ===== */
+    .slide-wrapper {
+      width: 1000px;
+      height: 562.5px;
+      background: var(--color-bg-slide);
+      margin-bottom: 40px;
+      box-shadow: 0 15px 35px rgba(0,0,0,0.1);
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ===== COMPONENT STYLES ===== */
+    
+    /* 1. Header */
+    .header-bar {
+      margin-bottom: 20px;
+      border-bottom: 2px solid var(--color-border);
+      padding-bottom: 10px;
+    }
+    .header-accent { width: 50px; height: 5px; background: var(--color-primary); margin-bottom: 10px; }
+    
+    /* 2. Cards */
+    .card {
+      background: var(--color-bg-light);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-md);
+      padding: 20px;
+      color: var(--color-text-main);
+    }
+    /* Black Card Variant */
+    .card.bg-black {
+      background-color: var(--color-primary);
+      color: white;
+      border: 1px solid #333;
+    }
+    .card.bg-black h3, .card.bg-black h4 { color: white; }
+    .card.bg-black p { color: #ccc; }
+    .card.bg-black .caption { color: #999; }
+
+    /* 3. Utilities */
+    .padding-box { padding: 40px; height: 100%; display: flex; flex-direction: column; }
+    .bg-black { background-color: var(--color-primary); color: white; }
+    .text-accent { color: var(--color-primary); font-weight: 700; }
+    .flex-center { display: flex; justify-content: center; align-items: center; }
+    .flex-col { display: flex; flex-direction: column; }
+    .flex-row { display: flex; flex-direction: row; }
+    .gap-20 { gap: 20px; }
+    .h-full { height: 100%; }
+    .text-center { text-align: center; }
+    .text-bold { font-weight: 700; }
+    
+    /* Typography */
+    h1 { font-size: 48px; font-weight: 800; line-height: 1.2; letter-spacing: -1px; }
+    h2 { font-size: 32px; font-weight: 700; margin-bottom: 20px; letter-spacing: -0.5px; }
+    h3 { font-size: 22px; font-weight: 700; margin-bottom: 10px; }
+    p { font-size: 15px; line-height: 1.6; color: var(--color-text-sub); }
+    .slide-number { position: absolute; bottom: 20px; right: 20px; font-size: 12px; color: #ccc; }
+
+    /* Grid Layouts */
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; }
+    .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
+    
+    /* NEW: 2x2 Uniform Grid for p2 */
+    .grid-2x2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: 1fr 1fr;
+      gap: 20px;
+      height: 100%;
+    }
+    
+    /* Table */
+    .simple-table { width: 100%; border-collapse: collapse; font-size: 15px; }
+    .simple-table th { text-align: left; padding: 12px; border-bottom: 2px solid #000; color: #000; }
+    .simple-table td { padding: 15px 12px; border-bottom: 1px solid #eee; color: #555; }
+    .simple-table tr:last-child td { border-bottom: none; }
+    
+    /* UI Mockup */
+    .ui-window {
+      background: white; border: 1px solid var(--color-border);
+      border-radius: var(--radius-md); box-shadow: var(--shadow-md);
+      overflow: hidden; display: flex; flex-direction: column; height: 100%;
+    }
+    .ui-header { background: #f1f1f1; padding: 8px 15px; border-bottom: 1px solid #ddd; display: flex; gap: 6px; align-items: center; }
+    .ui-dot { width: 10px; height: 10px; border-radius: 50%; background: #ddd; }
+    .ui-body { flex: 1; padding: 0; display: flex; }
+
+    /* Chips */
+    .chip { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; background: #eee; color: #333; }
+    .chip-red { background: #FEE2E2; color: #B91C1C; }
+    .chip-green { background: #D1FAE5; color: #059669; }
+
+    @media print {
+      body { background: white; padding: 0; }
+      .slide-wrapper { margin-bottom: 0; box-shadow: none; border: 1px solid #eee; page-break-after: always; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ================= SECTION 1: Intro ================= -->
+
+  <!-- p1: 표지 -->
+  <div class="slide-wrapper bg-black">
+    <div class="padding-box flex-center text-center">
+      <div style="margin-bottom: 40px;">
+        <span style="font-size: 20px; border: 1px solid white; padding: 5px 15px; border-radius: 20px; opacity: 0.8;">Konarae</span>
+      </div>
+      <h1 style="color: white; margin-bottom: 30px;">지원사업 제출을 끝까지 닫아주는<br>‘제출 워크스페이스’</h1>
+      <p style="color: rgba(255,255,255,0.8); font-size: 20px;">
+        "공고 선택 → 서류 초안 → 증빙 정리 → 제출 전 자동 점검까지,<br>
+        대표 혼자도 한 번에."
+      </p>
+    </div>
+    <div class="slide-number">1 / 32</div>
+  </div>
+
+  <!-- p2: Executive Summary (Fixed Layout) -->
+  <div class="slide-wrapper">
+    <div class="padding-box">
+      <div class="header-bar">
+        <div class="header-accent"></div>
+        <h2>Executive Summary</h2>
+      </div>
+      <!-- Changed from nested flex to 2x2 Grid -->
+      <div class="grid-2x2">
+        <div class="card">
+          <h3 class="text-accent">Problem</h3>
+          <p>공고 선택 난해함, 서류·증빙 산재, 제출 실수 리스크 증대</p>
+        </div>
+        <div class="card">
+          <h3 class="text-accent">Solution</h3>
+          <p>매일 자동 매칭 + 부족한 항목 진단 + 제출 전 자동 점검</p>
+        </div>
+        <div class="card">
+          <h3 class="text-accent">Business Model</h3>
+          <p>무료(수동) → 구독(자동 매칭) + 크래딧(진단/점검/생성)</p>
+        </div>
+        <div class="card">
+          <h3 class="text-accent">Expansion</h3>
+          <p>제출(Konarae) → 일정(Weave) → 발표(PPT) → 이미지(FlowStudio)</p>
+        </div>
+      </div>
+    </div>
+    <div class="slide-number">2 / 32</div>
+  </div>
+
+  <!-- p3: Agenda -->
+  <div class="slide-wrapper">
+    <div class="padding-box flex-center">
+      <div style="width: 80%;">
+        <h2 style="margin-bottom: 40px; border-bottom: 4px solid black; padding-bottom: 10px;">Agenda</h2>
+        <div class="flex-col gap-20">
+          <div class="flex-row gap-20" style="align-items: baseline;">
+            <span style="font-size: 24px; font-weight: 800; color: #ccc;">01</span>
+            <span style="font-size: 20px; font-weight: 700;">Opportunities (시장 기회)</span>
+          </div>
+          <div class="flex-row gap-20" style="align-items: baseline;">
+            <span style="font-size: 24px; font-weight: 800; color: #ccc;">02</span>
+            <span style="font-size: 20px; font-weight: 700;">Solutions (해결책 및 기술)</span>
+          </div>
+          <div class="flex-row gap-20" style="align-items: baseline;">
+            <span style="font-size: 24px; font-weight: 800; color: #ccc;">03</span>
+            <span style="font-size: 20px; font-weight: 700;">BM & Differentiation (사업 모델)</span>
+          </div>
+          <div class="flex-row gap-20" style="align-items: baseline;">
+            <span style="font-size: 24px; font-weight: 800; color: #ccc;">04</span>
+            <span style="font-size: 20px; font-weight: 700;">Growth & Scale-up (성장 전략)</span>
+          </div>
+          <div class="flex-row gap-20" style="align-items: baseline;">
+            <span style="font-size: 24px; font-weight: 800; color: #ccc;">05</span>
+            <span style="font-size: 20px; font-weight: 700;">Team (팀 구성)</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="slide-number">3 / 32</div>
+  </div>
+
+  <!-- ================= SECTION 2: Opportunities ================= -->
+
+  <!-- p4: 간지 (Opportunities) -->
+  <div class="slide-wrapper bg-black">
+    <div class="padding-box flex-center text-center">
+      <h1 style="color: white;">Opportunities</h1>
+      <p style="color: rgba(255,255,255,0.7); font-size: 24px; margin-top: 20px;">
+        “지원사업 시장이<br>‘AI·디지털 제출’로 재편되는 변곡점”
+      </p>
+    </div>
+    <div class="slide-number">4 / 32</div>
+  </div>
+
+  <!-- p5: Why Now -->
+  <div class="slide-wrapper">
+    <div class="padding-box">
+      <div class="header-bar">
+        <div class="header-accent"></div>
+        <h2>Why Now</h2>
+      </div>
+      <div class="flex-center h-full">
+        <div class="text-center" style="max-width: 800px;">
+          <h3 style="font-size: 28px; margin-bottom: 40px; line-height: 1.4;">"글을 써주는 기능은 보편화되지만,<br>최종 합격은 <span style="background: #e0f2fe; padding: 0 5px;">근거(증빙)와 정합성</span>이 좌우합니다."</h3>
+          <div class="grid-2 text-left">
+            <div class="card">
+              <h4 style="margin-bottom: 10px;">Macro Trend</h4>
+              <p>정부·기관 중심의 지원사업 정보 통합,<br>추천 고도화, 서류 부담 경감 흐름 가속화</p>
+            </div>
+            <div class="card" style="border: 2px solid black;">
+              <h4 style="margin-bottom: 10px;">Our Timing</h4>
+              <p>지금은 단순 '추천'이 아니라<br><strong>'제출 가능한 상태'</strong>로 만드는 시스템이 필요한 때</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="slide-number">5 / 32</div>
+  </div>
+
+  <!-- p6: 트렌드 & 마켓 진화 -->
+  <div class="slide-wrapper">
+    <div class="padding-box">
+      <div class="header-bar">
+        <div class="header-accent"></div>
+        <h2>트렌드 & 마켓 진화</h2>
+      </div>
+      <div class="grid-3 h-full" style="align-items: center;">
+        <div class="card h-full">
+          <h3>1. 기회 시장</h3>
+          <p>지원사업은 연중 상시, 다수 기관,<br>복잡한 조건이 얽힌 '공고 기반 기회 시장'</p>
+        </div>
+        <div class="card h-full">
+          <h3>2. 역설적 부담</h3>
+          <p>1인/소기업은 기회가 늘수록<br>선택 비용, 서류 부담, 검증 부담이 커짐</p>
+        </div>
+        <div class="card bg-black h-full">
+          <h3>3. 경쟁축 이동</h3>
+          <p>"정보 접근성" 경쟁에서<br><strong style="color:white;">"실행/제출 품질"</strong> 경쟁으로 이동 중</p>
+        </div>
+      </div>
+    </div>
+    <div class="slide-number">6 / 32</div>
+  </div>
+
+  <!-- p7: Market Problem -->
+  <div class="slide-wrapper">
+    <div class="padding-box">
+      <div class="header-bar">
+        <div class="header-accent"></div>
+        <h2>Market Problem</h2>
+      </div>
+      <div class="grid-3 h-full" style="align-items: center;">
+        <div class="card text-center h-full flex-center flex-col">
+          <div style="font-size: 50px; margin-bottom: 20px;">🤔</div>
+          <h3>선택의 마비</h3>
+          <p class="text-bold">"어디에 지원해야 할지 모르겠다"</p>
+          <div class="caption" style="margin-top: 10px;">공고는 많고 조건은 복잡</div>
+        </div>
+        <div class="card text-center h-full flex-center flex-col">
+          <div style="font-size: 50px; margin-bottom: 20px;">📂</div>
+          <h3>자료의 분산</h3>
+          <p class="text-bold">"매번 처음부터 다시"</p>
+          <div class="caption" style="margin-top: 10px;">흩어진 자료로 인한 시간 낭비</div>
+        </div>
+        <div class="card text-center h-full flex-center flex-col">
+          <div style="font-size: 50px; margin-bottom: 20px;">🚨</div>
+          <h3>제출 리스크</h3>
+          <p class="text-bold">"마감 직전 실수"</p>
+          <div class="caption" style="margin-top: 10px;">한 번의 실수가 탈락으로 연결</div>
+        </div>
+      </div>
+    </div>
+    <div class="slide-number">7 / 32</div>
+  </div>
+
+  <!-- p8: The True Problem -->
+  <div class="slide-wrapper">
+    <div class="padding-box">
+      <div class="header-bar">
+        <div class="header-accent"></div>
+        <h2>The True Problem</h2>
+      </div>
+      <div class="flex-center h-full">
+        <div style="width: 100%;">
+          <p style="font-size: 20px; text-align: center; margin-bottom: 40px;">
+            지원사업은 이벤트가 아니라 <strong>반복되는 운영 업무</strong>입니다.<br>
+            하지만 대부분의 기업은 '시스템' 없이 운과 야근으로 버티고 있습니다.
+          </p>
+          <div class="grid-3">
+             <div class="card bg-black text-center">
+               <div style="font-size: 14px; opacity: 0.7; margin-bottom: 10px;">Missing 1</div>
+               <h3>마스터 프로필</h3>
+               <p>회사 정보의 '원본' 부재</p>
+             </div>
+             <div class="card bg-black text-center">
+               <div style="font-size: 14px; opacity: 0.7; margin-bottom: 10px;">Missing 2</div>
+               <h3>증빙 보관함</h3>
+               <p>체계적 증빙 관리 부재</p>
+             </div>
+             <div class="card bg-black text-center">
+               <div style="font-size: 14px; opacity: 0.7; margin-bottom: 10px;">Missing 3</div>
+               <h3>제출 전 자동 점검</h3>
+               <p>객관적 검증 절차 부재</p>
+             </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="slide-number">8 / 32</div>
+  </div>
+
+  <!-- p9: Our Position -->
+  <div class="slide-wrapper">
+    <div class="padding-box">
+      <div class="header-bar">
+        <div class="header-accent"></div>
+        <h2>Our Position</h2>
+      </div>
+      <div class="h-full flex-center">
+        <table class="simple-table" style="font-size: 18px;">
+          <tr style="background: #f5f5f5;">
+            <th style="width: 20%;">구분</th>
+            <th style="width: 25%;">정부/포털</th>
+            <th style="width: 25%;">컨설팅/대행</th>
+            <th style="width: 30%; background: #eef2ff; border-bottom: 2px solid #2563eb;">Konarae</th>
+          </tr>
+          <tr>
+            <td><strong>강점</strong></td>
+            <td>찾기·신청 편의</td>
+            <td>빠른 속도, 전문성</td>
+            <td><strong>제출 품질 시스템화</strong></td>
+          </tr>
+          <tr>
+            <td><strong>약점</strong></td>
+            <td>개별 기업 관리 불가</td>
+            <td>고비용, 대리작성 리스크</td>
+            <td>셀프서브 (초기 학습 필요)</td>
+          </tr>
+          <tr>
+            <td><strong>핵심 가치</strong></td>
+            <td>정보 접근성</td>
+            <td>시간 절약</td>
+            <td><strong>근거 기반 검증 + 실수 방지</strong></td>
+          </tr>
+        </table>
+      </div>
+    </div>
+    <div class="slide-number">9 / 32</div>
+  </div>
+
+  <!-- ================= SECTION 3: Solutions ================= -->
+
+  <!-- p10: 간지 (Solutions) -->
+  <div class="slide-wrapper bg-black">
+    <div class="padding-box flex-center text-center">
+      <h1 style="color: white;">Solutions</h1>
+      <p style="color: rgba(255,255,255,0.7); font-size: 24px; margin-top: 20px;">
+        “매칭부터 제출·발표까지<br>닫히는 실행 흐름”
+      </p>
+    </div>
+    <div class="slide-number">10 / 32</div>
+  </div>
+
+  <!-- p11: 서비스 전체 구조 (Architecture) - Fixed Width Overflow -->
+  <div class="slide-wrapper">
+    <div class="padding-box">
+      <div class="header-bar" style="margin-bottom: 10px;">
+        <div class="header-accent"></div>
+        <h2>Service Architecture</h2>
+        <p style="font-size: 14px;">공고·서류·회사정보를 ‘의미 기반 검색’으로 매일 자동 매칭하고, 진단·점검·제출·발표까지 닫는 흐름</p>
+      </div>
+
+      <!-- Architecture Diagram Container -->
+      <div style="flex: 1; display: flex; align-items: center; gap: 15px; position: relative;">
+        
+        <!-- 1. Input Layer (Reduced to 18%) -->
+        <div style="flex: 0 0 18%; display: flex; flex-direction: column; gap: 10px;">
+          <div class="card" style="padding: 10px; font-size: 14px; display: flex; justify-content: space-between; align-items: center;">
+            <span>공고문/신청서</span>
+            <span>📄</span>
+          </div>
+          <div class="card" style="padding: 10px; font-size: 14px; display: flex; justify-content: space-between; align-items: center; border: 2px solid #000;">
+            <strong>마스터 프로필</strong>
+            <span>🏢</span>
+          </div>
+          <div class="card" style="padding: 10px; font-size: 14px; display: flex; justify-content: space-between; align-items: center;">
+            <span>증빙 보관함</span>
+            <span>🗃️</span>
+          </div>
+        </div>
+
+        <!-- Arrow -->
+        <div style="color: #ccc; font-size: 20px;">▶</div>
+
+        <!-- 2. Data Processing Layer (Reduced to 18%) -->
+        <div style="flex: 0 0 18%; display: flex; flex-direction: column; height: 70%; border: 1px dashed #ccc; padding: 5px; border-radius: 4px; background: #fafafa;">
+           <div style="flex: 1; display: flex; align-items: center; justify-content: center; border-bottom: 1px dashed #ddd;">
+             <div class="text-center">
+               <span style="font-size: 12px; color: #666;">수집/정규화</span>
+             </div>
+           </div>
+           <div style="flex: 1; display: flex; align-items: center; justify-content: center; background: #eef2ff;">
+             <div class="text-center">
+               <strong style="font-size: 14px; color: var(--color-accent-blue);">의미 기반<br>AI 색인</strong>
+             </div>
+           </div>
+        </div>
+
+        <!-- Arrow -->
+        <div style="color: #ccc; font-size: 20px;">▶</div>
+
+        <!-- 3. Core Engine Layer (Reduced to 26%) -->
+        <div style="flex: 0 0 26%; display: flex; gap: 10px;">
+          <div class="card" style="flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; border: 2px solid #000;">
+            <strong>매칭 엔진</strong>
+            <span style="font-size: 11px; color: #666; margin-top: 5px;">(유사도 검색)</span>
+            <span class="chip" style="font-size: 10px; margin-top: 5px;">Free/Sub</span>
+          </div>
+          <div class="card bg-black" style="flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center;">
+            <strong>품질 엔진</strong>
+            <div style="display: flex; flex-direction: column; gap: 4px; margin-top: 8px; width: 100%;">
+              <span class="chip" style="background: #333; color: white; font-size: 10px;">부족항목 진단</span>
+              <span class="chip" style="background: #333; color: white; font-size: 10px;">제출 전 점검</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Arrow (Strong) -->
+        <div style="color: var(--color-primary); font-size: 20px; font-weight: bold;">▶</div>
+
+        <!-- 4. Output Layer (Reduced to 18%) -->
+        <div style="flex: 0 0 18%; display: flex; flex-direction: column; gap: 10px;">
+          <div class="card" style="padding: 10px; font-size: 13px; color: #666;">
+            Weave 대시보드
+          </div>
+          <div class="card" style="padding: 10px; font-size: 14px; border: 2px solid var(--color-accent-blue); background: #eff6ff;">
+            <strong>제출 패키지</strong>
+            <div style="font-size: 10px; color: #2563eb;">(Zip/이력/파일명)</div>
+          </div>
+          <div class="card" style="padding: 10px; font-size: 13px; color: #666;">
+            발표자료 & 이미지
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="slide-number">11 / 32</div>
+  </div>
+
+  <!-- p12: 서비스 기술 스택 -->
+  <div class="slide-wrapper">
+    <div class="padding-box">
+      <div class="header-bar">
+        <div class="header-accent"></div>
+        <h2>Technical Stack</h2>
+      </div>
+      <div class="grid-3 h-full">
+        <div class="flex-col gap-20">
+          <div class="card h-full">
+            <h4>Data Pipeline</h4>
+            <p class="caption mt-2">공고 데이터 수집/정리/검색 가능한 형태로 가공</p>
+          </div>
+          <div class="card h-full">
+            <h4>Semantic Matching</h4>
+            <p class="caption mt-2">공고와 회사 문서를 '내용 의미'로 비교해 자동 추천</p>
+          </div>
+        </div>
+        <div class="flex-col gap-20">
+          <div class="card h-full">
+            <h4>Document Engine</h4>
+            <p class="caption mt-2">마스터 프로필과 증빙 보관함을 재료로 블록 조립</p>
+          </div>
+          <div class="card bg-black h-full">
+            <h4>Verification AI</h4>
+            <p class="caption mt-2" style="color:#ccc;">규칙 점검 + AI 점검을 합쳐 제출 실수 방지</p>
+          </div>
+        </div>
+        <div class="flex-col gap-20">
+          <div class="card h-full">
+            <h4>Trust & Log</h4>
+            <p class="caption mt-2">작성·수정 이력 기록으로 "누가 무엇을 바꿨는지" 추적</p>
+          </div>
+          <div class="card h-full">
+            <h4>Credit System</h4>
+            <p class="caption mt-2">구독(운영) + 크래딧(고비용 AI 작업) 하이브리드 과금</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="slide-number">12 / 32</div>
+  </div>
+
+  <!-- p13: 솔루션 1 - 자동 매칭 -->
+  <div class="slide-wrapper">
+    <div class="padding-box">
+      <div class="header-bar">
+        <div class="header-accent"></div>
+        <h2>Solution 1: 자동 매칭</h2>
+        <p>대표가 '찾기'가 아니라 '결정'과 '실행'에 집중하도록</p>
+      </div>
+      <div class="grid-2 h-full" style="align-items: center;">
+        <div class="card h-full flex-col justify-center">
+          <h3>Free (수동 매칭)</h3>
+          <p class="caption">월 10회</p>
+          <ul style="margin-top: 20px; line-height: 1.8;">
+            <li>원하는 공고를 직접 선택</li>
+            <li>매칭 결과 즉시 확인</li>
+            <li>기본 필터링 제공</li>
+          </ul>
+        </div>
+        <div class="card h-full flex-col justify-center" style="border: 2px solid black;">
+          <h3>Paid (자동 매칭)</h3>
+          <p class="caption">매일 / 무제한</p>
+          <ul style="margin-top: 20px; line-height: 1.8;">
+            <li><strong>신규/변경/마감 공고 자동 탐색</strong></li>
+            <li>매일 아침 추천 리포트</li>
+            <li>알림 및 캘린더 연동</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    <div class="slide-number">13 / 32</div>
+  </div>
+
+  <!-- p14: 솔루션 2 - 문서 시스템 -->
+  <div class="slide-wrapper">
+    <div class="padding-box">
+      <div class="header-bar">
+        <div class="header-accent"></div>
+        <h2>Solution 2: 문서 작성 시스템</h2>
+      </div>
+      <div class="grid-3 h-full">
+        <div class="card text-center">
+          <div style="font-size: 40px; margin-bottom: 10px;">🏢</div>
+          <h3>마스터 프로필</h3>
+          <p>회사 정보는 한 곳(원본)에 쌓아<br>모든 문서에서 재사용</p>
+        </div>
+        <div class="card text-center">
+          <div style="font-size: 40px; margin-bottom: 10px;">🗃️</div>
+          <h3>증빙 보관함</h3>
+          <p>인증서/실적/계약서를<br>체계적으로 연결 및 관리</p>
+        </div>
+        <div class="card text-center">
+          <div style="font-size: 40px; margin-bottom: 10px;">🧱</div>
+          <h3>블록 문서</h3>
+          <p>공고 목차에 맞춰 블록을 조립해<br>제출용 초안 빠르게 완성</p>
+        </div>
+      </div>
+      <div style="margin-top: 20px; text-align: center; color: #666; font-size: 14px;">
+        * 무료 제공: 블록 편집, Zip 생성, 파일명 규칙 자동화, 작성 이력 기록
+      </div>
+    </div>
+    <div class="slide-number">14 / 32</div>
+  </div>
+
+  <!-- p15: 솔루션 3 - 부족 항목 진단 -->
+  <div class="slide-wrapper">
+    <div class="padding-box">
+      <div class="header-bar" style="border: none; margin-bottom: 10px;">
+        <h2 style="font-size: 28px;">Solution 3: 부족한 항목 진단</h2>
+        <p>"합격 확률을 올리려면 '무엇이 부족한지'를 우선순위로 보여줍니다."</p>
+      </div>
+
+      <!-- Mockup Window -->
+      <div class="ui-window">
+        <div class="ui-header">
+          <div class="ui-dot"></div><div class="ui-dot"></div><div class="ui-dot"></div>
+          <div style="margin-left: auto; font-size: 12px; font-weight: bold; color: #555;">적합도: 72점 | 부족 항목: 3개</div>
+        </div>
+        
+        <div class="ui-body">
+          <!-- Left Panel -->
+          <div style="flex: 0 0 35%; border-right: 1px solid #eee; padding: 20px; background: #fdfdfd;">
+            <div style="font-size: 12px; font-weight: bold; color: #888; margin-bottom: 10px;">우선순위 개선 항목 Top 3</div>
+            <div style="background: white; border: 1px solid #ddd; border-left: 4px solid var(--color-error); padding: 10px; border-radius: 4px; margin-bottom: 10px; box-shadow: var(--shadow-sm);">
+              <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                <span class="chip chip-red">필수</span>
+                <span style="font-size: 10px; color: #d32f2f;">영향도 높음</span>
+              </div>
+              <div style="font-size: 13px; font-weight: bold;">최근 3년 실적 증빙 부족</div>
+            </div>
+            <div style="background: white; border: 1px solid #eee; padding: 10px; border-radius: 4px; margin-bottom: 10px; opacity: 0.7;">
+              <div style="font-size: 13px;">벤처기업 인증서 만료 임박</div>
+            </div>
+             <button style="width: 100%; background: black; color: white; border: none; padding: 10px; border-radius: 4px; margin-top: 20px; font-size: 12px;">+ 프로젝트 할 일로 추가</button>
+          </div>
+          <!-- Right Panel -->
+          <div style="flex: 1; padding: 25px;">
+             <h4 style="font-size: 16px; margin-bottom: 15px;">최근 3년 실적 증빙 부족</h4>
+             <p style="font-size: 13px; background: #f9f9f9; padding: 10px; margin-bottom: 15px;">WHY: 공고 요구사항은 3건 이상이나, 현재 1건만 등록됨.</p>
+             <div style="margin-bottom: 20px;">
+                <div style="font-size: 12px; color: #888; margin-bottom: 5px;">ACTION</div>
+                <label style="display: block; font-size: 13px;"><input type="checkbox"> 실적증명서</label>
+                <label style="display: block; font-size: 13px;"><input type="checkbox"> 세금계산서</label>
+             </div>
+             <div style="display: flex; gap: 10px;">
+               <button style="border: 1px solid black; background: white; padding: 5px 10px; border-radius: 4px; font-size: 12px;">진단 업데이트 (15C)</button>
+             </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="slide-number">15 / 32</div>
+  </div>
+
+  <!-- p16: 솔루션 4 - 제출 전 자동 점검 -->
+  <div class="slide-wrapper">
+    <div class="padding-box">
+      <div class="header-bar" style="border: none; margin-bottom: 5px;">
+        <h2 style="font-size: 28px;">Solution 4: 제출 전 자동 점검</h2>
+        <p>"탈락의 80%는 누락과 형식 실수입니다. 제출 직전에 자동으로 잡아냅니다."</p>
+      </div>
+
+      <div class="ui-window">
+        <!-- Status Bar -->
+        <div style="background: #FEF2F2; padding: 15px 20px; border-bottom: 1px solid #FECACA; display: flex; justify-content: space-between; align-items: center;">
+          <div style="display: flex; align-items: center; gap: 15px;">
+             <span style="width: 15px; height: 15px; border-radius: 50%; background: #DC2626;"></span>
+             <span style="font-size: 18px; font-weight: 800; color: #991B1B;">미통과 (Critical Issues)</span>
+          </div>
+          <button style="background: #991B1B; color: white; border: none; padding: 5px 12px; border-radius: 4px; font-size: 12px;">다시 점검 (20C)</button>
+        </div>
+        <!-- Body -->
+        <div class="ui-body" style="background: #fff;">
+          <div style="flex: 0 0 30%; border-right: 1px solid #eee; padding: 20px;">
+            <div style="font-size: 13px; font-weight: bold; margin-bottom: 15px;">점검 리스트</div>
+            <div style="display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 8px;"><span>필수 첨부</span> <span style="color: #DC2626;">8/10</span></div>
+            <div style="display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 8px;"><span>형식/분량</span> <span style="color: #059669;">Pass</span></div>
+            <div style="display: flex; justify-content: space-between; font-size: 13px;"><span>정합성</span> <span style="color: #D97706;">주의</span></div>
+          </div>
+          <div style="flex: 0 0 40%; border-right: 1px solid #eee; padding: 20px;">
+             <div style="font-size: 13px; font-weight: bold; margin-bottom: 10px; color: #DC2626;">⚠ 매출 수치 불일치</div>
+             <p style="font-size: 12px; color: #555;">본문(5억) vs 증빙(4.8억)</p>
+             <button style="width: 100%; border: 1px solid #DC2626; background: white; color: #DC2626; font-size: 11px; padding: 4px; margin-top: 10px;">수정하기</button>
+          </div>
+          <div style="flex: 1; padding: 20px; display: flex; flex-direction: column; justify-content: center; align-items: center;">
+             <div style="font-size: 40px; opacity: 0.3;">📦</div>
+             <div style="font-size: 12px; color: #888; text-align: center; margin-top: 10px;">이슈 해결 시<br>패키지 활성화</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="slide-number">16 / 32</div>
+  </div>
+
+  <!-- p17: 기술적 해자 -->
+  <div class="slide-wrapper">
+    <div class="padding-box">
+      <div class="header-bar">
+        <div class="header-accent"></div>
+        <h2>Technical Moat</h2>
+      </div>
+      <div class="grid-3 h-full">
+        <div class="card bg-black h-full">
+          <h4>System Loop</h4>
+          <p style="margin-top: 10px;">단순 추천이 아니라<br>근거(증빙) + 점검 + 이력의<br>결합 구조</p>
+        </div>
+        <div class="card h-full">
+          <h4>No Agency Risk</h4>
+          <p style="margin-top: 10px;">"대리 작성"이 아닌<br>"정상 작성 및 검증" 프로세스를<br>제품화</p>
+        </div>
+        <div class="card h-full">
+          <h4>Data Flywheel</h4>
+          <p style="margin-top: 10px;">기업 내부 증빙/이력이 쌓일수록<br>추천과 진단이 정교해지는<br>Lock-in 효과</p>
+        </div>
+      </div>
+    </div>
+    <div class="slide-number">17 / 32</div>
+  </div>
+
+  <!-- p18: 1분 데모 흐름 -->
+  <div class="slide-wrapper">
+    <div class="padding-box">
+      <div class="header-bar">
+        <div class="header-accent"></div>
+        <h2>1-Min Demo Flow</h2>
+      </div>
+      <div class="flex-center h-full">
+        <div style="width: 100%; display: flex; justify-content: space-between; align-items: center; text-align: center;">
+           <div style="width: 12%;">
+             <div style="font-size: 24px;">🔍</div>
+             <p style="font-size: 12px;">1. 매칭 확인</p>
+           </div>
+           <div>→</div>
+           <div style="width: 12%;">
+             <div style="font-size: 24px;">➕</div>
+             <p style="font-size: 12px;">2. 프로젝트 생성</p>
+           </div>
+           <div>→</div>
+           <div style="width: 12%;">
+             <div style="font-size: 24px;">📝</div>
+             <p style="font-size: 12px;">3. 블록 초안</p>
+           </div>
+           <div>→</div>
+           <div style="width: 12%;">
+             <div style="font-size: 24px;">🩺</div>
+             <p style="font-size: 12px;">4. 진단/보완</p>
+           </div>
+           <div>→</div>
+           <div style="width: 12%;">
+             <div style="font-size: 24px;">✅</div>
+             <p style="font-size: 12px;">5. 자동 점검</p>
+           </div>
+           <div>→</div>
+           <div style="width: 12%;">
+             <div style="font-size: 24px;">📦</div>
+             <p style="font-size: 12px;">6. 패키징</p>
+           </div>
+           <div>→</div>
+           <div style="width: 12%;">
+             <div style="font-size: 24px;">🎨</div>
+             <p style="font-size: 12px;">7. 발표/이미지</p>
+           </div>
+        </div>
+      </div>
+    </div>
+    <div class="slide-number">18 / 32</div>
+  </div>
+
+  <!-- ================= SECTION 4: BM ================= -->
+
+  <!-- p19: 간지 (BM) -->
+  <div class="slide-wrapper bg-black">
+    <div class="padding-box flex-center text-center">
+      <h1 style="color: white;">BM & Differentiation</h1>
+      <p style="color: rgba(255,255,255,0.7); font-size: 24px; margin-top: 20px;">
+        “구독은 가볍게,<br>크래딧은 가치가 큰 작업에”
+      </p>
+    </div>
+    <div class="slide-number">19 / 32</div>
+  </div>
+
+  <!-- p20: BM Policy -->
+  <div class="slide-wrapper">
+    <div class="padding-box">
+      <div class="header-bar">
+        <div class="header-accent"></div>
+        <h2>Business Model Policy</h2>
+      </div>
+      <div class="grid-3 h-full" style="align-items: end;">
+        <!-- Free -->
+        <div class="card text-center" style="height: 80%;">
+          <h3>Free</h3>
+          <p class="caption">월 0원</p>
+          <hr style="margin: 20px 0; border: 0; border-top: 1px solid #eee;">
+          <ul style="list-style: none; text-align: left; font-size: 13px; line-height: 2;">
+            <li>✓ 수동 매칭 월 10회</li>
+            <li>✓ 블록 편집 / Zip 생성</li>
+            <li>✓ 스토리지 1GB</li>
+          </ul>
+        </div>
+        <!-- Subscription -->
+        <div class="card text-center" style="height: 90%; border: 2px solid black; position: relative;">
+          <div style="position: absolute; top: 0; left: 0; right: 0; background: black; color: white; padding: 5px; font-size: 12px;">BEST</div>
+          <h3 style="margin-top: 20px;">Solo / Team</h3>
+          <p class="caption">구독 (운영비)</p>
+          <hr style="margin: 20px 0; border: 0; border-top: 1px solid #eee;">
+          <ul style="list-style: none; text-align: left; font-size: 13px; line-height: 2;">
+            <li>✓ <strong>매일 자동 매칭 무제한</strong></li>
+            <li>✓ 협업 및 알림 기능</li>
+            <li>✓ 스토리지 20~200GB</li>
+          </ul>
+        </div>
+        <!-- Credit -->
+        <div class="card text-center" style="height: 80%; background: #f0fdf4; border-color: #bbf7d0;">
+          <h3 style="color: #15803d;">Credit</h3>
+          <p class="caption">Pay-per-use</p>
+          <hr style="margin: 20px 0; border: 0; border-top: 1px solid #bbf7d0;">
+          <ul style="list-style: none; text-align: left; font-size: 13px; line-height: 2;">
+            <li>✓ <strong>부족 항목 진단</strong></li>
+            <li>✓ <strong>제출 전 자동 점검</strong></li>
+            <li>✓ PPT / 이미지 생성</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    <div class="slide-number">20 / 32</div>
+  </div>
+
+  <!-- p21: Traction #1 (Unit Economics) -->
+  <div class="slide-wrapper">
+    <div class="padding-box">
+      <div class="header-bar">
+        <div class="header-accent"></div>
+        <h2>Traction #1: Unit Economics</h2>
+      </div>
+      <div class="grid-2 h-full">
+        <div class="card">
+          <h3>Cost Structure</h3>
+          <ul style="margin-top: 15px; line-height: 2;">
+            <li><strong>고정비:</strong> 인프라, 툴, 운영 (최소화)</li>
+            <li><strong>변동비:</strong> 저장공간, 알림, AI 토큰 (크래딧 연동)</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Revenue Logic</h3>
+          <ul style="margin-top: 15px; line-height: 2;">
+            <li><strong>구독:</strong> 진입장벽을 낮추는 역할 (Retention)</li>
+            <li><strong>크래딧:</strong> 핵심 매출원 (Upsell)</li>
+            <li><span style="background: #eef2ff;">진단/점검 사용↑ = 매출↑ = 합격률↑ = 재사용↑</span></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    <div class="slide-number">21 / 32</div>
+  </div>
+
+  <!-- p22: Traction #2 (Use Case) -->
+  <div class="slide-wrapper">
+    <div class="padding-box">
+      <div class="header-bar">
+        <div class="header-accent"></div>
+        <h2>Traction #2: Use Case</h2>
+      </div>
+      <div class="grid-2 h-full">
+        <div class="card" style="opacity: 0.7;">
+          <h3 style="color: #666;">Before</h3>
+          <div style="font-size: 40px; margin: 20px 0;">😫</div>
+          <p>공고 선택 시간 소모 → 자료 재조립 반복 → 마감 직전 실수 발생</p>
+        </div>
+        <div class="card" style="border: 2px solid black;">
+          <h3>After Konarae</h3>
+          <div style="font-size: 40px; margin: 20px 0;">😎</div>
+          <p>자동 매칭 (후보 축소) → 부족 항목 진단 (우선순위) → 자동 점검 (실수 제거) → 덱/이미지 완성</p>
+        </div>
+      </div>
+    </div>
+    <div class="slide-number">22 / 32</div>
+  </div>
+
+  <!-- p23: Traction #3 (Key KPI) -->
+  <div class="slide-wrapper">
+    <div class="padding-box">
+      <div class="header-bar">
+        <div class="header-accent"></div>
+        <h2>Traction #3: Key KPI</h2>
+      </div>
+      <div class="flex-center h-full">
+        <div class="text-center">
+          <div style="font-size: 80px; font-weight: 800; color: #000; line-height: 1;">N 개</div>
+          <p style="font-size: 24px; font-weight: 700; margin-top: 10px;">주간 ‘제출 가능한 상태’로 끝낸 기업 수</p>
+          <div style="margin-top: 40px; text-align: left; background: #fafafa; padding: 20px; border-radius: 8px;">
+            <p><strong>선행 지표:</strong></p>
+            <ul style="margin-top: 10px; line-height: 1.6; font-size: 14px;">
+              <li>자동 매칭 열람률 → 프로젝트 전환률</li>
+              <li>부족 항목 진단 실행률 (Credit)</li>
+              <li>제출 전 자동 점검 실행률 (Credit)</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="slide-number">23 / 32</div>
+  </div>
+
+  <!-- ================= SECTION 5: Growth ================= -->
+
+  <!-- p24: 간지 (Growth) -->
+  <div class="slide-wrapper bg-black">
+    <div class="padding-box flex-center text-center">
+      <h1 style="color: white;">Growth & Scale-up</h1>
+    </div>
+    <div class="slide-number">24 / 32</div>
+  </div>
+
+  <!-- p25: Vision -->
+  <div class="slide-wrapper">
+    <div class="padding-box">
+      <div class="header-bar">
+        <div class="header-accent"></div>
+        <h2>Vision</h2>
+      </div>
+      <div class="h-full flex-col justify-center gap-20">
+        <div class="card" style="width: 60%;">
+          <h4>단기</h4>
+          <p>지원사업 제출을 <strong>반복 가능한 운영 시스템</strong>으로 전환</p>
+        </div>
+        <div class="card" style="width: 80%; margin-left: auto; margin-right: auto;">
+          <h4>중기</h4>
+          <p>일정/프로젝트/증빙/검증을 묶어 <strong>백오피스 대시보드</strong>로 확장</p>
+        </div>
+        <div class="card bg-black" style="width: 100%;">
+          <h4>장기</h4>
+          <p>제출+발표+세일즈 자료까지 축적되는 <strong>자산형 업무 플랫폼</strong></p>
+        </div>
+      </div>
+    </div>
+    <div class="slide-number">25 / 32</div>
+  </div>
+
+  <!-- p26: 초기 고객 확보 전략 -->
+  <div class="slide-wrapper">
+    <div class="padding-box">
+      <div class="header-bar">
+        <div class="header-accent"></div>
+        <h2>GTM Strategy</h2>
+      </div>
+      <div class="grid-2 h-full">
+        <div class="card">
+          <h3>Freemium Funnel</h3>
+          <p class="mt-2">Free(수동 10회)로 정확도 체감<br>→ 유료(매일 자동 매칭) 전환 유도</p>
+        </div>
+        <div class="card">
+          <h3>Content / SEO</h3>
+          <p class="mt-2">"제출 실수 방지", "체크리스트" 등<br>문제 해결 중심 콘텐츠로 유입</p>
+        </div>
+        <div class="card">
+          <h3>Webinar</h3>
+          <p class="mt-2">'제출 전 자동 점검' 기능 중심의<br>실용적 교육 제공</p>
+        </div>
+        <div class="card">
+          <h3>Partnership</h3>
+          <p class="mt-2">세무/컨설턴트/기관 실무자 추천을<br>통한 신뢰 기반 확보</p>
+        </div>
+      </div>
+    </div>
+    <div class="slide-number">26 / 32</div>
+  </div>
+
+  <!-- p27: Execution Plan (Roadmap & Finance) -->
+  <div class="slide-wrapper">
+    <div class="padding-box">
+      <div class="header-bar" style="margin-bottom: 10px;">
+        <div class="header-accent"></div>
+        <h2>Execution Plan</h2>
+        <p style="font-size: 14px;">투자금으로 ‘제출 OS → 발표/세일즈 자산 OS’까지 확장</p>
+      </div>
+
+      <!-- Top: Roadmap Timeline (55%) -->
+      <div style="height: 50%; display: flex; gap: 10px; margin-bottom: 20px;">
+        <div class="card" style="flex: 1; display: flex; flex-direction: column; justify-content: space-between; font-size: 13px;">
+          <div>
+            <div style="color: #888; font-size: 11px; margin-bottom: 5px;">M0-M1</div>
+            <strong>통합 로그인 &<br>크래딧 지갑</strong>
+          </div>
+          <div style="background: #eee; padding: 4px; border-radius: 2px; font-size: 10px; text-align: center;">KPI: 유료 전환율</div>
+        </div>
+        <div class="card" style="flex: 1; display: flex; flex-direction: column; justify-content: space-between; font-size: 13px;">
+          <div>
+            <div style="color: #888; font-size: 11px; margin-bottom: 5px;">M2-M3</div>
+            <strong>Weave Lite<br>(일정 통합)</strong>
+          </div>
+          <div style="background: #eee; padding: 4px; border-radius: 2px; font-size: 10px; text-align: center;">KPI: 프로젝트 생성률</div>
+        </div>
+        <div class="card bg-black" style="flex: 1; display: flex; flex-direction: column; justify-content: space-between; font-size: 13px; border: 2px solid black;">
+          <div>
+            <div style="color: #ccc; font-size: 11px; margin-bottom: 5px;">M4-M5</div>
+            <strong>부족 항목 진단<br>고도화 (Credit)</strong>
+          </div>
+          <div style="background: #333; color: white; padding: 4px; border-radius: 2px; font-size: 10px; text-align: center;">KPI: 진단 실행률</div>
+        </div>
+        <div class="card" style="flex: 1; display: flex; flex-direction: column; justify-content: space-between; font-size: 13px;">
+          <div>
+            <div style="color: #888; font-size: 11px; margin-bottom: 5px;">M6-M7</div>
+            <strong>제출 전 자동 점검<br>고도화</strong>
+          </div>
+          <div style="background: #eee; padding: 4px; border-radius: 2px; font-size: 10px; text-align: center;">KPI: 점검 실행률</div>
+        </div>
+        <div class="card" style="flex: 1; display: flex; flex-direction: column; justify-content: space-between; font-size: 13px; background: #f0fdf4;">
+          <div>
+            <div style="color: #15803d; font-size: 11px; margin-bottom: 5px;">M8~</div>
+            <strong>PPT & Image<br>자산화 확장</strong>
+          </div>
+          <div style="background: #dcfce7; color: #15803d; padding: 4px; border-radius: 2px; font-size: 10px; text-align: center;">KPI: 재구매율</div>
+        </div>
+      </div>
+
+      <!-- Bottom Container -->
+      <div style="height: 40%; display: flex; gap: 20px;">
+        <div style="flex: 1; display: flex; flex-direction: column; justify-content: center;">
+           <h4 style="font-size: 14px; margin-bottom: 10px; border-bottom: 1px solid #ccc; padding-bottom: 5px;">Year 3 Target (Scale-up)</h4>
+           <div style="display: flex; gap: 10px; text-align: center;">
+             <div style="flex: 1; background: #fafafa; padding: 10px; border-radius: 4px;">
+               <div style="font-size: 11px; color: #666;">유료 계정</div>
+               <div style="font-size: 20px; font-weight: 800;">4,000</div>
+             </div>
+             <div style="flex: 1; background: #fafafa; padding: 10px; border-radius: 4px;">
+               <div style="font-size: 11px; color: #666;">매출 (연)</div>
+               <div style="font-size: 20px; font-weight: 800;">25억</div>
+             </div>
+             <div style="flex: 1; background: #fafafa; padding: 10px; border-radius: 4px;">
+               <div style="font-size: 11px; color: #666;">이익률 (GM)</div>
+               <div style="font-size: 20px; font-weight: 800;">68%</div>
+             </div>
+           </div>
+           <p style="font-size: 10px; color: #888; margin-top: 8px;">* 가정: ARPA 월 4~5만원 (구독+크래딧)</p>
+        </div>
+        <div style="flex: 1; display: flex; flex-direction: column; justify-content: center;">
+           <h4 style="font-size: 14px; margin-bottom: 10px; border-bottom: 1px solid #ccc; padding-bottom: 5px;">Use of Proceeds</h4>
+           <div style="width: 100%; height: 30px; display: flex; border-radius: 4px; overflow: hidden; margin-bottom: 10px;">
+             <div style="flex: 4; background: #000; color: white; font-size: 10px; display: flex; align-items: center; justify-content: center;">제품 40%</div>
+             <div style="flex: 2.5; background: #555; color: white; font-size: 10px; display: flex; align-items: center; justify-content: center;">고객 25%</div>
+             <div style="flex: 2; background: #999; color: white; font-size: 10px; display: flex; align-items: center; justify-content: center;">데이터 20%</div>
+             <div style="flex: 1.5; background: #ccc; color: black; font-size: 10px; display: flex; align-items: center; justify-content: center;">기타</div>
+           </div>
+           <div style="font-size: 12px; font-weight: bold;">
+             <span style="margin-right: 10px;">Hiring:</span> 
+             <span style="font-weight: normal; font-size: 11px;">AI 엔지니어, 풀스택, 그로스</span>
+           </div>
+        </div>
+      </div>
+    </div>
+    <div class="slide-number">27 / 32</div>
+  </div>
+
+  <!-- p28: Competitive Landscape -->
+  <div class="slide-wrapper">
+    <div class="padding-box">
+      <div class="header-bar">
+        <div class="header-accent"></div>
+        <h2>Competitive Landscape</h2>
+      </div>
+      <div class="h-full flex-center">
+        <table class="simple-table" style="font-size: 16px;">
+          <tr style="background: #f5f5f5;">
+            <th style="width: 25%;">Player</th>
+            <th style="width: 35%;">Focus</th>
+            <th style="width: 40%;">Konarae's Edge</th>
+          </tr>
+          <tr>
+            <td>정부 통합 플랫폼</td>
+            <td>정보 통합, 신청 편의 강화</td>
+            <td>정보가 아닌 <strong>제출 품질(근거·검증)</strong> 시스템화</td>
+          </tr>
+          <tr>
+            <td>기타 솔루션</td>
+            <td>단편적 기능 제공</td>
+            <td>Weave/PPT/이미지까지 <strong>제출→발표 폐쇄 루프</strong></td>
+          </tr>
+        </table>
+      </div>
+    </div>
+    <div class="slide-number">28 / 32</div>
+  </div>
+
+  <!-- ================= SECTION 6: Team ================= -->
+
+  <!-- p29: 간지 (Team) -->
+  <div class="slide-wrapper bg-black">
+    <div class="padding-box flex-center text-center">
+      <h1 style="color: white;">Team</h1>
+      <p style="color: rgba(255,255,255,0.7); font-size: 24px; margin-top: 20px;">
+        “Hybrid Leadership:<br>개발 + 컨설팅 언어를 모두 구사”
+      </p>
+    </div>
+    <div class="slide-number">29 / 32</div>
+  </div>
+
+  <!-- p30: 핵심 인력 -->
+  <div class="slide-wrapper">
+    <div class="padding-box">
+      <div class="header-bar">
+        <div class="header-accent"></div>
+        <h2>Key People</h2>
+      </div>
+      <div class="grid-2 h-full" style="align-items: center;">
+        <div class="card text-center">
+          <div style="width: 100px; height: 100px; background: #ddd; border-radius: 50%; margin: 0 auto 20px;"></div>
+          <h3>조용현 (CEO/CTO)</h3>
+          <p>개발 시스템 설계 리드,<br>코드 품질 검증</p>
+        </div>
+        <div class="card text-center">
+          <div style="width: 100px; height: 100px; background: #ddd; border-radius: 50%; margin: 0 auto 20px;"></div>
+          <h3>박현일 (COO/CPO)</h3>
+          <p>서비스 설계,<br>고객 문제 정의 및 구현</p>
+        </div>
+      </div>
+    </div>
+    <div class="slide-number">30 / 32</div>
+  </div>
+
+  <!-- p31: 조직 및 채용 -->
+  <div class="slide-wrapper">
+    <div class="padding-box">
+      <div class="header-bar">
+        <div class="header-accent"></div>
+        <h2>Org & Hiring</h2>
+      </div>
+      <div class="grid-2 h-full">
+        <div class="card">
+          <h3>Current</h3>
+          <p class="caption mb-4">최소 기능 조직</p>
+          <ul>
+            <li>제품/개발</li>
+            <li>콘텐츠/그로스</li>
+            <li>파트너십</li>
+          </ul>
+        </div>
+        <div class="card" style="border: 2px solid black;">
+          <h3>Hiring Plan</h3>
+          <p class="caption mb-4">Series A 준비</p>
+          <ul>
+            <li><strong>AI 엔지니어</strong> (점검·정합성)</li>
+            <li><strong>풀스택</strong> (대시보드)</li>
+            <li><strong>그로스/파트너십</strong> 리드</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    <div class="slide-number">31 / 32</div>
+  </div>
+
+  <!-- p32: Closing -->
+  <div class="slide-wrapper bg-black">
+    <div class="padding-box flex-center text-center">
+      <h1 style="color: white; font-size: 40px; margin-bottom: 40px;">
+        "지원사업 제출을 운영 시스템으로.<br>
+        발표/세일즈 자산까지 한 번에."
+      </h1>
+      <div style="color: rgba(255,255,255,0.7); font-size: 18px; line-height: 1.8;">
+        <p style="color: inherit;">Investment Ask: [2억(Sed) / 18개월 / 제품(40%)+데이터(20%)+GTM(25%)+파트너(10%)+운영·법무·예비비(5%)]</p>
+        <p style="color: white; font-weight: bold; margin-top: 20px;">Hyunil Park (COO)</p>
+        <p style="color: inherit;">hyunil8702@gmail.com | 010-5444-8597</p>
+      </div>
+    </div>
+    <div class="slide-number">32 / 32</div>
+  </div>
+
+</body>
+</html>

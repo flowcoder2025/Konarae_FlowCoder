@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Konarae Public Sector Pitch</title>
+  <style>
+    /* ===== ROOT VARIABLES (TDS Design System - 동일 유지) ===== */
+    :root {
+      --color-primary: #000000;
+      --color-secondary: #FFFFFF;
+      --color-bg-slide: #FFFFFF;
+      --color-bg-light: #F9FAFB;
+      --color-bg-dark: #111111;
+      --color-text-main: #111111;
+      --color-text-sub: #555555;
+      --color-text-muted: #888888;
+      --color-accent-blue: #2563EB;
+      --color-success: #10B981;
+      --color-warning: #F59E0B;
+      --color-error: #EF4444;
+      --color-border: #E5E7EB;
+      --font-main: -apple-system, BlinkMacSystemFont, "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+      --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+      --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+      --radius-md: 8px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    /* ===== PRESENTATION MODE STYLES ===== */
+    body {
+      background-color: #1a1a1a;
+      font-family: var(--font-main);
+      color: var(--color-text-main);
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    #deck-container {
+      position: relative;
+      width: 1000px;
+      height: 562.5px;
+    }
+
+    .slide-wrapper {
+      width: 1000px;
+      height: 562.5px;
+      background: var(--color-bg-slide);
+      box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+      position: absolute;
+      top: 0;
+      left: 0;
+      display: flex;
+      flex-direction: column;
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(20px);
+      transition: opacity 0.4s ease, transform 0.4s ease, visibility 0.4s;
+      z-index: 0;
+    }
+
+    .slide-wrapper.active {
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(0);
+      z-index: 10;
+    }
+
+    /* ===== COMPONENT STYLES ===== */
+    .header-bar { margin-bottom: 20px; border-bottom: 2px solid var(--color-border); padding-bottom: 10px; }
+    .header-accent { width: 50px; height: 5px; background: var(--color-primary); margin-bottom: 10px; }
+    
+    .card { background: var(--color-bg-light); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 20px; color: var(--color-text-main); }
+    .card.bg-black { background-color: var(--color-primary); color: white; border: 1px solid #333; }
+    .card.bg-black h3, .card.bg-black h4 { color: white; }
+    .card.bg-black p { color: #ccc; }
+    
+    .padding-box { padding: 40px; height: 100%; display: flex; flex-direction: column; }
+    .bg-black { background-color: var(--color-primary); color: white; }
+    .text-accent { color: var(--color-primary); font-weight: 700; }
+    .flex-center { display: flex; justify-content: center; align-items: center; }
+    .flex-col { display: flex; flex-direction: column; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; }
+    .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
+    .h-full { height: 100%; }
+    .text-center { text-align: center; }
+    .text-bold { font-weight: 700; }
+    
+    h1 { font-size: 40px; font-weight: 800; line-height: 1.2; letter-spacing: -1px; }
+    h2 { font-size: 32px; font-weight: 700; margin-bottom: 20px; letter-spacing: -0.5px; }
+    h3 { font-size: 22px; font-weight: 700; margin-bottom: 10px; }
+    p { font-size: 15px; line-height: 1.6; color: var(--color-text-sub); }
+    .slide-number { position: absolute; bottom: 20px; right: 20px; font-size: 12px; color: #ccc; }
+
+    /* Progress Bar */
+    #progress-container { position: fixed; bottom: 0; left: 0; width: 100%; height: 5px; background: #333; z-index: 100; }
+    #progress-bar { height: 100%; background: var(--color-accent-blue); width: 0%; transition: width 0.3s ease; }
+  </style>
+</head>
+<body>
+
+<div id="deck-container">
+
+  <!-- Slide 1: Cover -->
+  <div class="slide-wrapper bg-black active">
+    <div class="padding-box flex-center text-center">
+      <div style="margin-bottom: 30px;">
+        <span style="font-size: 18px; border: 1px solid white; padding: 5px 15px; border-radius: 20px; opacity: 0.8;">공공기관/창업지원단 제안</span>
+      </div>
+      <h1 style="color: white; margin-bottom: 30px;">
+        "반복되는 창업 지원 문의, 자동으로 응대하고<br>제출 서류의 품질까지 높입니다."
+      </h1>
+      <p style="color: rgba(255,255,255,0.8); font-size: 20px;">
+        AI 기반 맞춤형 공고 매칭 & 자동 점검 솔루션<br>
+        <strong>Konarae (코나래)</strong>
+      </p>
+    </div>
+    <div class="slide-number">1 / 6</div>
+  </div>
+
+  <!-- Slide 2: Public Pain Points -->
+  <div class="slide-wrapper">
+    <div class="padding-box">
+      <div class="header-bar">
+        <div class="header-accent"></div>
+        <h2>Problem: 담당자님의 '시간'이 사라지고 있습니다</h2>
+      </div>
+      <div class="grid-3 h-full" style="align-items: center;">
+        <div class="card h-full flex-center flex-col text-center">
+          <div style="font-size: 40px; margin-bottom: 15px;">📞</div>
+          <h3>반복되는 단순 문의</h3>
+          <p class="text-bold">"제가 지원 대상인가요?"<br>"마감이 언제인가요?"</p>
+          <div style="margin-top: 10px; font-size: 13px; color: #666;">단순 정보 확인 전화로 인한<br>행정 업무 마비</div>
+        </div>
+        <div class="card h-full flex-center flex-col text-center">
+          <div style="font-size: 40px; margin-bottom: 15px;">📉</div>
+          <h3>낮은 서류 완성도</h3>
+          <p class="text-bold">"필수 서류 누락"<br>"형식 미준수"</p>
+          <div style="margin-top: 10px; font-size: 13px; color: #666;">기본적인 요건 미비로 탈락,<br>검토 인력 낭비 발생</div>
+        </div>
+        <div class="card h-full flex-center flex-col text-center" style="background: #FFF1F2; border-color: #FECACA;">
+          <div style="font-size: 40px; margin-bottom: 15px;">😫</div>
+          <h3>사각지대 발생</h3>
+          <p class="text-bold" style="color: #991B1B;">"몰라서 못 냈어요"</p>
+          <div style="margin-top: 10px; font-size: 13px; color: #7F1D1D;">홍보 예산을 써도 정보 불균형으로<br>우수 기업 지원 기회 상실</div>
+        </div>
+      </div>
+    </div>
+    <div class="slide-number">2 / 6</div>
+  </div>
+
+  <!-- Slide 3: Solution (Efficiency) -->
+  <div class="slide-wrapper">
+    <div class="padding-box">
+      <div class="header-bar">
+        <div class="header-accent"></div>
+        <h2>Solution: AI 비서가 대신 응대하고 점검합니다</h2>
+      </div>
+      <div class="grid-2 h-full">
+        <!-- Left: Inquiry Reduction -->
+        <div class="card h-full flex-col">
+          <h3 class="text-accent" style="margin-bottom: 20px;">1. 문의 전화 70% 감소</h3>
+          <div style="background: #fff; padding: 15px; border-radius: 6px; border: 1px solid #eee; margin-bottom: 10px;">
+            <strong style="display:block; margin-bottom: 5px;">⚡ 개인화 자동 매칭</strong>
+            <p style="font-size: 13px; margin: 0;">기업 정보를 분석해 "지원 가능 여부"를 즉시 판단해줍니다.</p>
+          </div>
+          <div style="background: #fff; padding: 15px; border-radius: 6px; border: 1px solid #eee;">
+            <strong style="display:block; margin-bottom: 5px;">📅 마감 자동 알림</strong>
+            <p style="font-size: 13px; margin: 0;">마감 임박 시 카카오톡/앱푸시 자동 발송으로 문의 차단.</p>
+          </div>
+        </div>
+        
+        <!-- Right: Quality Up -->
+        <div class="card h-full flex-col bg-black">
+          <h3 style="color: white; margin-bottom: 20px;">2. 행정 검토 시간 단축</h3>
+          <div style="background: #333; padding: 15px; border-radius: 6px; border: 1px solid #444; margin-bottom: 10px;">
+            <strong style="display:block; margin-bottom: 5px; color: white;">✅ 제출 전 자동 점검 (Pre-check)</strong>
+            <p style="font-size: 13px; margin: 0; color: #ccc;">담당자가 보기도 전에 AI가 누락/오류를 먼저 잡아냅니다.</p>
+          </div>
+          <div style="background: #333; padding: 15px; border-radius: 6px; border: 1px solid #444;">
+            <strong style="display:block; margin-bottom: 5px; color: white;">📂 표준화된 제출 패키지</strong>
+            <p style="font-size: 13px; margin: 0; color: #ccc;">파일명, 폴더 구조를 통일하여 접수 관리가 편해집니다.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="slide-number">3 / 6</div>
+  </div>
+
+  <!-- Slide 4: Service Demo Flow -->
+  <div class="slide-wrapper">
+    <div class="padding-box">
+      <div class="header-bar">
+        <div class="header-accent"></div>
+        <h2>청년 창업가를 위한 One-Stop 서비스 흐름</h2>
+      </div>
+      <div style="flex: 1; display: flex; align-items: center; gap: 15px; padding: 0 20px;">
+        
+        <!-- Step 1 -->
+        <div style="flex: 1; display: flex; flex-direction: column; align-items: center; text-align: center;">
+          <div class="card" style="width: 100%; height: 120px; display: flex; flex-direction: column; justify-content: center; align-items: center; margin-bottom: 15px;">
+            <div style="font-size: 30px; margin-bottom: 10px;">🔍</div>
+            <strong>맞춤 공고 매칭</strong>
+          </div>
+          <p style="font-size: 13px;">"내 사업인가?" 고민 해결<br>지원 가능 여부 자동 판별</p>
+        </div>
+
+        <div style="color: #ccc; font-size: 20px;">▶</div>
+
+        <!-- Step 2 -->
+        <div style="flex: 1; display: flex; flex-direction: column; align-items: center; text-align: center;">
+          <div class="card" style="width: 100%; height: 120px; display: flex; flex-direction: column; justify-content: center; align-items: center; margin-bottom: 15px;">
+            <div style="font-size: 30px; margin-bottom: 10px;">📝</div>
+            <strong>서류 초안/증빙</strong>
+          </div>
+          <p style="font-size: 13px;">흩어진 서류/증빙 통합<br>블록 조립으로 빠른 작성</p>
+        </div>
+
+        <div style="color: #ccc; font-size: 20px;">▶</div>
+
+        <!-- Step 3 (Highlight) -->
+        <div style="flex: 1; display: flex; flex-direction: column; align-items: center; text-align: center;">
+          <div class="card bg-black" style="width: 100%; height: 120px; display: flex; flex-direction: column; justify-content: center; align-items: center; margin-bottom: 15px; border: 2px solid #000;">
+            <div style="font-size: 30px; margin-bottom: 10px;">🩺</div>
+            <strong>자동 진단 & 점검</strong>
+          </div>
+          <p style="font-size: 13px; font-weight: bold; color: var(--color-accent-blue);">행정력 낭비 방지 핵심<br>누락/오류 0% 도전</p>
+        </div>
+
+        <div style="color: #ccc; font-size: 20px;">▶</div>
+
+        <!-- Step 4 -->
+        <div style="flex: 1; display: flex; flex-direction: column; align-items: center; text-align: center;">
+          <div class="card" style="width: 100%; height: 120px; display: flex; flex-direction: column; justify-content: center; align-items: center; margin-bottom: 15px;">
+            <div style="font-size: 30px; margin-bottom: 10px;">📦</div>
+            <strong>완벽한 제출</strong>
+          </div>
+          <p style="font-size: 13px;">Zip 패키징 및<br>발표 자료까지 완성</p>
+        </div>
+
+      </div>
+    </div>
+    <div class="slide-number">4 / 6</div>
+  </div>
+
+  <!-- Slide 5: Expected Effect -->
+  <div class="slide-wrapper">
+    <div class="padding-box">
+      <div class="header-bar">
+        <div class="header-accent"></div>
+        <h2>도입 기대 효과 (Expected Outcomes)</h2>
+      </div>
+      <div class="grid-2 h-full">
+        <!-- Institution -->
+        <div class="card">
+          <h3 style="color: var(--color-text-main); margin-bottom: 20px;">🏢 기관 (담당자)</h3>
+          <div style="display: flex; gap: 15px; margin-bottom: 20px;">
+            <div style="flex: 1; background: #f0fdf4; padding: 15px; border-radius: 8px; text-align: center;">
+              <div style="font-size: 12px; color: #166534;">단순 문의 전화</div>
+              <div style="font-size: 24px; font-weight: 800; color: #15803d;">▼ 70%</div>
+            </div>
+            <div style="flex: 1; background: #f0fdf4; padding: 15px; border-radius: 8px; text-align: center;">
+              <div style="font-size: 12px; color: #166534;">서류 검토 시간</div>
+              <div style="font-size: 24px; font-weight: 800; color: #15803d;">▼ 50%</div>
+            </div>
+          </div>
+          <ul style="line-height: 1.8; font-size: 14px;">
+            <li>✓ 불필요한 마감 확인/자격 문의 자동 응대</li>
+            <li>✓ 서류 미비로 인한 탈락자 구제 및 재공고 비용 절감</li>
+            <li>✓ 관내 기업의 지원 현황 데이터 확보</li>
+          </ul>
+        </div>
+
+        <!-- Startup -->
+        <div class="card bg-black">
+          <h3 style="color: white; margin-bottom: 20px;">🚀 청년 창업가</h3>
+          <div style="display: flex; gap: 15px; margin-bottom: 20px;">
+            <div style="flex: 1; background: #333; padding: 15px; border-radius: 8px; text-align: center;">
+              <div style="font-size: 12px; color: #ccc;">지원사업 탐색</div>
+              <div style="font-size: 24px; font-weight: 800; color: white;">Easy</div>
+            </div>
+            <div style="flex: 1; background: #333; padding: 15px; border-radius: 8px; text-align: center;">
+              <div style="font-size: 12px; color: #ccc;">제출 실수</div>
+              <div style="font-size: 24px; font-weight: 800; color: white;">ZERO</div>
+            </div>
+          </div>
+          <ul style="line-height: 1.8; font-size: 14px; color: #ccc;">
+            <li>✓ "몰라서 지원 못하는" 사례 방지</li>
+            <li>✓ 복잡한 서류 준비 부담 해소</li>
+            <li>✓ 사업 본질에 집중할 시간 확보</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    <div class="slide-number">5 / 6</div>
+  </div>
+
+  <!-- Slide 6: Closing -->
+  <div class="slide-wrapper bg-black">
+    <div class="padding-box flex-center text-center">
+      <h1 style="color: white; font-size: 40px; margin-bottom: 40px;">
+        "담당자님은 심사와 지원에만 집중하세요.<br>
+        복잡한 절차는 Konarae가 맡겠습니다."
+      </h1>
+      <div style="color: rgba(255,255,255,0.7); font-size: 18px; line-height: 1.8;">
+        <p style="color: white; font-weight: bold; margin-top: 20px;">[제안] 관내 시범 도입</p>
+        <p>조용현 (COO) | 010-8281-0208</p>
+      </div>
+    </div>
+    <div class="slide-number">6 / 6</div>
+  </div>
+
+</div>
+
+<!-- Progress Bar -->
+<div id="progress-container"><div id="progress-bar"></div></div>
+
+<script>
+  // Script Reuse from v2
+  let currentSlideIndex = 0;
+  const slides = document.querySelectorAll('.slide-wrapper');
+  const deckContainer = document.getElementById('deck-container');
+  const progressBar = document.getElementById('progress-bar');
+  const totalSlides = slides.length;
+  let isAnimating = false;
+
+  function initSlides() {
+    slides.forEach((slide, index) => {
+      if (index === 0) { slide.classList.add('active'); } 
+      else { slide.classList.remove('active'); }
+    });
+    handleResize();
+    updateProgress();
+  }
+
+  function goToSlide(index) {
+    if (index < 0 || index >= totalSlides || isAnimating) return;
+    isAnimating = true;
+    const currentSlide = slides[currentSlideIndex];
+    const nextSlide = slides[index];
+    currentSlide.classList.remove('active');
+    setTimeout(() => {
+      nextSlide.classList.add('active');
+      currentSlideIndex = index;
+      updateProgress();
+      setTimeout(() => { isAnimating = false; }, 400); 
+    }, 50);
+  }
+
+  function nextSlide() { goToSlide(currentSlideIndex + 1); }
+  function prevSlide() { goToSlide(currentSlideIndex - 1); }
+
+  function updateProgress() {
+    const progress = ((currentSlideIndex + 1) / totalSlides) * 100;
+    progressBar.style.width = `${progress}%`;
+  }
+
+  function handleResize() {
+    const windowWidth = window.innerWidth;
+    const windowHeight = window.innerHeight;
+    const scale = Math.min(windowWidth / 1000, windowHeight / 562.5);
+    deckContainer.style.transform = `scale(${scale})`;
+  }
+
+  window.addEventListener('resize', handleResize);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ') { nextSlide(); } 
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { prevSlide(); }
+  });
+  let wheelTimeout;
+  document.addEventListener('wheel', (e) => {
+    clearTimeout(wheelTimeout);
+    wheelTimeout = setTimeout(() => {
+      if (e.deltaY > 0) { nextSlide(); } else if (e.deltaY < 0) { prevSlide(); }
+    }, 100);
+  });
+
+  initSlides();
+</script>
+
+</body>
+</html>
