@@ -13,6 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { SettingsPageSkeleton } from "@/components/ui/skeleton";
 import { createLogger } from "@/lib/logger";
 
 const logger = createLogger({ page: "notification-settings" });
@@ -61,11 +62,7 @@ export default function NotificationSettingsPage() {
   };
 
   if (isLoading) {
-    return (
-      <div className="container mx-auto py-8 max-w-7xl">
-        <p>로딩 중...</p>
-      </div>
-    );
+    return <SettingsPageSkeleton />;
   }
 
   if (!settings) return null;

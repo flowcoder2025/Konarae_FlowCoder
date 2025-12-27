@@ -147,3 +147,88 @@ export function ChartSkeleton() {
     </div>
   );
 }
+
+/**
+ * Settings Card Skeleton
+ * Loading state for settings cards with toggle
+ */
+export function SettingsCardSkeleton() {
+  return (
+    <div className="rounded-xl border bg-card p-6">
+      <div className="flex items-center justify-between">
+        <div className="space-y-2">
+          <Skeleton className="h-5 w-32" />
+          <Skeleton className="h-4 w-48" />
+        </div>
+        <Skeleton className="h-6 w-11 rounded-full" />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Settings Page Skeleton
+ * Full page loading state for settings
+ */
+export function SettingsPageSkeleton() {
+  return (
+    <div className="container mx-auto py-8 max-w-7xl">
+      <div className="mb-6 space-y-2">
+        <Skeleton className="h-9 w-40" />
+        <Skeleton className="h-5 w-64" />
+      </div>
+      <div className="space-y-6">
+        <SettingsCardSkeleton />
+        <SettingsCardSkeleton />
+        <SettingsCardSkeleton />
+        <div className="rounded-xl border bg-card p-6 space-y-4">
+          <Skeleton className="h-5 w-24" />
+          <div className="space-y-4">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="flex items-center justify-between">
+                <div className="space-y-2">
+                  <Skeleton className="h-4 w-28" />
+                  <Skeleton className="h-3 w-56" />
+                </div>
+                <Skeleton className="h-6 w-11 rounded-full" />
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="flex justify-end">
+          <Skeleton className="h-10 w-24 rounded-full" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Project List Skeleton
+ * Loading state for project list page
+ */
+export function ProjectListSkeleton() {
+  return (
+    <div className="space-y-4">
+      {Array.from({ length: 5 }).map((_, i) => (
+        <div key={i} className="rounded-xl border bg-card p-4 space-y-3">
+          <div className="flex items-start justify-between">
+            <div className="space-y-2 flex-1">
+              <div className="flex items-center gap-2">
+                <Skeleton className="h-5 w-12 rounded-full" />
+                <Skeleton className="h-5 w-16 rounded-full" />
+              </div>
+              <Skeleton className="h-5 w-3/4" />
+            </div>
+            <Skeleton className="h-8 w-8 rounded" />
+          </div>
+          <Skeleton className="h-4 w-full" />
+          <div className="flex items-center justify-between">
+            <Skeleton className="h-4 w-32" />
+            <Skeleton className="h-4 w-20" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}

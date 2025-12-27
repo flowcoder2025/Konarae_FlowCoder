@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { ProjectCard } from "@/components/projects/project-card";
 import { ProjectFilters } from "@/components/projects/project-filters";
 import { ProjectPagination } from "@/components/projects/project-pagination";
+import { ProjectListClient } from "@/components/projects/project-list-client";
 
 interface ProjectsPageProps {
   searchParams: Promise<{
@@ -159,25 +160,27 @@ export default async function ProjectsPage({
         total={total}
       />
 
-      {/* Projects Grid */}
-      {projects.length === 0 ? (
-        <div className="text-center py-12">
-          <p className="text-muted-foreground">
-            {params.search ||
-            params.category ||
-            params.region ||
-            params.deadline
-              ? "검색 조건에 맞는 지원사업이 없습니다"
-              : "지원사업이 없습니다"}
-          </p>
-        </div>
-      ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {projects.map((project) => (
-            <ProjectCard key={project.id} project={project} />
-          ))}
-        </div>
-      )}
+      {/* Projects Grid with Pull-to-Refresh */}
+      <ProjectListClient>
+        {projects.length === 0 ? (
+          <div className="text-center py-12">
+            <p className="text-muted-foreground">
+              {params.search ||
+              params.category ||
+              params.region ||
+              params.deadline
+                ? "검색 조건에 맞는 지원사업이 없습니다"
+                : "지원사업이 없습니다"}
+            </p>
+          </div>
+        ) : (
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {projects.map((project) => (
+              <ProjectCard key={project.id} project={project} />
+            ))}
+          </div>
+        )}
+      </ProjectListClient>
 
       {/* Pagination */}
       <ProjectPagination
