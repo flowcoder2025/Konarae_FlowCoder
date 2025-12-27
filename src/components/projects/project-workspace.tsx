@@ -4,6 +4,48 @@ import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { ProjectStepper, StepContent } from "@/components/projects";
 import type { StepConfig } from "@/components/projects";
+import {
+  FileText,
+  ClipboardCheck,
+  FileCheck,
+  Package,
+} from "lucide-react";
+
+// Step configuration - 클라이언트 컴포넌트 내부에서 정의 (아이콘 함수 포함)
+const STEPS: StepConfig[] = [
+  {
+    number: 1,
+    label: "공고 확인",
+    description: "지원자격과 제출서류를 확인해요",
+    icon: FileText,
+  },
+  {
+    number: 2,
+    label: "부족항목 진단",
+    description: "AI가 부족한 정보와 증빙을 찾아드려요",
+    icon: ClipboardCheck,
+    creditCost: 50,
+  },
+  {
+    number: 3,
+    label: "계획서 작성",
+    description: "블록 기반으로 쉽게 작성해요",
+    icon: FileText,
+  },
+  {
+    number: 4,
+    label: "제출 전 검증",
+    description: "AI가 최종 점검을 도와드려요",
+    icon: FileCheck,
+    creditCost: 30,
+  },
+  {
+    number: 5,
+    label: "패키징 & 제출",
+    description: "파일을 정리하고 제출 준비를 완료해요",
+    icon: Package,
+  },
+];
 
 interface ProjectWorkspaceProps {
   projectId: string;
@@ -12,7 +54,6 @@ interface ProjectWorkspaceProps {
   existingPlanId: string | null;
   initialStep: number;
   initialCompletions: boolean[];
-  steps: StepConfig[];
 }
 
 export function ProjectWorkspace({
@@ -22,7 +63,6 @@ export function ProjectWorkspace({
   existingPlanId,
   initialStep,
   initialCompletions,
-  steps,
 }: ProjectWorkspaceProps) {
   const [currentStep, setCurrentStep] = useState(initialStep);
   const [stepCompletions, setStepCompletions] = useState(initialCompletions);
@@ -33,8 +73,8 @@ export function ProjectWorkspace({
     newCompletions[completedStep - 1] = true;
     setStepCompletions(newCompletions);
 
-    const nextStep = completedStep < steps.length ? completedStep + 1 : completedStep;
-    if (completedStep < steps.length) {
+    const nextStep = completedStep < STEPS.length ? completedStep + 1 : completedStep;
+    if (completedStep < STEPS.length) {
       setCurrentStep(nextStep);
     }
 
@@ -83,7 +123,7 @@ export function ProjectWorkspace({
         </CardHeader>
         <CardContent>
           <ProjectStepper
-            steps={steps}
+            steps={STEPS}
             currentStep={currentStep}
             stepCompletions={stepCompletions}
           />
@@ -93,7 +133,7 @@ export function ProjectWorkspace({
       {/* Current Step Content */}
       <StepContent
         currentStep={currentStep}
-        steps={steps}
+        steps={STEPS}
         projectId={projectId}
         projectUrl={projectUrl}
         companyId={companyId}

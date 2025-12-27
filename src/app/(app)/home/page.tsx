@@ -53,7 +53,7 @@ interface HomeData {
 
 async function getHomeData(userId: string): Promise<HomeData> {
   // Parallel data fetching - all queries run concurrently
-  const [user, userCompanies, matchingResults, upcomingProjects, creditData] = await Promise.all([
+  const [user, userCompanies, userProjects, matchingResults, upcomingProjects, creditData] = await Promise.all([
     prisma.user.findUnique({
       where: { id: userId },
       select: { name: true },
@@ -62,6 +62,28 @@ async function getHomeData(userId: string): Promise<HomeData> {
       where: { userId },
       include: { company: true },
     }),
+    // 실제 UserProject 레코드 조회 (진행 중인 프로젝트)
+    prisma.userProject.findMany({
+      where: {
+        userId,
+        deletedAt: null,
+        status: { notIn: ["closed"] },
+      },
+      include: {
+        project: {
+          select: {
+            id: true,
+            name: true,
+            organization: true,
+            deadline: true,
+          },
+        },
+        company: { select: { id: true, name: true } },
+      },
+      orderBy: { updatedAt: "desc" },
+      take: 6,
+    }),
+    // 추천 매칭 결과 조회
     prisma.matchingResult.findMany({
       where: {
         company: {
@@ -78,7 +100,7 @@ async function getHomeData(userId: string): Promise<HomeData> {
             amountMax: true,
           },
         },
-        company: { select: { name: true } },
+        company: { select: { id: true, name: true } },
       },
       orderBy: { totalScore: "desc" },
       take: 6,
@@ -150,6 +172,15 @@ async function getHomeData(userId: string): Promise<HomeData> {
       });
     });
 
+  // Map status to step number
+  const statusToStep: Record<string, number> = {
+    exploring: 1,
+    preparing: 2,
+    writing: 3,
+    verifying: 4,
+    submitted: 5,
+  };
+
   return {
     user: {
       name: user?.name || null,
@@ -157,14 +188,15 @@ async function getHomeData(userId: string): Promise<HomeData> {
       creditBalance: creditData.balance,
     },
     recommendations,
-    activeProjects: matchingResults.map((m) => ({
-      id: m.id,
-      projectName: m.project.name,
-      companyName: m.company.name,
-      currentStep: 1,
-      status: "EXPLORING",
-      deadline: m.project.deadline?.toISOString() || null,
-      daysLeft: calculateDaysLeft(m.project.deadline),
+    // 실제 UserProject 레코드 사용 (진행 중인 프로젝트)
+    activeProjects: userProjects.map((up) => ({
+      id: up.id, // UserProject.id 사용 - /my-projects/[id]와 일치
+      projectName: up.project.name,
+      companyName: up.company.name,
+      currentStep: statusToStep[up.status] || 1,
+      status: up.status.toUpperCase(), // 컴포넌트 호환성 위해 대문자로
+      deadline: up.project.deadline?.toISOString() || null,
+      daysLeft: calculateDaysLeft(up.project.deadline),
     })),
     pendingTasks,
   };

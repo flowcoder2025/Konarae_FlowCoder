@@ -3,10 +3,6 @@ import { getUserProject } from "@/lib/user-projects"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import {
-  FileText,
-  ClipboardCheck,
-  FileCheck,
-  Package,
   ArrowLeft,
   Building2,
   Calendar,
@@ -14,44 +10,7 @@ import {
 } from "lucide-react"
 import Link from "next/link"
 import { ProjectWorkspace } from "@/components/projects"
-import type { StepConfig } from "@/components/projects"
 import { calculateDaysLeft } from "@/lib/utils"
-
-// Step configuration
-const STEPS: StepConfig[] = [
-  {
-    number: 1,
-    label: "공고 확인",
-    description: "지원자격과 제출서류를 확인해요",
-    icon: FileText,
-  },
-  {
-    number: 2,
-    label: "부족항목 진단",
-    description: "AI가 부족한 정보와 증빙을 찾아드려요",
-    icon: ClipboardCheck,
-    creditCost: 50,
-  },
-  {
-    number: 3,
-    label: "계획서 작성",
-    description: "블록 기반으로 쉽게 작성해요",
-    icon: FileText,
-  },
-  {
-    number: 4,
-    label: "제출 전 검증",
-    description: "AI가 최종 점검을 도와드려요",
-    icon: FileCheck,
-    creditCost: 30,
-  },
-  {
-    number: 5,
-    label: "패키징 & 제출",
-    description: "파일을 정리하고 제출 준비를 완료해요",
-    icon: Package,
-  },
-]
 
 interface Props {
   params: Promise<{ id: string }>
@@ -138,7 +97,6 @@ export default async function ProjectDetailPage({ params }: Props) {
         existingPlanId={userProject.businessPlan?.id || null}
         initialStep={userProject.currentStep}
         initialCompletions={stepCompletions}
-        steps={STEPS}
       />
     </div>
   )
