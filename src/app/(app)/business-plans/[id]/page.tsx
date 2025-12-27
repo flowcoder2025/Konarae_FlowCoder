@@ -30,8 +30,7 @@ const STATUS_LABELS: Record<string, string> = {
 
 export default function BusinessPlanDetailPage() {
   const router = useRouter();
-  const params = useParams();
-  const id = params.id as string;
+  const { id } = useParams<{ id: string }>();
 
   const [businessPlan, setBusinessPlan] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);

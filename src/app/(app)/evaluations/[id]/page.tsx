@@ -30,8 +30,7 @@ const STATUS_VARIANTS: Record<
 
 export default function EvaluationDetailPage() {
   const router = useRouter();
-  const params = useParams();
-  const id = params.id as string;
+  const { id } = useParams<{ id: string }>();
 
   const [evaluation, setEvaluation] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);

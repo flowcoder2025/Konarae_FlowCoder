@@ -32,8 +32,7 @@ const logger = createLogger({ page: "diagnosis-detail" })
 
 export default function DiagnosisDetailPage() {
   const router = useRouter()
-  const params = useParams()
-  const id = params.id as string
+  const { id } = useParams<{ id: string }>()
 
   const [diagnosis, setDiagnosis] = useState<DiagnosisResponse | null>(null)
   const [isLoading, setIsLoading] = useState(true)
