@@ -8,6 +8,7 @@ import { Progress } from "@/components/ui/progress";
 import Link from "next/link";
 import { PageHeader } from "@/components/common";
 import { StartDiagnosisButton } from "@/components/diagnosis/start-diagnosis-button";
+import { StartProjectButton } from "@/components/matching/start-project-button";
 import type { Metadata } from "next";
 
 interface MatchResultDetailPageProps {
@@ -264,18 +265,28 @@ export default async function MatchResultDetailPage({
 
       {/* Actions */}
       <div className="flex flex-col gap-4">
+        {/* Primary Action - Start Project */}
+        <StartProjectButton
+          companyId={result.companyId}
+          projectId={result.projectId}
+          matchingResultId={result.id}
+          size="lg"
+          className="w-full py-6 text-lg"
+        />
+
+        {/* Secondary Actions */}
         <div className="flex gap-4">
           <Link
             href={`/projects/${result.projectId}`}
-            className="flex-1 text-center py-3 px-4 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+            className="flex-1 text-center py-3 px-4 border border-input rounded-md hover:bg-accent transition-colors"
           >
             지원사업 상세보기
           </Link>
           <Link
             href={`/business-plans/new?companyId=${result.companyId}&projectId=${result.projectId}`}
-            className="flex-1 text-center py-3 px-4 border border-primary text-primary rounded-md hover:bg-primary/10 transition-colors"
+            className="flex-1 text-center py-3 px-4 border border-input rounded-md hover:bg-accent transition-colors"
           >
-            사업계획서 작성
+            사업계획서 바로 작성
           </Link>
         </div>
         <StartDiagnosisButton

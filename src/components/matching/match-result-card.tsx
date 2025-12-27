@@ -3,13 +3,17 @@
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { Button } from "@/components/ui/button";
 import { formatDateKST } from "@/lib/utils";
+import { useStartProject } from "@/hooks/use-user-project";
+import { Rocket, Loader2 } from "lucide-react";
 import Link from "next/link";
 
 interface MatchResultCardProps {
   result: {
     id: string;
     projectId: string;
+    companyId: string;
     totalScore: number;
     businessSimilarityScore: number; // 사업 유사도 (텍스트 + 문서 벡터 통합)
     categoryScore: number; // 관심 분야 일치도
@@ -44,6 +48,8 @@ const CONFIDENCE_LABELS = {
 };
 
 export function MatchResultCard({ result }: MatchResultCardProps) {
+  const { startProject, isLoading } = useStartProject();
+
   const formatAmount = (amount: bigint) => {
     const num = Number(amount);
     if (num >= 100000000) {
@@ -54,9 +60,15 @@ export function MatchResultCard({ result }: MatchResultCardProps) {
     return `${num.toLocaleString()}원`;
   };
 
+  const handleStartProject = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    await startProject(result.companyId, result.projectId, result.id);
+  };
+
   return (
     <Link href={`/matching/results/${result.id}`}>
-      <Card className="p-6 hover:border-primary transition-colors cursor-pointer">
+      <Card className="p-6 hover:border-primary transition-colors cursor-pointer group">
         {/* Header */}
         <div className="flex items-start justify-between mb-4">
           <div className="flex-1">
@@ -152,6 +164,23 @@ export function MatchResultCard({ result }: MatchResultCardProps) {
               <span>기한 미정</span>
             )}
           </div>
+        </div>
+
+        {/* Start Project Button - visible on hover */}
+        <div className="mt-4 opacity-0 group-hover:opacity-100 transition-opacity">
+          <Button
+            size="sm"
+            className="w-full"
+            onClick={handleStartProject}
+            disabled={isLoading}
+          >
+            {isLoading ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <Rocket className="h-4 w-4 mr-2" />
+            )}
+            {isLoading ? "시작 중..." : "지원 준비 시작"}
+          </Button>
         </div>
       </Card>
     </Link>

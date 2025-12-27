@@ -106,10 +106,18 @@ export default async function MatchingResultsPage({
     }),
   ]);
 
-  // Type-safe confidence mapping
+  // Type-safe result mapping with required fields for MatchResultCard
   const results = rawResults.map((r) => ({
-    ...r,
+    id: r.id,
+    projectId: r.projectId,
+    companyId: r.companyId,
+    totalScore: r.totalScore,
+    businessSimilarityScore: r.businessSimilarityScore,
+    categoryScore: r.categoryScore,
+    eligibilityScore: r.eligibilityScore,
     confidence: r.confidence as "high" | "medium" | "low",
+    matchReasons: r.matchReasons,
+    project: r.project,
   }));
 
   const totalPages = Math.ceil(total / pageSize);
