@@ -3,19 +3,14 @@ import { prisma } from "@/lib/prisma";
 import { redirect } from "next/navigation";
 import { getOrCreateCredit } from "@/lib/credits";
 import { createLogger } from "@/lib/logger";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Sparkles } from "lucide-react";
 import {
-  Sparkles,
-  ArrowRight,
-  Building2,
-  Calendar,
-  TrendingUp,
-  Clock,
-  FolderOpen,
-} from "lucide-react";
-import Link from "next/link";
+  WelcomeHero,
+  NextActionGuide,
+  MatchingPreview,
+  ActiveProjectsSummary,
+} from "@/components/home";
 
 const logger = createLogger({ page: "home" });
 
@@ -40,13 +35,16 @@ interface HomeData {
     companyName: string;
     currentStep: number;
     status: string;
-    updatedAt: string;
+    deadline: string | null;
+    daysLeft: number | null;
   }>;
   pendingTasks: Array<{
-    type: "diagnosis" | "plan" | "verify";
-    projectId: string;
-    projectName: string;
+    type: "company" | "diagnosis" | "plan" | "verify" | "deadline";
+    projectId?: string;
+    projectName?: string;
     description: string;
+    urgency?: "high" | "medium" | "low";
+    daysLeft?: number;
   }>;
 }
 
@@ -79,7 +77,7 @@ async function getHomeData(userId: string): Promise<HomeData> {
         company: { select: { name: true } },
       },
       orderBy: { totalScore: "desc" },
-      take: 5,
+      take: 6,
     }),
     prisma.supportProject.findMany({
       where: {
@@ -90,14 +88,14 @@ async function getHomeData(userId: string): Promise<HomeData> {
         status: "active",
       },
       orderBy: { deadline: "asc" },
-      take: 5,
+      take: 6,
     }),
   ]);
 
   const creditData = await getOrCreateCredit(userId);
   const hasCompany = userCompanies.length > 0;
 
-  // Get recommendations from matching results or upcoming projects
+  // Build recommendations from matching results or upcoming projects
   const recommendations = matchingResults.length > 0
     ? matchingResults.map((m) => ({
         id: m.project.id,
@@ -121,6 +119,40 @@ async function getHomeData(userId: string): Promise<HomeData> {
         budget: p.amountMax ? Number(p.amountMax) : null,
       }));
 
+  // Build pending tasks based on user state
+  const pendingTasks: HomeData["pendingTasks"] = [];
+
+  if (!hasCompany) {
+    pendingTasks.push({
+      type: "company",
+      description: "기업 정보를 등록하면 맞춤 추천을 받을 수 있어요",
+    });
+  }
+
+  // Add deadline alerts as tasks
+  upcomingProjects
+    .filter((p) => {
+      if (!p.deadline) return false;
+      const daysLeft = Math.ceil(
+        (new Date(p.deadline).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+      );
+      return daysLeft <= 7;
+    })
+    .slice(0, 2)
+    .forEach((p) => {
+      const daysLeft = Math.ceil(
+        (new Date(p.deadline!).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+      );
+      pendingTasks.push({
+        type: "deadline",
+        projectId: p.id,
+        projectName: p.name,
+        description: `마감 ${daysLeft}일 전`,
+        urgency: daysLeft <= 3 ? "high" : "medium",
+        daysLeft,
+      });
+    });
+
   return {
     user: {
       name: user?.name || null,
@@ -128,8 +160,18 @@ async function getHomeData(userId: string): Promise<HomeData> {
       creditBalance: creditData.balance,
     },
     recommendations,
-    activeProjects: [], // TODO: UserProject 모델 생성 후 연동
-    pendingTasks: [],
+    activeProjects: matchingResults.map((m) => ({
+      id: m.id,
+      projectName: m.project.name,
+      companyName: m.company.name,
+      currentStep: 1,
+      status: "EXPLORING",
+      deadline: m.project.deadline?.toISOString() || null,
+      daysLeft: m.project.deadline
+        ? Math.ceil((new Date(m.project.deadline).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+        : null,
+    })),
+    pendingTasks,
   };
 }
 
@@ -150,184 +192,58 @@ export default async function HomePage() {
     error = true;
   }
 
-  const showOnboarding = data && !data.user.hasCompany;
-
-  return (
-    <div className="container mx-auto py-8 space-y-8 max-w-7xl">
-      {/* Welcome Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">
-            {data?.user.name ? `${data.user.name}님, 안녕하세요!` : "안녕하세요!"}
-          </h1>
-          <p className="mt-1 text-muted-foreground">
-            오늘도 지원사업 성공을 위해 함께해요
-          </p>
-        </div>
-        <Badge variant="outline" className="text-sm">
-          <Sparkles className="h-3 w-3 mr-1" />
-          {data?.user.creditBalance.toLocaleString() || 0}C
-        </Badge>
-      </div>
-
-      {error && (
+  if (error || !data) {
+    return (
+      <div className="container mx-auto py-8 max-w-7xl">
         <div className="p-4 bg-destructive/10 text-destructive rounded-lg">
           데이터를 불러오는 중 오류가 발생했습니다. 페이지를 새로고침해주세요.
         </div>
-      )}
+      </div>
+    );
+  }
 
-      {/* Onboarding CTA for new users */}
+  const showOnboarding = !data.user.hasCompany;
+
+  return (
+    <div className="container mx-auto py-8 space-y-8 max-w-7xl">
+      {/* Header Row: Welcome + Credits */}
+      <div className="flex items-start justify-between gap-4">
+        {!showOnboarding && (
+          <WelcomeHero
+            userName={data.user.name}
+            hasCompany={data.user.hasCompany}
+          />
+        )}
+        {!showOnboarding && (
+          <Badge variant="outline" className="text-sm shrink-0">
+            <Sparkles className="h-3 w-3 mr-1" />
+            {data.user.creditBalance.toLocaleString()}C
+          </Badge>
+        )}
+      </div>
+
+      {/* New User Onboarding */}
       {showOnboarding && (
-        <Card className="border-primary/20 bg-gradient-to-r from-primary/5 to-transparent">
-          <CardContent className="py-6">
-            <div className="flex items-center justify-between">
-              <div className="space-y-2">
-                <h2 className="text-xl font-semibold">
-                  시작하기: 기업 정보 입력
-                </h2>
-                <p className="text-muted-foreground">
-                  기업 정보를 입력하면 딱 맞는 지원사업을 추천해드려요
-                </p>
-              </div>
-              <Button asChild size="lg">
-                <Link href="/company">
-                  <Building2 className="h-4 w-4 mr-2" />
-                  기업 등록하기
-                  <ArrowRight className="h-4 w-4 ml-2" />
-                </Link>
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+        <WelcomeHero
+          userName={data.user.name}
+          hasCompany={data.user.hasCompany}
+        />
       )}
 
-      {data && !showOnboarding && (
-        <>
-          {/* Active Projects Section */}
-          {data.activeProjects.length > 0 && (
-            <section className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h2 className="text-xl font-semibold flex items-center gap-2">
-                  <Clock className="h-5 w-5 text-primary" />
-                  진행 중인 프로젝트
-                </h2>
-                <Button variant="outline" size="sm" asChild>
-                  <Link href="/my-projects">
-                    전체보기
-                    <ArrowRight className="h-4 w-4 ml-1" />
-                  </Link>
-                </Button>
-              </div>
-              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                {data.activeProjects.map((project) => (
-                  <Link key={project.id} href={`/my-projects/${project.id}`}>
-                    <Card className="hover:border-primary/50 transition-colors cursor-pointer">
-                      <CardContent className="py-4">
-                        <div className="space-y-2">
-                          <p className="font-medium line-clamp-1">{project.projectName}</p>
-                          <p className="text-sm text-muted-foreground">{project.companyName}</p>
-                          <div className="flex items-center gap-2">
-                            <div className="flex-1 h-2 bg-muted rounded-full">
-                              <div
-                                className="h-full bg-primary rounded-full transition-all"
-                                style={{ width: `${(project.currentStep / 5) * 100}%` }}
-                              />
-                            </div>
-                            <span className="text-xs text-muted-foreground">
-                              {project.currentStep}/5
-                            </span>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  </Link>
-                ))}
-              </div>
-            </section>
-          )}
+      {/* Next Action Guide */}
+      <NextActionGuide
+        tasks={data.pendingTasks}
+        hasCompany={data.user.hasCompany}
+      />
 
-          {/* Recommendations Section */}
-          <section className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-xl font-semibold flex items-center gap-2">
-                <TrendingUp className="h-5 w-5 text-primary" />
-                맞춤 추천 지원사업
-              </h2>
-              <Button variant="outline" size="sm" asChild>
-                <Link href="/projects">
-                  전체 지원사업 보기
-                  <ArrowRight className="h-4 w-4 ml-1" />
-                </Link>
-              </Button>
-            </div>
+      {/* Active Projects */}
+      <ActiveProjectsSummary projects={data.activeProjects} />
 
-            {data.recommendations.length === 0 ? (
-              <Card>
-                <CardContent className="py-12 text-center">
-                  <FolderOpen className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                  <p className="text-muted-foreground">
-                    아직 추천할 지원사업이 없습니다
-                  </p>
-                  <Button variant="outline" className="mt-4" asChild>
-                    <Link href="/projects">지원사업 둘러보기</Link>
-                  </Button>
-                </CardContent>
-              </Card>
-            ) : (
-              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                {data.recommendations.map((project) => (
-                  <Card
-                    key={project.id}
-                    className="hover:border-primary/50 transition-colors"
-                  >
-                    <CardHeader className="pb-3">
-                      <div className="flex items-start justify-between gap-2">
-                        <CardTitle className="text-base font-medium line-clamp-2">
-                          {project.title}
-                        </CardTitle>
-                        {project.matchScore && (
-                          <Badge variant="secondary" className="shrink-0">
-                            {project.matchScore}점
-                          </Badge>
-                        )}
-                      </div>
-                      <p className="text-sm text-muted-foreground">{project.agency}</p>
-                    </CardHeader>
-                    <CardContent className="pt-0">
-                      <div className="flex items-center justify-between text-sm mb-4">
-                        {project.daysLeft !== null && (
-                          <div className="flex items-center gap-1 text-muted-foreground">
-                            <Calendar className="h-4 w-4" />
-                            <span>D-{project.daysLeft}</span>
-                          </div>
-                        )}
-                        {project.budget && (
-                          <span className="text-muted-foreground">
-                            최대 {(project.budget / 100000000).toFixed(1)}억원
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex gap-2">
-                        <Button variant="outline" size="sm" className="flex-1" asChild>
-                          <Link href={`/projects/${project.id}`}>
-                            상세보기
-                          </Link>
-                        </Button>
-                        <Button size="sm" className="flex-1" asChild>
-                          <Link href={`/projects/${project.id}?action=start`}>
-                            지원 준비
-                            <ArrowRight className="h-4 w-4 ml-1" />
-                          </Link>
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            )}
-          </section>
-        </>
-      )}
+      {/* Recommendations */}
+      <MatchingPreview
+        recommendations={data.recommendations}
+        hasCompany={data.user.hasCompany}
+      />
     </div>
   );
 }
