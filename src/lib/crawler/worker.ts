@@ -1727,9 +1727,11 @@ function parseKStartupHtml(
       organization = orgText.replace(/^.*?pr5"><\/i>/, '').trim();
     }
 
-    // 등록일 기반 필터링
-    if (uploadDate && !isWithinTimeFilter(uploadDate, hoursFilter)) {
-      return; // 시간 필터 밖이면 스킵
+    // 등록일 기반 필터링 - 날짜가 없거나 필터 밖이면 스킵
+    // NOTE: 이전 버그 - uploadDate가 빈 문자열이면 필터 체크가 스킵되어
+    // 모든 항목이 포함됨 (1000개 발견 원인)
+    if (!uploadDate || !isWithinTimeFilter(uploadDate, hoursFilter)) {
+      return;
     }
 
     // 유효성 검사
@@ -1941,9 +1943,11 @@ function parseTechnoparkHtml(
           }
         });
 
-        // 등록일 기반 필터링
-        if (uploadDate && !isWithinTimeFilter(uploadDate, hoursFilter)) {
-          return; // 시간 필터 밖이면 스킵
+        // 등록일 기반 필터링 - 날짜가 없거나 필터 밖이면 스킵
+        // NOTE: 이전 버그 - uploadDate가 빈 문자열이면 필터 체크가 스킵되어
+        // 모든 항목이 포함됨 (1000개 발견 원인)
+        if (!uploadDate || !isWithinTimeFilter(uploadDate, hoursFilter)) {
+          return;
         }
 
         // Skip if no valid name
@@ -2080,9 +2084,11 @@ function parseBizinfoHtml(
           }
         });
 
-        // 등록일 기반 필터링
-        if (uploadDate && !isWithinTimeFilter(uploadDate, hoursFilter)) {
-          return; // 시간 필터 밖이면 스킵
+        // 등록일 기반 필터링 - 날짜가 없거나 필터 밖이면 스킵
+        // NOTE: 이전 버그 - uploadDate가 빈 문자열이면 필터 체크가 스킵되어
+        // 모든 항목이 포함됨 (1000개 발견 원인)
+        if (!uploadDate || !isWithinTimeFilter(uploadDate, hoursFilter)) {
+          return;
         }
 
         // Skip if no valid name
