@@ -30,6 +30,8 @@ import {
   User,
   Shield,
   LogOut,
+  Sparkles,
+  FileText,
 } from "lucide-react";
 
 interface NavItem {
@@ -50,9 +52,19 @@ const navItems: NavItem[] = [
     icon: Search,
   },
   {
+    label: "매칭 결과",
+    href: "/matching/results",
+    icon: Sparkles,
+  },
+  {
     label: "내 프로젝트",
     href: "/my-projects",
     icon: FolderKanban,
+  },
+  {
+    label: "사업계획서",
+    href: "/business-plans",
+    icon: FileText,
   },
   {
     label: "파이프라인",

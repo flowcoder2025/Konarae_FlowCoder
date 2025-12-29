@@ -62,3 +62,56 @@ export function calculateDaysLeft(deadline: Date | string | null): number | null
   const days = Math.ceil((d.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
   return days > 0 ? days : null
 }
+
+/**
+ * URL에서 도메인 이름을 추출하고 가독성 있게 변환
+ * @param url - 소스 URL
+ * @returns 도메인 기반 출처 이름 (예: "K-Startup", "bizinfo.go.kr")
+ */
+function extractSourceFromUrl(url: string | null | undefined): string | null {
+  if (!url) return null
+  try {
+    const hostname = new URL(url).hostname
+    // 알려진 소스 매핑
+    const sourceMap: Record<string, string> = {
+      "www.k-startup.go.kr": "K-Startup",
+      "k-startup.go.kr": "K-Startup",
+      "www.bizinfo.go.kr": "기업마당",
+      "bizinfo.go.kr": "기업마당",
+      "www.mss.go.kr": "중소벤처기업부",
+      "mss.go.kr": "중소벤처기업부",
+      "www.kised.or.kr": "창업진흥원",
+      "kised.or.kr": "창업진흥원",
+      "www.kodit.co.kr": "신용보증기금",
+      "kodit.co.kr": "신용보증기금",
+      "www.kosmes.or.kr": "중소벤처기업진흥공단",
+      "kosmes.or.kr": "중소벤처기업진흥공단",
+    }
+    return sourceMap[hostname] || hostname.replace(/^www\./, "")
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 기관명이 유효한지 검사하고, 숫자만 있거나 빈 값이면 소스URL에서 추출하거나 기본값 반환
+ * @param org - 기관명 (string, null, undefined)
+ * @param sourceUrl - 크롤링 소스 URL (optional)
+ * @param fallback - 기본값 (default: "기관 미정")
+ * @returns 유효한 기관명 또는 소스 출처 또는 기본값
+ */
+export function formatOrganization(
+  org: string | null | undefined,
+  sourceUrl?: string | null,
+  fallback = "기관 미정"
+): string {
+  if (org && org.trim() !== "" && !/^\d+$/.test(org.trim())) {
+    return org
+  }
+  // 기관명이 유효하지 않으면 소스URL에서 추출 시도
+  const sourceFromUrl = extractSourceFromUrl(sourceUrl)
+  if (sourceFromUrl) {
+    return sourceFromUrl
+  }
+  return fallback
+}

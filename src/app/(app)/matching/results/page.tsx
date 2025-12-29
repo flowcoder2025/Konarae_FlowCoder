@@ -72,6 +72,7 @@ export default async function MatchingResultsPage({
             id: true,
             name: true,
             organization: true,
+            sourceUrl: true,
             category: true,
             subCategory: true,
             summary: true,

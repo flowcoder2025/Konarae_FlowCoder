@@ -5,7 +5,7 @@ import { getOrCreateCredit } from "@/lib/credits";
 import { createLogger } from "@/lib/logger";
 import { Badge } from "@/components/ui/badge";
 import { Sparkles } from "lucide-react";
-import { calculateDaysLeft } from "@/lib/utils";
+import { calculateDaysLeft, formatOrganization } from "@/lib/utils";
 import {
   WelcomeHero,
   NextActionGuide,
@@ -96,6 +96,7 @@ async function getHomeData(userId: string): Promise<HomeData> {
             id: true,
             name: true,
             organization: true,
+            sourceUrl: true,
             deadline: true,
             amountMax: true,
           },
@@ -126,7 +127,7 @@ async function getHomeData(userId: string): Promise<HomeData> {
     ? matchingResults.map((m) => ({
         id: m.project.id,
         title: m.project.name,
-        agency: m.project.organization,
+        agency: formatOrganization(m.project.organization, m.project.sourceUrl),
         deadline: m.project.deadline?.toISOString() || null,
         daysLeft: calculateDaysLeft(m.project.deadline),
         budget: m.project.amountMax ? Number(m.project.amountMax) : null,
@@ -137,7 +138,7 @@ async function getHomeData(userId: string): Promise<HomeData> {
     : upcomingProjects.map((p) => ({
         id: p.id,
         title: p.name,
-        agency: p.organization,
+        agency: formatOrganization(p.organization, p.sourceUrl),
         deadline: p.deadline?.toISOString() || null,
         daysLeft: calculateDaysLeft(p.deadline),
         budget: p.amountMax ? Number(p.amountMax) : null,

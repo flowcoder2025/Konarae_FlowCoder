@@ -2,7 +2,7 @@
 
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { formatDateKST } from "@/lib/utils";
+import { formatDateKST, formatOrganization } from "@/lib/utils";
 import Link from "next/link";
 
 interface ProjectCardProps {
@@ -10,6 +10,7 @@ interface ProjectCardProps {
     id: string;
     name: string;
     organization: string;
+    sourceUrl?: string | null;
     category: string;
     subCategory?: string | null;
     target: string;
@@ -80,7 +81,7 @@ export function ProjectCard({ project }: ProjectCardProps) {
 
         {/* Organization */}
         <div className="text-xs sm:text-sm text-muted-foreground mb-2 sm:mb-3">
-          <span>{project.organization}</span>
+          <span>{formatOrganization(project.organization, project.sourceUrl)}</span>
         </div>
 
         {/* Summary */}

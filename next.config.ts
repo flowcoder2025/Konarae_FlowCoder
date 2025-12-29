@@ -18,16 +18,7 @@ const nextConfig: NextConfig = {
         destination: "/company/:path*",
         permanent: true,
       },
-      {
-        source: "/matching",
-        destination: "/my-projects",
-        permanent: true,
-      },
-      {
-        source: "/matching/:path*",
-        destination: "/my-projects/:path*",
-        permanent: true,
-      },
+      // /matching 메인 페이지만 리다이렉트, /matching/results, /matching/new 등은 유지
     ];
   },
   images: {

@@ -105,6 +105,7 @@ export default async function ProjectsPage({
         id: true,
         name: true,
         organization: true,
+        sourceUrl: true,
         category: true,
         subCategory: true,
         target: true,

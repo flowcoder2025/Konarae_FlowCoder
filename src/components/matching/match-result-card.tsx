@@ -4,7 +4,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
-import { formatDateKST } from "@/lib/utils";
+import { formatDateKST, formatOrganization } from "@/lib/utils";
 import { useStartProject } from "@/hooks/use-user-project";
 import { Rocket, Loader2 } from "lucide-react";
 import Link from "next/link";
@@ -24,6 +24,7 @@ interface MatchResultCardProps {
       id: string;
       name: string;
       organization: string;
+      sourceUrl?: string | null;
       category: string;
       subCategory?: string | null;
       summary: string;
@@ -85,7 +86,7 @@ export function MatchResultCard({ result }: MatchResultCardProps) {
               {result.project.name}
             </h3>
             <p className="text-sm text-muted-foreground">
-              {result.project.organization}
+              {formatOrganization(result.project.organization, result.project.sourceUrl)}
             </p>
           </div>
           <div className="text-right">

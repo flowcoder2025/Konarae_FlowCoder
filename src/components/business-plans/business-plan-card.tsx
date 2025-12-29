@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { formatDateKST } from "@/lib/utils";
+import { formatDateKST, formatOrganization } from "@/lib/utils";
 
 interface BusinessPlanCardProps {
   businessPlan: {
@@ -17,6 +17,7 @@ interface BusinessPlanCardProps {
       id: string;
       name: string;
       organization: string;
+      sourceUrl?: string | null;
     } | null;
     _count?: {
       sections: number;
@@ -65,7 +66,7 @@ export function BusinessPlanCard({ businessPlan }: BusinessPlanCardProps) {
             <span className="font-medium">{businessPlan.project.name}</span>
             <span className="text-muted-foreground">
               {" "}
-              ({businessPlan.project.organization})
+              ({formatOrganization(businessPlan.project.organization, businessPlan.project.sourceUrl)})
             </span>
           </div>
         )}

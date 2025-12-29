@@ -29,6 +29,7 @@ export default async function BusinessPlansPage() {
           id: true,
           name: true,
           organization: true,
+          sourceUrl: true,
         },
       },
       _count: {
