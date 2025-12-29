@@ -63,7 +63,13 @@ export function BusinessPlanCard({ businessPlan }: BusinessPlanCardProps) {
         {businessPlan.project && (
           <div className="mb-3 text-sm">
             <span className="text-muted-foreground">지원사업: </span>
-            <span className="font-medium">{businessPlan.project.name}</span>
+            <Link
+              href={`/projects/${businessPlan.project.id}`}
+              className="font-medium hover:underline text-primary"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {businessPlan.project.name}
+            </Link>
             <span className="text-muted-foreground">
               {" "}
               ({formatOrganization(businessPlan.project.organization, businessPlan.project.sourceUrl)})
