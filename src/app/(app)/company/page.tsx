@@ -12,6 +12,7 @@ import {
   Edit,
   Upload,
   FolderOpen,
+  Sparkles,
 } from "lucide-react";
 import Link from "next/link";
 import {
@@ -245,6 +246,10 @@ export default async function CompanyPage({ searchParams }: Props) {
               {company.documentsCount}
             </span>
           </TabsTrigger>
+          <TabsTrigger value="master-profile" className="gap-2">
+            <Sparkles className="h-4 w-4" />
+            마스터 프로필
+          </TabsTrigger>
         </TabsList>
 
         {/* Profile Tab */}
@@ -313,6 +318,39 @@ export default async function CompanyPage({ searchParams }: Props) {
               ))}
             </div>
           )}
+        </TabsContent>
+
+        {/* Master Profile Tab */}
+        <TabsContent value="master-profile" className="space-y-4">
+          <Card>
+            <CardContent className="py-8">
+              <div className="flex items-start gap-4">
+                <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                  <Sparkles className="h-6 w-6 text-primary" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-lg font-semibold mb-1">AI 마스터 프로필</h3>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    업로드된 증빙 서류를 AI가 분석하여 사업계획서 작성에 활용할 수 있는
+                    기업 프로필을 자동 생성합니다.
+                  </p>
+                  <div className="flex items-center gap-3">
+                    <Button asChild>
+                      <Link href={`/company/${company.id}/profile`}>
+                        <Sparkles className="h-4 w-4 mr-2" />
+                        마스터 프로필 관리
+                      </Link>
+                    </Button>
+                    {analyzedCount === 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        * 분석된 문서가 있어야 프로필을 생성할 수 있습니다
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         </TabsContent>
       </Tabs>
     </div>
