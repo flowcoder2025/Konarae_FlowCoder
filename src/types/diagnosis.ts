@@ -134,6 +134,7 @@ export type CreditRelatedType =
   | "diagnosis" // 부족항목 진단
   | "check" // 제출 전 점검
   | "generation" // 생성 (사업계획서, PPT 등)
+  | "master_profile" // 마스터 프로필 생성
 
 /** 크래딧 잔액 응답 */
 export interface CreditBalanceResponse {

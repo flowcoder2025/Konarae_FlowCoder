@@ -2,15 +2,25 @@ import { auth } from "@/lib/auth";
 import { redirect, notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { checkCompanyPermission } from "@/lib/rebac";
+import { getOrCreateCredit } from "@/lib/credits";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Building2, Mail, Phone, MapPin, Users, Calendar, Briefcase, Lightbulb, Pencil, Factory, FileText, Tag, Target, Eye, FolderOpen, Settings2 } from "lucide-react";
+import { Building2, Mail, Phone, MapPin, Users, Calendar, Briefcase, Lightbulb, Pencil, Factory, FileText, Tag, Target, Eye, FolderOpen, Settings2, Sparkles } from "lucide-react";
 import { MatchingPreferencesForm } from "@/components/company/matching-preferences-form";
+import { MasterProfileCTA } from "@/components/company/master-profile-cta";
 import { format } from "date-fns";
 import { PageHeader } from "@/components/common";
 import Link from "next/link";
 import type { Metadata } from "next";
+import {
+  MASTER_PROFILE_GENERATION_COST,
+  MIN_ANALYZED_DOCUMENTS,
+  REQUIRED_DOCUMENT_GROUPS,
+  calculateExpectedQuality,
+  getExpectedQualityLevel,
+} from "@/lib/master-profile/constants";
+import type { MasterProfileStatus } from "@/lib/master-profile/types";
 
 interface CompanyDetailPageProps {
   params: Promise<{ id: string }>;
@@ -158,6 +168,36 @@ export default async function CompanyDetailPage({
   if (!company) {
     notFound();
   }
+
+  // 마스터 프로필 정보 조회
+  const [masterProfile, analyzedDocuments, creditInfo] = await Promise.all([
+    prisma.companyMasterProfile.findUnique({
+      where: { companyId: id },
+      select: { id: true, status: true, isFreeGeneration: true },
+    }),
+    prisma.companyDocument.findMany({
+      where: { companyId: id, status: "analyzed", deletedAt: null },
+      select: { documentType: true },
+    }),
+    getOrCreateCredit(session.user.id),
+  ]);
+
+  // 마스터 프로필 생성 관련 계산
+  const documentTypes = analyzedDocuments.map((d) => d.documentType);
+  const missingRequiredGroups: string[][] = [];
+  for (const group of REQUIRED_DOCUMENT_GROUPS) {
+    if (!group.some((type) => documentTypes.includes(type))) {
+      missingRequiredGroups.push([...group]);
+    }
+  }
+  const isFirstGeneration = !masterProfile || masterProfile.isFreeGeneration;
+  const requiredCredit = isFirstGeneration ? 0 : MASTER_PROFILE_GENERATION_COST;
+  const canGenerateProfile =
+    analyzedDocuments.length >= MIN_ANALYZED_DOCUMENTS &&
+    missingRequiredGroups.length === 0 &&
+    (isFirstGeneration || creditInfo.balance >= requiredCredit);
+  const qualityScore = calculateExpectedQuality(documentTypes);
+  const expectedQuality = getExpectedQualityLevel(qualityScore);
 
   return (
     <div className="container mx-auto py-8 max-w-7xl">
@@ -323,6 +363,35 @@ export default async function CompanyDetailPage({
                 </Button>
               </Link>
             </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* 마스터 프로필 섹션 */}
+      <div className="mt-6">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5" />
+              마스터 프로필
+            </CardTitle>
+            <CardDescription>
+              AI가 문서를 분석하여 사업계획서용 프로필 블록을 자동 생성합니다
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <MasterProfileCTA
+              companyId={id}
+              companyName={company.name}
+              profileStatus={masterProfile?.status as MasterProfileStatus | null}
+              analyzedDocumentCount={analyzedDocuments.length}
+              canGenerate={canGenerateProfile}
+              isFirstGeneration={isFirstGeneration}
+              requiredCredit={requiredCredit}
+              currentBalance={creditInfo.balance}
+              expectedQuality={expectedQuality}
+              missingRequiredGroups={missingRequiredGroups}
+            />
           </CardContent>
         </Card>
       </div>

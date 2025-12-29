@@ -180,6 +180,7 @@ model Company {
   documents           CompanyDocument[]
   gapDiagnoses        GapDiagnosis[]
   userProjects        UserProject[]
+  masterProfile       CompanyMasterProfile?
 
   @@index([businessNumber])
   @@index([name])
@@ -893,4 +894,77 @@ model GapDiagnosis {
   @@index([status])
   @@index([createdAt(sort: Desc)])
   @@map("gap_diagnoses")
+}
+
+// ============================================
+// Company Master Profile System (사업계획서용 기업 프로필)
+// ============================================
+
+/// 기업 마스터 프로필 - 사업계획서 작성용 정형화된 기업 데이터
+model CompanyMasterProfile {
+  id        String @id @default(cuid())
+  companyId String @unique // 기업당 1개
+
+  // 상태
+  status  String @default("draft") // draft, generating, completed, failed
+  version Int    @default(1)
+
+  // 생성 메타데이터
+  generatedFromDocuments String[] // 생성에 사용된 CompanyDocument ID들
+  analyzedDocumentCount  Int      @default(0) // 분석된 문서 수
+  confidenceScore        Float? // AI 분석 전체 신뢰도 (0-1)
+
+  // 비용 추적
+  creditUsed       Int     @default(0)
+  isFreeGeneration Boolean @default(true) // 첫 생성 무료 여부
+
+  // 에러 핸들링
+  errorMessage String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  completedAt DateTime?
+
+  company Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  blocks  ProfileBlock[]
+
+  @@index([status])
+  @@index([createdAt(sort: Desc)])
+  @@map("company_master_profiles")
+}
+
+/// 프로필 블록 - 사업계획서에서 재사용 가능한 콘텐츠 단위
+model ProfileBlock {
+  id        String @id @default(cuid())
+  profileId String
+
+  // 블록 분류
+  category   String // company_overview, business_description, financials, human_resources, certifications, achievements, capabilities, market_position
+  title      String
+  blockOrder Int // 같은 카테고리 내 순서
+
+  // 콘텐츠
+  content     String @db.Text // 마크다운 형식
+  contentType String @default("markdown") // markdown, table, list, keyvalue
+  metadata    Json   @default("{}") // 원본 문서 참조, 추가 메타데이터
+
+  // 원본 추적
+  sourceDocumentIds   String[] // 원본 CompanyDocument ID들
+  sourceDocumentTypes String[] // 원본 문서 유형들
+
+  // 상태
+  isAiGenerated Boolean @default(true)
+  isEdited      Boolean @default(false) // 사용자가 수정했는지
+  isActive      Boolean @default(true) // 소프트 삭제
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  profile CompanyMasterProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@unique([profileId, category, blockOrder])
+  @@index([profileId])
+  @@index([profileId, category])
+  @@index([isActive])
+  @@map("profile_blocks")
 }
