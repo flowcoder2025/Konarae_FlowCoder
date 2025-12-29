@@ -1450,9 +1450,9 @@ const CRAWLER_CONFIG = {
   DETAIL_DELAY_MS: 1500,   // 500 → 1500 (연결 안정성)
   FILE_DELAY_MS: 2000,     // 파일 처리 간 딜레이
 
-  // 타임아웃 설정 (Vercel 환경 최적화)
-  REQUEST_TIMEOUT: 30000,  // Railway 환경 고려 30초로 증가
-  FILE_TIMEOUT: 60000,     // 파일 다운로드는 60초로 증가
+  // 타임아웃 설정 (Railway 환경 - 한국 사이트 접속 시간 고려)
+  REQUEST_TIMEOUT: 60000,  // 60초 (US→Korea 네트워크 지연 대응)
+  FILE_TIMEOUT: 90000,     // 파일 다운로드는 90초
 };
 
 /**
