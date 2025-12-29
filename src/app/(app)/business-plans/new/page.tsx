@@ -33,6 +33,21 @@ import { useDropzone } from "@/hooks/use-dropzone";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { createLogger } from "@/lib/logger";
+import {
+  ExecutionPlanForm,
+  BudgetPlanForm,
+  ExpectedOutcomesForm,
+} from "@/components/business-plans";
+import type {
+  ExecutionPlan,
+  BudgetPlan,
+  ExpectedOutcomes,
+} from "@/types/business-plan";
+import {
+  createEmptyExecutionPlan,
+  createEmptyBudgetPlan,
+  createEmptyExpectedOutcomes,
+} from "@/types/business-plan";
 
 const logger = createLogger({ page: "business-plan-new" });
 
@@ -104,6 +119,11 @@ function NewBusinessPlanForm() {
     newBusinessDescription: "",
     additionalNotes: "",
   });
+
+  // 구조화된 입력 상태
+  const [executionPlan, setExecutionPlan] = useState<ExecutionPlan>(createEmptyExecutionPlan);
+  const [budgetPlan, setBudgetPlan] = useState<BudgetPlan>(createEmptyBudgetPlan);
+  const [expectedOutcomes, setExpectedOutcomes] = useState<ExpectedOutcomes>(createEmptyExpectedOutcomes);
 
   // Messages
   const [noMatchingMessage, setNoMatchingMessage] = useState<string | null>(null);
@@ -338,13 +358,17 @@ function NewBusinessPlanForm() {
     setIsSubmitting(true);
 
     try {
-      // Create business plan
+      // Create business plan with structured data
       const res = await fetch("/api/business-plans", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...formData,
           referenceBusinessPlanIds: selectedReferencePlanIds,
+          // 구조화된 입력 데이터
+          executionPlan,
+          budgetPlan,
+          expectedOutcomes,
         }),
       });
 
@@ -719,7 +743,7 @@ function NewBusinessPlanForm() {
                     newBusinessDescription: e.target.value,
                   })
                 }
-                placeholder="신규 사업의 목적, 내용, 기대 효과를 상세히 작성해주세요"
+                placeholder="신규 사업의 목적, 내용, 기대 효과를 상세히 작성해주세요. 해결하고자 하는 문제, 해결 방안, 목표 시장, 차별화 포인트 등을 포함하면 좋습니다."
                 className="min-h-[150px]"
                 required
               />
@@ -737,6 +761,54 @@ function NewBusinessPlanForm() {
                 className="min-h-[100px]"
               />
             </div>
+          </CardContent>
+        </Card>
+
+        {/* 추진 계획 Card */}
+        <Card>
+          <CardHeader>
+            <CardTitle>추진 계획</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              사업 기간과 단계별 추진 일정을 입력하세요
+            </p>
+          </CardHeader>
+          <CardContent>
+            <ExecutionPlanForm
+              value={executionPlan}
+              onChange={setExecutionPlan}
+            />
+          </CardContent>
+        </Card>
+
+        {/* 예산 계획 Card */}
+        <Card>
+          <CardHeader>
+            <CardTitle>예산 계획</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              총 사업비와 재원 조달 계획을 입력하세요
+            </p>
+          </CardHeader>
+          <CardContent>
+            <BudgetPlanForm
+              value={budgetPlan}
+              onChange={setBudgetPlan}
+            />
+          </CardContent>
+        </Card>
+
+        {/* 기대 효과 Card */}
+        <Card>
+          <CardHeader>
+            <CardTitle>기대 효과</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              사업 완료 후 달성할 정량적 목표를 입력하세요
+            </p>
+          </CardHeader>
+          <CardContent>
+            <ExpectedOutcomesForm
+              value={expectedOutcomes}
+              onChange={setExpectedOutcomes}
+            />
           </CardContent>
         </Card>
 

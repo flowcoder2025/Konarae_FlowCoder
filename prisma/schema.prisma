@@ -474,6 +474,11 @@ model BusinessPlan {
   newBusinessDescription String? @db.Text
   additionalNotes        String? @db.Text
 
+  // Structured Inputs (Phase 1: 구조화된 사업계획 입력)
+  executionPlan    Json? // 추진 계획: duration, milestones, teamPlan
+  budgetPlan       Json? // 예산 계획: totalAmount, governmentFunding, selfFunding, breakdown
+  expectedOutcomes Json? // 기대 효과: revenueTarget, employmentTarget, etc.
+
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?

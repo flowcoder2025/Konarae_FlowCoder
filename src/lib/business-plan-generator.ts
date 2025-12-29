@@ -123,6 +123,14 @@ JSON 배열만 출력 (설명 없이):
   }
 }
 
+// 구조화된 입력 타입 import
+import type {
+  ExecutionPlan,
+  BudgetPlan,
+  ExpectedOutcomes,
+} from "@/types/business-plan";
+import { BUDGET_CATEGORIES } from "@/types/business-plan";
+
 export interface GenerateBusinessPlanInput {
   companyId: string;
   projectId: string;
@@ -130,6 +138,10 @@ export interface GenerateBusinessPlanInput {
   additionalNotes?: string;
   referenceBusinessPlanIds?: string[];
   businessPlanId?: string; // For fetching attachments
+  // 구조화된 입력 (Phase 1 개선)
+  executionPlan?: ExecutionPlan;
+  budgetPlan?: BudgetPlan;
+  expectedOutcomes?: ExpectedOutcomes;
 }
 
 export interface BusinessPlanSection {
@@ -194,6 +206,13 @@ export async function generateBusinessPlanSections(
     // Build company context for prompts
     const companyContext = buildCompanyContext(company);
 
+    // Build structured input context (추진 계획, 예산, 기대효과)
+    const structuredInputContext = buildStructuredInputContext({
+      executionPlan: input.executionPlan,
+      budgetPlan: input.budgetPlan,
+      expectedOutcomes: input.expectedOutcomes,
+    });
+
     // Generate sections dynamically with context accumulation
     // 이전에 생성된 섹션들을 누적해서 다음 섹션 생성 시 컨텍스트로 전달
     const sections: BusinessPlanSection[] = [];
@@ -224,6 +243,7 @@ export async function generateBusinessPlanSections(
           projectDateRange: project.startDate && project.endDate
             ? `${formatDateKST(project.startDate)} ~ ${formatDateKST(project.endDate)}`
             : null,
+          structuredInputContext, // 구조화된 입력 컨텍스트 전달
         }),
         otherSectionsContext,
       });
@@ -244,6 +264,80 @@ export async function generateBusinessPlanSections(
     logger.error("Generate sections error", { error });
     throw new Error("Failed to generate business plan sections");
   }
+}
+
+/**
+ * Build structured input context for prompts
+ * 구조화된 입력 데이터를 AI 프롬프트용 컨텍스트로 변환
+ */
+function buildStructuredInputContext(input: {
+  executionPlan?: ExecutionPlan;
+  budgetPlan?: BudgetPlan;
+  expectedOutcomes?: ExpectedOutcomes;
+}): string {
+  const parts: string[] = [];
+
+  // 추진 계획 컨텍스트
+  if (input.executionPlan && input.executionPlan.duration) {
+    parts.push(`**추진 계획**:`);
+    parts.push(`- 총 사업 기간: ${input.executionPlan.duration}`);
+
+    if (input.executionPlan.milestones && input.executionPlan.milestones.length > 0) {
+      parts.push(`- 추진 일정 (마일스톤):`);
+      input.executionPlan.milestones.forEach((m, idx) => {
+        if (m.phase || m.period) {
+          parts.push(`  ${idx + 1}. ${m.phase}${m.period ? ` (${m.period})` : ""}`);
+          if (m.tasks) parts.push(`     - 주요 과업: ${m.tasks}`);
+          if (m.deliverables) parts.push(`     - 산출물: ${m.deliverables}`);
+        }
+      });
+    }
+
+    if (input.executionPlan.teamPlan) {
+      parts.push(`- 인력 투입 계획: ${input.executionPlan.teamPlan}`);
+    }
+    parts.push("");
+  }
+
+  // 예산 계획 컨텍스트
+  if (input.budgetPlan && input.budgetPlan.totalAmount > 0) {
+    parts.push(`**예산 계획**:`);
+    parts.push(`- 총 사업비: ${input.budgetPlan.totalAmount.toLocaleString()}원`);
+    parts.push(`- 정부지원금: ${input.budgetPlan.governmentFunding.toLocaleString()}원 (${Math.round((input.budgetPlan.governmentFunding / input.budgetPlan.totalAmount) * 100)}%)`);
+    parts.push(`- 자부담: ${input.budgetPlan.selfFunding.toLocaleString()}원 (${Math.round((input.budgetPlan.selfFunding / input.budgetPlan.totalAmount) * 100)}%)`);
+
+    if (input.budgetPlan.breakdown && input.budgetPlan.breakdown.length > 0) {
+      parts.push(`- 세부 항목:`);
+      input.budgetPlan.breakdown.forEach((item) => {
+        if (item.category && item.amount > 0) {
+          const categoryLabel = BUDGET_CATEGORIES.find(c => c.id === item.category)?.label || item.category;
+          parts.push(`  - ${categoryLabel}: ${item.amount.toLocaleString()}원${item.description ? ` (${item.description})` : ""}`);
+        }
+      });
+    }
+    parts.push("");
+  }
+
+  // 기대 효과 컨텍스트
+  if (input.expectedOutcomes) {
+    const outcomes: string[] = [];
+    if (input.expectedOutcomes.revenueTarget) outcomes.push(`매출 목표: ${input.expectedOutcomes.revenueTarget}`);
+    if (input.expectedOutcomes.employmentTarget) outcomes.push(`고용 창출: ${input.expectedOutcomes.employmentTarget}`);
+    if (input.expectedOutcomes.exportTarget) outcomes.push(`수출 목표: ${input.expectedOutcomes.exportTarget}`);
+    if (input.expectedOutcomes.patentTarget) outcomes.push(`지식재산권: ${input.expectedOutcomes.patentTarget}`);
+    if (input.expectedOutcomes.otherMetrics && input.expectedOutcomes.otherMetrics.length > 0) {
+      const validMetrics = input.expectedOutcomes.otherMetrics.filter(m => m.trim());
+      if (validMetrics.length > 0) outcomes.push(`기타 성과: ${validMetrics.join(", ")}`);
+    }
+
+    if (outcomes.length > 0) {
+      parts.push(`**기대 효과 (정량적 목표)**:`);
+      outcomes.forEach(o => parts.push(`- ${o}`));
+      parts.push("");
+    }
+  }
+
+  return parts.join("\n");
 }
 
 /**
@@ -301,6 +395,7 @@ function buildDynamicPrompt(params: {
   projectOrganization: string | null;
   newBusinessDescription: string;
   projectDateRange: string | null;
+  structuredInputContext?: string; // 구조화된 입력 컨텍스트 추가
 }): string {
   return `"${params.sectionTitle}" 섹션을 작성해주세요.
 
@@ -313,7 +408,10 @@ ${params.projectDateRange ? `**사업 기간**: ${params.projectDateRange}` : ""
 
 ${params.companyContext}
 
-위 정보를 바탕으로 해당 섹션의 내용을 전문적이고 설득력 있게 작성해주세요.`;
+${params.structuredInputContext ? `\n## 사용자 입력 정보 (반드시 반영하세요)\n${params.structuredInputContext}` : ""}
+
+위 정보를 바탕으로 해당 섹션의 내용을 전문적이고 설득력 있게 작성해주세요.
+특히 사용자가 입력한 추진 계획, 예산 계획, 기대 효과 정보가 있으면 이를 정확하게 반영하세요.`;
 }
 
 /**

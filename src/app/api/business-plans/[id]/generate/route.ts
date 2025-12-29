@@ -11,6 +11,11 @@ import {
   generateBusinessPlanSections,
   regenerateSection,
 } from "@/lib/business-plan-generator";
+import type {
+  ExecutionPlan,
+  BudgetPlan,
+  ExpectedOutcomes,
+} from "@/types/business-plan";
 import { z } from "zod";
 import { createLogger } from "@/lib/logger";
 
@@ -92,6 +97,10 @@ export async function POST(
             ? referenceBusinessPlanIds
             : undefined,
         businessPlanId: id, // 첨부파일 분석 결과도 포함
+        // 구조화된 입력 전달 (Prisma Json → 타입 변환)
+        executionPlan: businessPlan.executionPlan as unknown as ExecutionPlan | undefined,
+        budgetPlan: businessPlan.budgetPlan as unknown as BudgetPlan | undefined,
+        expectedOutcomes: businessPlan.expectedOutcomes as unknown as ExpectedOutcomes | undefined,
       });
 
       // Delete existing sections

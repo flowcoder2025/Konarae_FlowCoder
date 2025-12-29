@@ -13,6 +13,41 @@ import { createLogger } from "@/lib/logger";
 
 const logger = createLogger({ api: "business-plans" });
 
+// 구조화된 입력 스키마
+const milestoneSchema = z.object({
+  phase: z.string(),
+  period: z.string(),
+  tasks: z.string(),
+  deliverables: z.string(),
+});
+
+const executionPlanSchema = z.object({
+  duration: z.string(),
+  milestones: z.array(milestoneSchema),
+  teamPlan: z.string().optional(),
+}).optional();
+
+const budgetItemSchema = z.object({
+  category: z.string(),
+  amount: z.number(),
+  description: z.string().optional(),
+});
+
+const budgetPlanSchema = z.object({
+  totalAmount: z.number(),
+  governmentFunding: z.number(),
+  selfFunding: z.number(),
+  breakdown: z.array(budgetItemSchema).optional(),
+}).optional();
+
+const expectedOutcomesSchema = z.object({
+  revenueTarget: z.string().optional(),
+  employmentTarget: z.string().optional(),
+  exportTarget: z.string().optional(),
+  patentTarget: z.string().optional(),
+  otherMetrics: z.array(z.string()).optional(),
+}).optional();
+
 const createBusinessPlanSchema = z.object({
   companyId: z.string().min(1),
   projectId: z.string().min(1).optional(),
@@ -20,6 +55,10 @@ const createBusinessPlanSchema = z.object({
   newBusinessDescription: z.string().optional(),
   additionalNotes: z.string().optional(),
   referenceBusinessPlanIds: z.array(z.string()).optional(),
+  // 구조화된 입력 (Phase 1)
+  executionPlan: executionPlanSchema,
+  budgetPlan: budgetPlanSchema,
+  expectedOutcomes: expectedOutcomesSchema,
 });
 
 export async function GET(req: NextRequest) {
@@ -104,6 +143,10 @@ export async function POST(req: NextRequest) {
           status: "draft",
           newBusinessDescription: validatedData.newBusinessDescription,
           additionalNotes: validatedData.additionalNotes,
+          // 구조화된 입력 저장
+          executionPlan: validatedData.executionPlan ?? undefined,
+          budgetPlan: validatedData.budgetPlan ?? undefined,
+          expectedOutcomes: validatedData.expectedOutcomes ?? undefined,
         },
       });
 
