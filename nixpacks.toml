@@ -9,8 +9,10 @@ cmds = [
 
 [phases.build]
 # Skip Next.js build - worker doesn't need it
-# Only install dependencies and keep tsx for runtime
-cmds = []
+# Only generate Prisma client and keep tsx for runtime
+cmds = [
+  "pnpm run db:generate"
+]
 
 [start]
 cmd = "pnpm run worker"

@@ -1479,6 +1479,39 @@ function isWithinTimeFilter(dateStr: string, hoursFilter: number): boolean {
 }
 
 /**
+ * Extract region from organization name
+ * 예: "부산광역시" → "부산", "경상남도" → "경남"
+ */
+function extractRegionFromOrganization(org: string): string | null {
+  const regionMap: Record<string, string> = {
+    '서울': '서울', '서울특별시': '서울', '서울시': '서울',
+    '부산': '부산', '부산광역시': '부산', '부산시': '부산',
+    '대구': '대구', '대구광역시': '대구', '대구시': '대구',
+    '인천': '인천', '인천광역시': '인천', '인천시': '인천',
+    '광주': '광주', '광주광역시': '광주', '광주시': '광주',
+    '대전': '대전', '대전광역시': '대전', '대전시': '대전',
+    '울산': '울산', '울산광역시': '울산', '울산시': '울산',
+    '세종': '세종', '세종특별자치시': '세종', '세종시': '세종',
+    '경기': '경기', '경기도': '경기',
+    '강원': '강원', '강원도': '강원', '강원특별자치도': '강원',
+    '충북': '충북', '충청북도': '충북',
+    '충남': '충남', '충청남도': '충남',
+    '전북': '전북', '전라북도': '전북', '전북특별자치도': '전북',
+    '전남': '전남', '전라남도': '전남',
+    '경북': '경북', '경상북도': '경북',
+    '경남': '경남', '경상남도': '경남',
+    '제주': '제주', '제주특별자치도': '제주', '제주도': '제주',
+  };
+
+  for (const [key, value] of Object.entries(regionMap)) {
+    if (org.includes(key)) {
+      return value;
+    }
+  }
+  return null;
+}
+
+/**
  * Build paginated URL for 기업마당
  * 기업마당 URL 패턴: ?rows=15&cpage=N
  * NOTE: 기업마당은 cpage 파라미터를 사용 (pageIndex 아님)
@@ -2062,16 +2095,17 @@ function parseBizinfoHtml(
         let detailUrl = "";
         let uploadDate = ""; // 등록일
 
-        // 기업마당 테이블 구조: [번호, 분야, 제목, 기간, 지역, 기관유형, 등록일, 조회수]
+        // 기업마당 테이블 구조 (2024.12 기준):
+        // [번호(0), 지원분야(1), 지원사업명(2), 신청기간(3), 소관부처·지자체(4), 사업수행기관(5), 등록일(6), 조회수(7)]
         cells.each((cellIdx, cell) => {
           const text = $(cell).text().trim();
 
-          // Cell 1: 카테고리 (분야)
+          // Cell 1: 카테고리 (지원분야)
           if (cellIdx === 1 && text.length >= 2 && text.length < 20) {
             category = text;
           }
 
-          // Cell 2: 제목 (링크 포함)
+          // Cell 2: 지원사업명 (링크 포함)
           if (cellIdx === 2 && $(cell).find("a").length > 0) {
             const $link = $(cell).find("a").first();
             name = $link.text().trim();
@@ -2089,16 +2123,24 @@ function parseBizinfoHtml(
                 detailUrl = `${baseUrl.protocol}//${baseUrl.host}${basePath}${href}`;
               }
             }
+
+            // 지역 추출: 제목에서 [지역] 패턴 추출 (예: "[부산] 사업명")
+            const regionMatch = name.match(/^\[([가-힣]+)\]/);
+            if (regionMatch) {
+              region = regionMatch[1];
+            }
           }
 
-          // Cell 4: 지역
-          if (cellIdx === 4 && text.length >= 2 && text.length < 20) {
-            region = text;
-          }
-
-          // Cell 5: 기관유형/기관명
-          if (cellIdx === 5 && text.length >= 2) {
+          // Cell 4: 소관부처·지자체 → organization으로 사용
+          if (cellIdx === 4 && text.length >= 2) {
             organization = text;
+            // 지역이 없으면 소관부처에서 지역 추출 시도
+            if (!region && text.length < 20) {
+              const regionFromOrg = extractRegionFromOrganization(text);
+              if (regionFromOrg) {
+                region = regionFromOrg;
+              }
+            }
           }
 
           // Cell 6: 등록일 (YYYY-MM-DD 형식)
