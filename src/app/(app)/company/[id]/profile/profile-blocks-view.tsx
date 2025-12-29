@@ -41,6 +41,8 @@ const ICON_MAP: Record<string, LucideIcon> = {
 import { BLOCK_CATEGORIES } from "@/lib/master-profile/constants"
 import type { ProfileBlock } from "@prisma/client"
 import { toast } from "sonner"
+import ReactMarkdown from "react-markdown"
+import remarkGfm from "remark-gfm"
 
 interface ProfileBlocksViewProps {
   companyId: string
@@ -279,10 +281,10 @@ export function ProfileBlocksView({
                           placeholder="블록 내용 (마크다운 지원)"
                         />
                       ) : (
-                        <div className="prose prose-sm max-w-none dark:prose-invert">
-                          <pre className="whitespace-pre-wrap text-sm bg-muted/50 p-4 rounded-lg overflow-auto">
+                        <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:text-foreground prose-p:text-foreground prose-strong:text-foreground prose-li:text-foreground">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
                             {block.content}
-                          </pre>
+                          </ReactMarkdown>
                         </div>
                       )}
 
