@@ -114,26 +114,63 @@ function NewBusinessPlanForm() {
   const [isSearching, setIsSearching] = useState(false);
   const [selectedSearchProject, setSelectedSearchProject] = useState<SearchedProject | null>(null);
 
+  // Fetch a specific project by ID (for URL param case)
+  const fetchProjectById = useCallback(async (projectId: string) => {
+    try {
+      const res = await fetch(`/api/projects/${projectId}`);
+      if (res.ok) {
+        const data = await res.json();
+        const project = data.project;
+        if (project) {
+          // Convert to SearchedProject format
+          const searchedProject: SearchedProject = {
+            id: project.id,
+            name: project.name,
+            organization: project.organization || "",
+            category: project.category || "",
+            deadline: project.deadline,
+            isPermanent: project.isPermanent,
+            summary: project.summary || "",
+          };
+          setSelectedSearchProject(searchedProject);
+          setFormData((prev) => ({ ...prev, projectId: project.id }));
+        }
+      }
+    } catch (error) {
+      logger.error("Fetch project by id error", { error });
+    }
+  }, []);
+
   // Fetch companies on mount
   useEffect(() => {
     fetchCompanies();
   }, []);
 
+  // Fetch project details if projectIdParam is provided
+  useEffect(() => {
+    if (projectIdParam && companyIdParam) {
+      fetchProjectById(projectIdParam);
+    }
+  }, [projectIdParam, companyIdParam, fetchProjectById]);
+
   // Fetch matched projects and existing plans when company changes
   useEffect(() => {
     if (formData.companyId) {
-      fetchMatchedProjects(formData.companyId);
+      // Only fetch matched projects if no project is already selected via URL param
+      if (!selectedSearchProject) {
+        fetchMatchedProjects(formData.companyId);
+      }
       fetchExistingPlans(formData.companyId);
     } else {
       setMatchedProjects([]);
       setExistingPlans([]);
       setNoMatchingMessage(null);
     }
-    // Reset project selection when company changes
-    if (formData.companyId !== companyIdParam) {
+    // Reset project selection when company changes (only if not from URL param)
+    if (formData.companyId !== companyIdParam && !projectIdParam) {
       setFormData((prev) => ({ ...prev, projectId: "" }));
     }
-  }, [formData.companyId, companyIdParam]);
+  }, [formData.companyId, companyIdParam, projectIdParam, selectedSearchProject]);
 
   const fetchCompanies = async () => {
     setIsLoadingCompanies(true);
