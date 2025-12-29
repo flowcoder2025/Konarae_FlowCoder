@@ -1483,7 +1483,7 @@ function isWithinTimeFilter(dateStr: string, hoursFilter: number): boolean {
  * 기업마당 URL 패턴: ?rows=15&cpage=N
  * NOTE: 기업마당은 cpage 파라미터를 사용 (pageIndex 아님)
  */
-function buildPaginatedUrl(baseUrl: string, pageIndex: number): string {
+function buildBizinfoPaginatedUrl(baseUrl: string, pageIndex: number): string {
   const url = new URL(baseUrl);
 
   // 기존 페이지 파라미터 제거
@@ -1542,10 +1542,22 @@ async function crawlAndParse(
 
       while (pageIndex <= CRAWLER_CONFIG.MAX_PAGES) {
         // 사이트별 페이지네이션 URL 생성
-        const pageUrl = siteType === 'kstartup'
-          ? buildKStartupPaginatedUrl(url, pageIndex)
-          : buildPaginatedUrl(url, pageIndex);
-        logger.debug(`[Page ${pageIndex}/${CRAWLER_CONFIG.MAX_PAGES}] ${pageUrl}`);
+        let pageUrl: string;
+        if (siteType === 'kstartup') {
+          pageUrl = buildKStartupPaginatedUrl(url, pageIndex);
+        } else if (siteType === 'bizinfo') {
+          pageUrl = buildBizinfoPaginatedUrl(url, pageIndex);
+        } else if (siteType === 'technopark') {
+          // 테크노파크는 페이지네이션 없음 - 첫 페이지만 크롤링
+          pageUrl = url;
+          if (pageIndex > 1) {
+            logger.info('Technopark: No pagination, stopping after first page');
+            break;
+          }
+        } else {
+          pageUrl = url; // 알 수 없는 사이트는 원본 URL 사용
+        }
+        logger.info(`[${siteType}][Page ${pageIndex}] Fetching: ${pageUrl}`);
 
         try {
           const response = await fetchWithRetry(
@@ -2007,6 +2019,10 @@ function parseBizinfoHtml(
 ): CrawledProject[] {
   const projects: CrawledProject[] = [];
 
+  // 디버깅: HTML 크기 확인
+  const htmlSize = $.html().length;
+  logger.info(`[Bizinfo] HTML size: ${htmlSize} chars`);
+
   // Try different selectors for 기업마당
   const selectors = [
     "table.board-list tbody tr",
@@ -2019,7 +2035,14 @@ function parseBizinfoHtml(
 
   for (const selector of selectors) {
     const rows = $(selector);
+    logger.info(`[Bizinfo] Selector "${selector}": ${rows.length} rows`);
+
     if (rows.length > 0) {
+      let processedCount = 0;
+      let skippedNoDate = 0;
+      let skippedDateFilter = 0;
+      let skippedNoName = 0;
+
       // Parse each row
       rows.each((_idx, element) => {
         // Skip header row
@@ -2087,15 +2110,21 @@ function parseBizinfoHtml(
           }
         });
 
+        processedCount++;
+
         // 등록일 기반 필터링 - 날짜가 없거나 필터 밖이면 스킵
-        // NOTE: 이전 버그 - uploadDate가 빈 문자열이면 필터 체크가 스킵되어
-        // 모든 항목이 포함됨 (1000개 발견 원인)
-        if (!uploadDate || !isWithinTimeFilter(uploadDate, hoursFilter)) {
+        if (!uploadDate) {
+          skippedNoDate++;
+          return;
+        }
+        if (!isWithinTimeFilter(uploadDate, hoursFilter)) {
+          skippedDateFilter++;
           return;
         }
 
         // Skip if no valid name
         if (!name || name.length < 3 || /^\d+$/.test(name)) {
+          skippedNoName++;
           return;
         }
 
@@ -2115,6 +2144,9 @@ function parseBizinfoHtml(
         const validatedProject = validateProject(rawProject);
         projects.push(validatedProject);
       });
+
+      // 통계 로그
+      logger.info(`[Bizinfo] Parse stats: processed=${processedCount}, noDate=${skippedNoDate}, dateFilter=${skippedDateFilter}, noName=${skippedNoName}, valid=${projects.length}`);
 
       if (projects.length > 0) {
         break;
