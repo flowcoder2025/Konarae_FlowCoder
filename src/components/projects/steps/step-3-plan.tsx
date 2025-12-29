@@ -43,6 +43,7 @@ interface BusinessPlanSection {
 interface Step3PlanProps {
   projectId: string;
   companyId: string;
+  userProjectId: string;
   existingPlanId: string | null;
   onComplete: () => void;
 }
@@ -83,6 +84,7 @@ const PLAN_SECTIONS: Omit<BusinessPlanSection, "completed" | "wordCount">[] = [
 export function Step3Plan({
   projectId,
   companyId,
+  userProjectId,
   existingPlanId,
   onComplete,
 }: Step3PlanProps) {
@@ -111,6 +113,7 @@ export function Step3Plan({
     const params = new URLSearchParams();
     if (companyId) params.set("companyId", companyId);
     if (projectId) params.set("projectId", projectId);
+    if (userProjectId) params.set("userProjectId", userProjectId);
     router.push(`/business-plans/new?${params.toString()}`);
   };
 

@@ -81,6 +81,7 @@ function NewBusinessPlanForm() {
   const searchParams = useSearchParams();
   const companyIdParam = searchParams.get("companyId");
   const projectIdParam = searchParams.get("projectId");
+  const userProjectIdParam = searchParams.get("userProjectId");
 
   // Loading states
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -364,6 +365,24 @@ function NewBusinessPlanForm() {
             method: "POST",
             body: formDataUpload,
           });
+        }
+      }
+
+      // Update UserProject to link with the new business plan
+      if (userProjectIdParam) {
+        try {
+          await fetch(`/api/user-projects/${userProjectIdParam}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              businessPlanId: businessPlanId,
+              step3Completed: true,
+              currentStep: 4, // Advance to next step
+            }),
+          });
+        } catch (error) {
+          logger.error("Failed to update user project", { error });
+          // Don't block the flow, just log the error
         }
       }
 

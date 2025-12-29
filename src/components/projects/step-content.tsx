@@ -68,6 +68,7 @@ export function StepContent({
           <Step3Plan
             projectId={supportProjectId}
             companyId={companyId}
+            userProjectId={projectId}
             existingPlanId={existingPlanId}
             onComplete={() => onStepComplete(3)}
           />
