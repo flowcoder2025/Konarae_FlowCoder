@@ -1772,9 +1772,10 @@ function parseKStartupHtml(
 /**
  * Detect site type from URL
  */
-function detectSiteType(url: string): 'bizinfo' | 'kstartup' | 'unknown' {
+function detectSiteType(url: string): 'bizinfo' | 'kstartup' | 'technopark' | 'unknown' {
   if (url.includes('bizinfo.go.kr')) return 'bizinfo';
   if (url.includes('k-startup.go.kr')) return 'kstartup';
+  if (url.includes('technopark.kr')) return 'technopark';
   return 'unknown';
 }
 
@@ -1803,7 +1804,7 @@ function buildKStartupPaginatedUrl(baseUrl: string, pageIndex: number): string {
 }
 
 /**
- * Parse HTML content with date filtering (기업마당, K-Startup 등)
+ * Parse HTML content with date filtering (기업마당, K-Startup, 테크노파크 등)
  * Enhanced: 28시간 이내 등록된 공고만 필터링
  * Auto-detects site type and uses appropriate parser
  */
@@ -1820,8 +1821,169 @@ function parseHtmlContentWithDateFilter(
     return parseKStartupHtml($, sourceUrl, hoursFilter, pbancClssCd);
   }
 
+  // 테크노파크 전용 파서
+  if (siteType === 'technopark') {
+    return parseTechnoparkHtml($, sourceUrl, hoursFilter);
+  }
+
   // 기업마당 파서 (기본)
   return parseBizinfoHtml($, sourceUrl, hoursFilter);
+}
+
+/**
+ * 지역명을 기관명으로 변환 (테크노파크 전용)
+ * 지역 카테고리 → 해당 지역 테크노파크 기관명
+ */
+function regionToTechnoparkOrg(region: string): string {
+  const regionOrgMap: Record<string, string> = {
+    'TP진흥회': '한국테크노파크진흥회',
+    '강원': '강원테크노파크',
+    '경기': '경기테크노파크',
+    '경기대진': '경기대진테크노파크',
+    '경남': '경남테크노파크',
+    '경북': '경북테크노파크',
+    '광주': '광주테크노파크',
+    '대구': '대구테크노파크',
+    '대전': '대전테크노파크',
+    '부산': '부산테크노파크',
+    '서울': '서울테크노파크',
+    '세종': '세종테크노파크',
+    '울산': '울산테크노파크',
+    '인천': '인천테크노파크',
+    '전남': '전남테크노파크',
+    '전북': '전북테크노파크',
+    '제주': '제주테크노파크',
+    '충남': '충남테크노파크',
+    '충북': '충북테크노파크',
+    '포항': '포항테크노파크',
+  };
+  return regionOrgMap[region] || `${region}테크노파크`;
+}
+
+/**
+ * Parse 테크노파크 HTML content
+ * 테크노파크 테이블 구조 파서 (technopark.kr)
+ * 테이블 구조: [번호, 지역, 제목, 작성자, 등록일, 조회]
+ */
+function parseTechnoparkHtml(
+  $: ReturnType<typeof import("cheerio")["load"]>,
+  sourceUrl: string,
+  hoursFilter: number
+): CrawledProject[] {
+  const projects: CrawledProject[] = [];
+
+  // 테크노파크 테이블 셀렉터
+  const selectors = [
+    "table tbody tr",
+    ".board-list tbody tr",
+    "tbody tr",
+    "tr",
+  ];
+
+  for (const selector of selectors) {
+    const rows = $(selector);
+    if (rows.length > 0) {
+      rows.each((_idx, element) => {
+        // Skip header row
+        const headerText = $(element).text().toLowerCase();
+        if (headerText.includes('번호') && headerText.includes('제목')) {
+          return;
+        }
+
+        const $row = $(element);
+        const cells = $row.find("td");
+        if (cells.length < 3) return;
+
+        let name = "";
+        let region = "";
+        let detailUrl = "";
+        let uploadDate = "";
+
+        // 테크노파크 테이블 구조: [번호, 지역, 제목, 작성자, 등록일, 조회]
+        cells.each((cellIdx, cell) => {
+          const text = $(cell).text().trim();
+
+          // Cell 1: 지역 (예: "울산", "TP진흥회", "경기")
+          if (cellIdx === 1 && text.length >= 2 && text.length < 20) {
+            region = text;
+          }
+
+          // Cell 2: 제목 (링크 포함)
+          if (cellIdx === 2 && $(cell).find("a").length > 0) {
+            const $link = $(cell).find("a").first();
+            name = $link.text().trim();
+
+            const href = $link.attr("href");
+            if (href) {
+              if (href.startsWith("http")) {
+                detailUrl = href;
+              } else if (href.startsWith("/")) {
+                const baseUrl = new URL(sourceUrl);
+                detailUrl = `${baseUrl.protocol}//${baseUrl.host}${href}`;
+              } else {
+                // 상대 경로
+                const baseUrl = new URL(sourceUrl);
+                detailUrl = `${baseUrl.protocol}//${baseUrl.host}/${href}`;
+              }
+            }
+          }
+
+          // Cell 4: 등록일 (YYYY.MM.DD 또는 YYYY-MM-DD 형식)
+          if (cellIdx === 4) {
+            const dateMatch = text.match(/\d{4}[.\-]\d{2}[.\-]\d{2}/);
+            if (dateMatch) {
+              // YYYY.MM.DD → YYYY-MM-DD 형식으로 변환
+              uploadDate = dateMatch[0].replace(/\./g, '-');
+            }
+          }
+        });
+
+        // 등록일 기반 필터링
+        if (uploadDate && !isWithinTimeFilter(uploadDate, hoursFilter)) {
+          return; // 시간 필터 밖이면 스킵
+        }
+
+        // Skip if no valid name
+        if (!name || name.length < 3 || /^\d+$/.test(name)) {
+          return;
+        }
+
+        // 지역에서 organization 파생
+        const organization = regionToTechnoparkOrg(region || '전국');
+
+        // 지역명 정규화 (TP진흥회 → 전국, 경기대진 → 경기 등)
+        let normalizedRegion = region;
+        if (region === 'TP진흥회') {
+          normalizedRegion = '전국';
+        } else if (region === '경기대진') {
+          normalizedRegion = '경기';
+        }
+
+        const rawProject: CrawledProject = {
+          name,
+          organization,
+          category: "기타", // 테크노파크는 카테고리 정보가 없음
+          target: "중소기업",
+          region: normalizedRegion || "전국",
+          summary: name,
+          sourceUrl,
+          detailUrl: detailUrl || undefined,
+          isPermanent: false,
+        };
+
+        // Validate and normalize category/region
+        const validatedProject = validateProject(rawProject);
+        projects.push(validatedProject);
+      });
+
+      if (projects.length > 0) {
+        break;
+      }
+    }
+  }
+
+  logger.debug(`Technopark parser found ${projects.length} projects`);
+  return projects;
 }
 
 /**
