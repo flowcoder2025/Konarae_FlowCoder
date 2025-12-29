@@ -19,7 +19,28 @@ import {
   CheckCircle2,
   Loader2,
   Info,
+  Building2,
+  Briefcase,
+  TrendingUp,
+  Users,
+  Award,
+  Trophy,
+  Zap,
+  Target,
+  type LucideIcon,
 } from "lucide-react"
+
+// 아이콘 이름 → 컴포넌트 매핑
+const ICON_MAP: Record<string, LucideIcon> = {
+  Building2,
+  Briefcase,
+  TrendingUp,
+  Users,
+  Award,
+  Trophy,
+  Zap,
+  Target,
+}
 import type { ExpectedQuality } from "@/lib/master-profile/types"
 import { MASTER_PROFILE_MESSAGES, BLOCK_CATEGORIES } from "@/lib/master-profile/constants"
 import { toast } from "sonner"
@@ -152,11 +173,15 @@ export function GenerateProfileModal({
           <div className="rounded-lg border p-3">
             <p className="text-sm font-medium mb-2">생성될 프로필 블록</p>
             <div className="flex flex-wrap gap-1.5">
-              {BLOCK_CATEGORIES.slice(0, 6).map((category) => (
-                <Badge key={category.id} variant="secondary" className="text-xs">
-                  {category.icon} {category.label}
-                </Badge>
-              ))}
+              {BLOCK_CATEGORIES.slice(0, 6).map((category) => {
+                const IconComponent = ICON_MAP[category.icon]
+                return (
+                  <Badge key={category.id} variant="secondary" className="text-xs">
+                    {IconComponent && <IconComponent className="h-3 w-3 mr-1" />}
+                    {category.label}
+                  </Badge>
+                )
+              })}
               {BLOCK_CATEGORIES.length > 6 && (
                 <Badge variant="secondary" className="text-xs">
                   +{BLOCK_CATEGORIES.length - 6}개 더
