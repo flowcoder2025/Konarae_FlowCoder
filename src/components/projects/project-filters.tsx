@@ -12,6 +12,7 @@ interface ProjectFiltersProps {
   regions: { value: string; count: number }[];
   currentCategory?: string;
   currentRegion?: string;
+  currentSubRegion?: string;
   currentSearch?: string;
   currentDeadline?: string;
   currentSort?: string;
@@ -37,6 +38,7 @@ export function ProjectFilters({
   regions,
   currentCategory,
   currentRegion,
+  currentSubRegion,
   currentSearch,
   currentDeadline,
   currentSort,
@@ -45,6 +47,7 @@ export function ProjectFilters({
   const router = useRouter();
   const searchParams = useSearchParams();
   const [searchInput, setSearchInput] = useState(currentSearch || "");
+  const [subRegionInput, setSubRegionInput] = useState(currentSubRegion || "");
 
   const createQueryString = useCallback(
     (updates: Record<string, string | undefined>) => {
@@ -98,14 +101,22 @@ export function ProjectFilters({
     router.push(`/projects${query ? `?${query}` : ""}`);
   };
 
+  const handleSubRegionSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    const query = createQueryString({ subRegion: subRegionInput || undefined });
+    router.push(`/projects${query ? `?${query}` : ""}`);
+  };
+
   const clearFilters = () => {
     setSearchInput("");
+    setSubRegionInput("");
     router.push("/projects");
   };
 
   const hasActiveFilters =
     currentCategory ||
     currentRegion ||
+    currentSubRegion ||
     currentSearch ||
     currentDeadline ||
     (currentSort && currentSort !== "latest");
@@ -214,6 +225,25 @@ export function ProjectFilters({
         </div>
       )}
 
+      {/* Sub-Region Search (시군구) */}
+      <div className="flex items-center gap-2">
+        <span className="text-sm text-muted-foreground py-1 shrink-0">
+          상세지역:
+        </span>
+        <form onSubmit={handleSubRegionSearch} className="flex gap-2">
+          <Input
+            type="text"
+            placeholder="시·군·구 검색 (예: 구미, 시흥)"
+            value={subRegionInput}
+            onChange={(e) => setSubRegionInput(e.target.value)}
+            className="w-48 h-8 text-sm"
+          />
+          <Button type="submit" variant="outline" size="sm" className="h-8">
+            검색
+          </Button>
+        </form>
+      </div>
+
       {/* Deadline Filters */}
       <div className="flex items-center gap-2">
         <span className="text-sm text-muted-foreground py-1 shrink-0 flex items-center gap-1">
@@ -286,6 +316,20 @@ export function ProjectFilters({
               <Badge variant="outline" className="gap-1">
                 {currentRegion}
                 <button onClick={() => handleRegionClick(currentRegion)}>
+                  <X className="h-3 w-3" />
+                </button>
+              </Badge>
+            )}
+            {currentSubRegion && (
+              <Badge variant="outline" className="gap-1">
+                상세: {currentSubRegion}
+                <button
+                  onClick={() => {
+                    setSubRegionInput("");
+                    const query = createQueryString({ subRegion: undefined });
+                    router.push(`/projects${query ? `?${query}` : ""}`);
+                  }}
+                >
                   <X className="h-3 w-3" />
                 </button>
               </Badge>

@@ -11,6 +11,7 @@ interface ProjectsPageProps {
     page?: string;
     category?: string;
     region?: string;
+    subRegion?: string;
     search?: string;
     deadline?: string;
     sort?: string;
@@ -42,6 +43,10 @@ export default async function ProjectsPage({
 
   if (params.region) {
     where.region = params.region;
+  }
+
+  if (params.subRegion) {
+    where.subRegion = { contains: params.subRegion, mode: "insensitive" };
   }
 
   if (params.search) {
@@ -155,6 +160,7 @@ export default async function ProjectsPage({
         regions={regions.map((r) => ({ value: r.region, count: r._count }))}
         currentCategory={params.category}
         currentRegion={params.region}
+        currentSubRegion={params.subRegion}
         currentSearch={params.search}
         currentDeadline={params.deadline}
         currentSort={params.sort}
