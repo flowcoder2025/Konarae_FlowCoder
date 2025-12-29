@@ -275,7 +275,8 @@ model SupportProject {
   category     String
   subCategory  String?
   target       String
-  region       String
+  region       String    // 광역시·도 (17개 + 전국) - UI 표시용
+  subRegion    String?   // 시·군·구 (검색용 메타데이터)
 
   // Amount
   amountMin         BigInt?
@@ -329,6 +330,7 @@ model SupportProject {
 
   @@index([category])
   @@index([region])
+  @@index([subRegion])
   @@index([status])
   @@index([deadline])
 }
