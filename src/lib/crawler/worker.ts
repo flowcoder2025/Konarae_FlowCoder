@@ -1430,8 +1430,11 @@ async function processProjectFiles(
  * Crawler configuration
  * Railway 워커 환경 (타임아웃 제한 없음)
  *
- * 시간 기반 필터링: 24시간 이내 등록된 공고만 수집
+ * 시간 기반 필터링: 7일(168시간) 이내 등록된 공고만 수집
  * 페이지 제한 없음: 시간 필터에 의해 자연스럽게 종료
+ *
+ * NOTE: 24시간 필터가 너무 엄격해서 크롤러가 매일 정확히 실행되지 않으면
+ * 공고를 놓치는 문제가 있었음. 7일로 변경하여 안정성 확보.
  */
 const CRAWLER_CONFIG = {
   // 페이지네이션 설정 (Railway: 무제한)
@@ -1440,7 +1443,7 @@ const CRAWLER_CONFIG = {
   // MAX_PROJECTS 제거: 시간 필터만으로 제어
 
   // 시간 필터 설정
-  HOURS_FILTER: 24,        // 24시간 이내 등록된 공고만 수집
+  HOURS_FILTER: 168,       // 7일(168시간) 이내 등록된 공고 수집 (기존: 24시간)
 
   // 요청 간격 (rate limiting - 증가시켜 안정성 향상)
   PAGE_DELAY_MS: 1000,     // 500 → 1000 (서버 부하 감소)
