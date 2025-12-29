@@ -1480,7 +1480,8 @@ function isWithinTimeFilter(dateStr: string, hoursFilter: number): boolean {
 
 /**
  * Build paginated URL for 기업마당
- * 기업마당 URL 패턴: ?pageIndex=N 또는 ?cpage=N
+ * 기업마당 URL 패턴: ?rows=15&cpage=N
+ * NOTE: 기업마당은 cpage 파라미터를 사용 (pageIndex 아님)
  */
 function buildPaginatedUrl(baseUrl: string, pageIndex: number): string {
   const url = new URL(baseUrl);
@@ -1489,9 +1490,11 @@ function buildPaginatedUrl(baseUrl: string, pageIndex: number): string {
   url.searchParams.delete('pageIndex');
   url.searchParams.delete('cpage');
   url.searchParams.delete('page');
+  url.searchParams.delete('rows');
 
-  // 새 페이지 파라미터 추가 (기업마당은 pageIndex 사용)
-  url.searchParams.set('pageIndex', pageIndex.toString());
+  // 새 페이지 파라미터 추가 (기업마당은 cpage 사용)
+  url.searchParams.set('rows', '15');
+  url.searchParams.set('cpage', pageIndex.toString());
 
   return url.toString();
 }
