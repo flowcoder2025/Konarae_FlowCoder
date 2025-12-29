@@ -14,6 +14,7 @@ interface StepContentProps {
   currentStep: number;
   steps: StepConfig[];
   projectId: string;
+  supportProjectId: string;
   projectUrl: string | null;
   companyId: string;
   existingPlanId: string | null;
@@ -26,6 +27,7 @@ export function StepContent({
   currentStep,
   steps,
   projectId,
+  supportProjectId,
   projectUrl,
   companyId,
   existingPlanId,
@@ -64,7 +66,7 @@ export function StepContent({
       case 3:
         return (
           <Step3Plan
-            projectId={projectId}
+            projectId={supportProjectId}
             companyId={companyId}
             existingPlanId={existingPlanId}
             onComplete={() => onStepComplete(3)}

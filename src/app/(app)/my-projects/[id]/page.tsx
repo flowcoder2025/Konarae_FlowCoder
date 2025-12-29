@@ -92,6 +92,7 @@ export default async function ProjectDetailPage({ params }: Props) {
       {/* Project Workspace */}
       <ProjectWorkspace
         projectId={userProject.id}
+        supportProjectId={userProject.project.id}
         projectUrl={userProject.project.detailUrl || userProject.project.websiteUrl}
         companyId={userProject.companyId}
         existingPlanId={userProject.businessPlan?.id || null}

@@ -52,6 +52,7 @@ const STEPS: StepConfig[] = [
 
 interface ProjectWorkspaceProps {
   projectId: string;
+  supportProjectId: string;
   projectUrl: string | null;
   companyId: string;
   existingPlanId: string | null;
@@ -61,6 +62,7 @@ interface ProjectWorkspaceProps {
 
 export function ProjectWorkspace({
   projectId,
+  supportProjectId,
   projectUrl,
   companyId,
   existingPlanId,
@@ -189,6 +191,7 @@ export function ProjectWorkspace({
         currentStep={currentStep}
         steps={STEPS}
         projectId={projectId}
+        supportProjectId={supportProjectId}
         projectUrl={projectUrl}
         companyId={companyId}
         existingPlanId={existingPlanId}
