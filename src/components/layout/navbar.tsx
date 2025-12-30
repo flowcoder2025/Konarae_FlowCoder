@@ -25,6 +25,7 @@ import {
   Search,
   FolderKanban,
   Kanban,
+  Settings,
   Menu,
   X,
   User,
@@ -38,6 +39,7 @@ interface NavItem {
   label: string;
   href: string;
   icon: React.ComponentType<{ className?: string }>;
+  mobileOnly?: boolean; // 모바일 메뉴에서만 표시
 }
 
 const navItems: NavItem[] = [
@@ -75,6 +77,12 @@ const navItems: NavItem[] = [
     label: "기업설정",
     href: "/company",
     icon: Building2,
+  },
+  {
+    label: "설정",
+    href: "/settings/notifications",
+    icon: Settings,
+    mobileOnly: true, // 데스크탑에서는 프로필 메뉴에 중복이므로 모바일에서만 표시
   },
 ];
 
@@ -137,27 +145,29 @@ export function Navbar({ user, isAdmin = false }: NavbarProps) {
           <span className="hidden font-semibold sm:inline-block">FlowMate</span>
         </Link>
 
-        {/* Desktop Navigation */}
+        {/* Desktop Navigation - mobileOnly 항목 제외 */}
         <nav className="hidden md:flex items-center justify-center gap-1 flex-1">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const active = isActive(item.href);
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={cn(
-                  "flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-md transition-colors",
-                  active
-                    ? "bg-primary/10 text-primary"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted"
-                )}
-              >
-                <Icon className="h-4 w-4" />
-                {item.label}
-              </Link>
-            );
-          })}
+          {navItems
+            .filter((item) => !item.mobileOnly)
+            .map((item) => {
+              const Icon = item.icon;
+              const active = isActive(item.href);
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={cn(
+                    "flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-md transition-colors",
+                    active
+                      ? "bg-primary/10 text-primary"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                  )}
+                >
+                  <Icon className="h-4 w-4" />
+                  {item.label}
+                </Link>
+              );
+            })}
         </nav>
 
         {/* Right side: User Menu */}
