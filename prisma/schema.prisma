@@ -37,9 +37,10 @@ model User {
   notifications       Notification[]
   notificationSetting NotificationSetting?
   uploadedDocuments   CompanyDocument[]
-  credit              Credit?
-  gapDiagnoses        GapDiagnosis[]
-  userProjects        UserProject[]
+  credit                  Credit?
+  gapDiagnoses            GapDiagnosis[]
+  userProjects            UserProject[]
+  submissionVerifications SubmissionVerification[]
 }
 
 model Account {
@@ -850,6 +851,9 @@ model UserProject {
   evaluationId String?     @unique
   evaluation   Evaluation? @relation(fields: [evaluationId], references: [id])
 
+  // 검증 (1:N - 여러 번 검증 가능)
+  verifications SubmissionVerification[]
+
   @@unique([userId, companyId, projectId])
   @@index([userId])
   @@index([companyId])
@@ -899,6 +903,40 @@ model GapDiagnosis {
   @@index([status])
   @@index([createdAt(sort: Desc)])
   @@map("gap_diagnoses")
+}
+
+// ============================================
+// Submission Verification System (제출 전 검증)
+// ============================================
+
+/// 제출 전 검증 결과
+model SubmissionVerification {
+  id            String @id @default(cuid())
+  userProjectId String
+  userId        String // 요청자
+
+  // 검증 상태
+  status String @default("pending")
+  // pending | processing | completed | failed
+
+  // 검증 결과 (JSON)
+  result Json? // VerificationResult { summary, items }
+
+  // 메타
+  creditUsed   Int     @default(20)
+  errorMessage String?
+
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  userProject UserProject @relation(fields: [userProjectId], references: [id], onDelete: Cascade)
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userProjectId])
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt(sort: Desc)])
+  @@map("submission_verifications")
 }
 
 // ============================================

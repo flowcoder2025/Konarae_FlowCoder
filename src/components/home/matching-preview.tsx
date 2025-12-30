@@ -48,7 +48,7 @@ export function MatchingPreview({ recommendations, hasCompany }: MatchingPreview
           맞춤 추천 지원사업
         </h2>
         <Button variant="outline" size="sm" asChild>
-          <Link href="/projects">
+          <Link href="/matching">
             전체 보기
             <ArrowRight className="h-4 w-4 ml-1" />
           </Link>

@@ -76,7 +76,7 @@ export function StepContent({
       case 4:
         return (
           <Step4Verify
-            projectId={projectId}
+            userProjectId={projectId}
             creditCost={currentStepConfig.creditCost || 30}
             onComplete={() => onStepComplete(4)}
             onSkip={handleSkip}

@@ -15,40 +15,52 @@ import {
   FileSpreadsheet,
   ChevronLeft,
   SkipForward,
+  ShieldCheck,
+  RefreshCw,
 } from "lucide-react";
-import { useState } from "react";
-
-interface VerificationItem {
-  id: string;
-  category: "format" | "content" | "attachment" | "calculation";
-  title: string;
-  description: string;
-  status: "pass" | "fail" | "warning";
-}
+import { useState, useEffect, useCallback } from "react";
+import { toast } from "sonner";
+import type {
+  VerificationItem,
+  VerificationResult,
+  VerificationCategory,
+  VerificationStatus,
+  CATEGORY_LABELS as CategoryLabelsType,
+} from "@/types/verification";
 
 interface Step4VerifyProps {
-  projectId: string;
+  userProjectId: string;
   creditCost: number;
   onComplete: () => void;
   onSkip?: () => void;
   onPrevious?: () => void;
 }
 
-const CATEGORY_ICONS = {
+const CATEGORY_ICONS: Record<VerificationCategory, React.ElementType> = {
   format: FileText,
   content: FileCheck,
   attachment: FileSpreadsheet,
   calculation: Calculator,
+  compliance: ShieldCheck,
 };
 
-const CATEGORY_LABELS = {
+const CATEGORY_LABELS: Record<VerificationCategory, string> = {
   format: "형식",
   content: "내용",
   attachment: "첨부",
   calculation: "계산",
+  compliance: "규정",
 };
 
-const STATUS_STYLES = {
+const STATUS_STYLES: Record<
+  VerificationStatus,
+  {
+    icon: React.ElementType;
+    bg: string;
+    text: string;
+    label: string;
+  }
+> = {
   pass: {
     icon: CheckCircle2,
     bg: "bg-green-100",
@@ -70,69 +82,125 @@ const STATUS_STYLES = {
 };
 
 export function Step4Verify({
-  projectId,
+  userProjectId,
   creditCost,
   onComplete,
   onSkip,
   onPrevious,
 }: Step4VerifyProps) {
   const [isRunning, setIsRunning] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [verificationComplete, setVerificationComplete] = useState(false);
   const [verificationItems, setVerificationItems] = useState<VerificationItem[]>([]);
+  const [verificationId, setVerificationId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // 기존 검증 결과 조회
+  const fetchLatestVerification = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      const response = await fetch(
+        `/api/verification?userProjectId=${userProjectId}&limit=1`
+      );
+
+      if (!response.ok) {
+        throw new Error("검증 결과 조회에 실패했습니다");
+      }
+
+      const data = await response.json();
+
+      if (data.verifications && data.verifications.length > 0) {
+        const latest = data.verifications[0];
+        if (latest.status === "completed" && latest.result) {
+          setVerificationId(latest.id);
+          setVerificationItems(latest.result.items || []);
+          setVerificationComplete(true);
+        }
+      }
+    } catch (err) {
+      // 기존 결과가 없을 수 있으므로 에러는 무시
+      console.log("No previous verification found");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [userProjectId]);
+
+  useEffect(() => {
+    fetchLatestVerification();
+  }, [fetchLatestVerification]);
 
   const handleStartVerification = async () => {
     setIsRunning(true);
+    setError(null);
 
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 2500));
+    try {
+      // 검증 요청
+      const response = await fetch("/api/verification", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userProjectId }),
+      });
 
-    // Mock verification results
-    setVerificationItems([
-      {
-        id: "1",
-        category: "format",
-        title: "문서 형식 검증",
-        description: "PDF 형식, 페이지 수 제한 준수",
-        status: "pass",
-      },
-      {
-        id: "2",
-        category: "content",
-        title: "필수 항목 포함 여부",
-        description: "모든 필수 섹션이 작성되었습니다",
-        status: "pass",
-      },
-      {
-        id: "3",
-        category: "attachment",
-        title: "첨부서류 검증",
-        description: "사업자등록증 파일명이 규정과 다릅니다",
-        status: "warning",
-      },
-      {
-        id: "4",
-        category: "calculation",
-        title: "예산 계산 검증",
-        description: "총액과 세부 항목 합계가 일치합니다",
-        status: "pass",
-      },
-      {
-        id: "5",
-        category: "content",
-        title: "분량 요건 검증",
-        description: "최소 분량 요건을 충족합니다",
-        status: "pass",
-      },
-    ]);
+      const data = await response.json();
 
-    setIsRunning(false);
-    setVerificationComplete(true);
+      if (!response.ok) {
+        throw new Error(data.error || "검증 요청에 실패했습니다");
+      }
+
+      setVerificationId(data.verificationId);
+
+      // 결과 조회
+      await fetchVerificationResult(data.verificationId);
+
+      toast.success("검증이 완료되었습니다");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "검증 중 오류가 발생했습니다";
+      setError(message);
+      toast.error(message);
+    } finally {
+      setIsRunning(false);
+    }
+  };
+
+  const fetchVerificationResult = async (id: string) => {
+    try {
+      const response = await fetch(`/api/verification/${id}`);
+
+      if (!response.ok) {
+        throw new Error("검증 결과 조회에 실패했습니다");
+      }
+
+      const data = await response.json();
+
+      if (data.status === "completed" && data.result) {
+        setVerificationItems(data.result.items || []);
+        setVerificationComplete(true);
+      } else if (data.status === "failed") {
+        throw new Error(data.errorMessage || "검증에 실패했습니다");
+      } else {
+        // 아직 처리 중이면 폴링
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        return fetchVerificationResult(id);
+      }
+    } catch (err) {
+      throw err;
+    }
   };
 
   const passCount = verificationItems.filter((item) => item.status === "pass").length;
   const failCount = verificationItems.filter((item) => item.status === "fail").length;
   const warningCount = verificationItems.filter((item) => item.status === "warning").length;
 
+  // 로딩 중
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  // 검증 시작 전 화면
   if (!verificationComplete) {
     return (
       <div className="space-y-6">
@@ -148,6 +216,29 @@ export function Step4Verify({
             </div>
           </div>
         </div>
+
+        {/* 에러 메시지 */}
+        {error && (
+          <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+            <div className="flex items-start gap-3">
+              <XCircle className="h-5 w-5 text-red-600 mt-0.5 shrink-0" />
+              <div>
+                <p className="font-medium text-red-900">검증 오류</p>
+                <p className="text-sm text-red-700 mt-1">{error}</p>
+              </div>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-3"
+              onClick={handleStartVerification}
+              disabled={isRunning}
+            >
+              <RefreshCw className="h-4 w-4 mr-2" />
+              다시 시도
+            </Button>
+          </div>
+        )}
 
         <Card>
           <CardContent className="py-8 text-center">
@@ -263,6 +354,17 @@ export function Step4Verify({
                   </Badge>
                 </div>
                 <p className="text-sm text-muted-foreground">{item.description}</p>
+                {/* 상세 정보 및 제안 */}
+                {item.details && (
+                  <p className="text-sm text-muted-foreground mt-1 bg-muted/50 p-2 rounded">
+                    {item.details}
+                  </p>
+                )}
+                {item.suggestion && (
+                  <p className="text-sm text-primary mt-1">
+                    💡 {item.suggestion}
+                  </p>
+                )}
               </div>
             </div>
           );
@@ -294,10 +396,18 @@ export function Step4Verify({
             )}
           </div>
           <div className="flex gap-2">
-            {failCount > 0 && (
+            {(failCount > 0 || warningCount > 0) && (
               <>
-                <Button variant="outline" onClick={handleStartVerification}>
-                  <Loader2 className="h-4 w-4 mr-2" />
+                <Button
+                  variant="outline"
+                  onClick={handleStartVerification}
+                  disabled={isRunning}
+                >
+                  {isRunning ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                  )}
                   재검증 ({creditCost}C)
                 </Button>
                 <Button variant="outline" onClick={onSkip}>

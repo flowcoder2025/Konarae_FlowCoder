@@ -26,8 +26,12 @@ import {
   SkipForward,
   Upload,
   X,
+  AlertCircle,
+  RefreshCcw,
 } from "lucide-react";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
+import { toast } from "sonner";
+import type { GapItem, ActionItem, RequirementCategory, GapSeverity } from "@/types/diagnosis";
 
 interface DiagnosisItem {
   id: string;
@@ -38,6 +42,71 @@ interface DiagnosisItem {
   resolved: boolean;
   enhanceType?: "upload" | "input" | "form";
   requiredFields?: string[];
+  // 원본 데이터 참조
+  gapId?: string;
+  actionId?: string;
+  documentType?: string;
+}
+
+// API 응답에서 UI로 카테고리 변환
+function mapCategory(category: RequirementCategory): DiagnosisItem["category"] {
+  switch (category) {
+    case "document":
+    case "certification":
+      return "document";
+    case "financial":
+    case "history":
+      return "info";
+    case "eligibility":
+    case "other":
+    default:
+      return "eligibility";
+  }
+}
+
+// API 응답에서 UI로 심각도 변환
+function mapSeverity(severity: GapSeverity): DiagnosisItem["severity"] {
+  switch (severity) {
+    case "critical":
+      return "critical";
+    case "high":
+      return "warning";
+    case "medium":
+    case "low":
+    default:
+      return "info";
+  }
+}
+
+// Gap + Action을 DiagnosisItem으로 변환
+function convertGapToItem(gap: GapItem, action?: ActionItem): DiagnosisItem {
+  const category = mapCategory(gap.category);
+
+  // 카테고리에 따른 enhanceType 결정
+  let enhanceType: DiagnosisItem["enhanceType"] = "form";
+  let requiredFields: string[] | undefined;
+
+  if (category === "document" || action?.documentType) {
+    enhanceType = "upload";
+  } else if (category === "info") {
+    enhanceType = "input";
+    // 일반적인 기업 정보 필드
+    requiredFields = ["value"];
+  }
+
+  return {
+    id: gap.id,
+    gapId: gap.id,
+    actionId: action?.id,
+    category,
+    title: gap.requirement,
+    description: `현재: ${gap.current} | 필요: ${gap.gap}`,
+    severity: mapSeverity(gap.severity),
+    resolved: false,
+    enhanceType,
+    requiredFields,
+    documentType: action?.documentType,
+  };
 }
 
 interface Step2DiagnosisProps {
@@ -93,6 +162,9 @@ export function Step2Diagnosis({
   const [isRunning, setIsRunning] = useState(false);
   const [diagnosisComplete, setDiagnosisComplete] = useState(false);
   const [diagnosisItems, setDiagnosisItems] = useState<DiagnosisItem[]>([]);
+  const [diagnosisId, setDiagnosisId] = useState<string | null>(null);
+  const [fitScore, setFitScore] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   // 보강 모달 상태
   const [selectedItem, setSelectedItem] = useState<DiagnosisItem | null>(null);
@@ -101,55 +173,73 @@ export function Step2Diagnosis({
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
+  // 진단 결과 조회
+  const fetchDiagnosisResult = useCallback(async (id: string) => {
+    try {
+      const response = await fetch(`/api/diagnosis/${id}`);
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "진단 결과를 불러올 수 없습니다");
+      }
+
+      if (data.status === "failed") {
+        throw new Error(data.errorMessage || "진단에 실패했습니다");
+      }
+
+      // gaps와 actions를 DiagnosisItem으로 변환
+      const gaps = (data.gaps || []) as GapItem[];
+      const actions = (data.actions || []) as ActionItem[];
+
+      const items: DiagnosisItem[] = gaps.map((gap) => {
+        // 해당 gap에 연결된 action 찾기
+        const action = actions.find((a) => a.gapId === gap.id);
+        return convertGapToItem(gap, action);
+      });
+
+      setDiagnosisItems(items);
+      setFitScore(data.fitScore);
+      setDiagnosisComplete(true);
+
+      return true;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "진단 결과 조회 실패";
+      setError(message);
+      toast.error(message);
+      return false;
+    }
+  }, []);
+
   const handleStartDiagnosis = async () => {
     setIsRunning(true);
+    setError(null);
 
-    // Simulate API call - in real implementation, call /api/diagnosis
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    try {
+      // 1. 진단 요청
+      const response = await fetch("/api/diagnosis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ companyId, projectId }),
+      });
 
-    // Mock diagnosis results with enhance types
-    setDiagnosisItems([
-      {
-        id: "1",
-        category: "document",
-        title: "재무제표 미등록",
-        description: "최근 2개년 재무제표가 필요합니다",
-        severity: "critical",
-        resolved: false,
-        enhanceType: "upload",
-      },
-      {
-        id: "2",
-        category: "document",
-        title: "사업자등록증 만료 예정",
-        description: "등록된 사업자등록증이 3개월 이내 만료됩니다",
-        severity: "warning",
-        resolved: false,
-        enhanceType: "upload",
-      },
-      {
-        id: "3",
-        category: "info",
-        title: "고용보험 가입자 수 미입력",
-        description: "현재 고용보험 가입 인원 정보가 필요합니다",
-        severity: "critical",
-        resolved: false,
-        enhanceType: "input",
-        requiredFields: ["employeeCount"],
-      },
-      {
-        id: "4",
-        category: "eligibility",
-        title: "중소기업 확인서 권장",
-        description: "중소기업 확인서가 있으면 가점을 받을 수 있습니다",
-        severity: "info",
-        resolved: false,
-        enhanceType: "upload",
-      },
-    ]);
+      const data = await response.json();
 
-    setIsRunning(false);
-    setDiagnosisComplete(true);
+      if (!response.ok) {
+        throw new Error(data.error || "진단 요청에 실패했습니다");
+      }
+
+      // 2. 진단 ID 저장 및 결과 조회
+      setDiagnosisId(data.diagnosisId);
+      await fetchDiagnosisResult(data.diagnosisId);
+
+      toast.success("진단이 완료되었습니다");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "진단 중 오류가 발생했습니다";
+      setError(message);
+      toast.error(message);
+    } finally {
+      setIsRunning(false);
+    }
   };
 
   const handleItemClick = (item: DiagnosisItem) => {
@@ -166,21 +256,59 @@ export function Step2Diagnosis({
 
     setIsSaving(true);
 
-    // Simulate API save
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    try {
+      // 문서 업로드의 경우
+      if (selectedItem.enhanceType === "upload" && uploadedFile) {
+        const formData = new FormData();
+        formData.append("file", uploadedFile);
+        formData.append("companyId", companyId);
+        if (selectedItem.documentType) {
+          formData.append("documentType", selectedItem.documentType);
+        }
 
-    // Mark item as resolved
-    setDiagnosisItems(prev =>
-      prev.map(item =>
-        item.id === selectedItem.id
-          ? { ...item, resolved: true }
-          : item
-      )
-    );
+        const response = await fetch("/api/documents", {
+          method: "POST",
+          body: formData,
+        });
 
-    setIsSaving(false);
-    setIsEnhanceModalOpen(false);
-    setSelectedItem(null);
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data.error || "문서 업로드에 실패했습니다");
+        }
+
+        toast.success("문서가 업로드되었습니다");
+      }
+      // 기업 정보 업데이트의 경우
+      else if (selectedItem.enhanceType === "input" && Object.keys(enhanceFormData).length > 0) {
+        const response = await fetch(`/api/companies/${companyId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(enhanceFormData),
+        });
+
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data.error || "정보 업데이트에 실패했습니다");
+        }
+
+        toast.success("정보가 업데이트되었습니다");
+      }
+
+      // UI에서 항목을 해결됨으로 표시
+      setDiagnosisItems((prev) =>
+        prev.map((item) =>
+          item.id === selectedItem.id ? { ...item, resolved: true } : item
+        )
+      );
+
+      setIsEnhanceModalOpen(false);
+      setSelectedItem(null);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "저장에 실패했습니다";
+      toast.error(message);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -347,6 +475,25 @@ export function Step2Diagnosis({
           </CardContent>
         </Card>
 
+        {/* 에러 메시지 */}
+        {error && (
+          <Card className="border-destructive/50 bg-destructive/5">
+            <CardContent className="py-4">
+              <div className="flex items-center gap-3">
+                <AlertCircle className="h-5 w-5 text-destructive shrink-0" />
+                <div className="flex-1">
+                  <p className="font-medium text-destructive">진단 실패</p>
+                  <p className="text-sm text-muted-foreground">{error}</p>
+                </div>
+                <Button variant="outline" size="sm" onClick={handleStartDiagnosis}>
+                  <RefreshCcw className="h-4 w-4 mr-2" />
+                  다시 시도
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Actions - 이전 단계 & 건너뛰기 */}
         <div className="flex justify-between items-center pt-4 border-t">
           <Button variant="outline" onClick={onPrevious}>
@@ -377,6 +524,20 @@ export function Step2Diagnosis({
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {fitScore !== null && (
+            <Badge
+              variant="outline"
+              className={
+                fitScore >= 70
+                  ? "bg-green-100 text-green-700 border-green-200"
+                  : fitScore >= 50
+                    ? "bg-yellow-100 text-yellow-700 border-yellow-200"
+                    : "bg-red-100 text-red-700 border-red-200"
+              }
+            >
+              적합도 {fitScore}점
+            </Badge>
+          )}
           {criticalCount > 0 && (
             <Badge variant="destructive">{criticalCount}개 필수</Badge>
           )}
