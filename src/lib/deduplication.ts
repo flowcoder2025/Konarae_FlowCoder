@@ -365,11 +365,52 @@ export async function processProjectDeduplication(
     }
   }
 
-  // 4. 매칭된 프로젝트가 그룹이 없는 경우 -> 새 그룹 생성
+  // 4. 매칭된 프로젝트가 그룹이 없는 경우 -> 기존 그룹 찾거나 새로 생성
   const reviewStatus =
     similarity >= SIMILARITY_THRESHOLDS.AUTO_MERGE
       ? "auto"
       : "pending_review";
+
+  // 먼저 동일한 normalizedName + projectYear를 가진 기존 그룹이 있는지 확인
+  const existingGroupByName = await prisma.projectGroup.findFirst({
+    where: {
+      normalizedName: normalized.normalizedName,
+      projectYear: normalized.projectYear,
+    },
+    include: {
+      canonicalProject: true,
+      projects: true,
+    },
+  });
+
+  // 기존 그룹이 있으면 해당 그룹에 추가
+  if (existingGroupByName) {
+    await prisma.supportProject.update({
+      where: { id: project.id },
+      data: {
+        groupId: existingGroupByName.id,
+        isCanonical: false,
+        normalizedName: normalized.normalizedName,
+        projectYear: normalized.projectYear,
+      },
+    });
+
+    // 소스 카운트 증가
+    await prisma.projectGroup.update({
+      where: { id: existingGroupByName.id },
+      data: {
+        sourceCount: { increment: 1 },
+      },
+    });
+
+    return {
+      action: "merged",
+      groupId: existingGroupByName.id,
+      isCanonical: false,
+      mergeConfidence: similarity,
+      duplicatesFound: candidates.length,
+    };
+  }
 
   // Canonical 선정
   const projectsToGroup = [project, bestMatch.project];
@@ -385,18 +426,60 @@ export async function processProjectDeduplication(
   const otherProjects = projectsToGroup.filter((p) => p.id !== canonicalId);
   const mergedData = mergeSupplementaryData(canonicalProject, otherProjects);
 
-  // 새 그룹 생성
-  const newGroup = await prisma.projectGroup.create({
-    data: {
-      normalizedName: normalized.normalizedName,
-      projectYear: normalized.projectYear,
-      canonicalProjectId: canonicalId,
-      mergeConfidence: similarity,
-      reviewStatus,
-      sourceCount: 2,
-      ...(Object.keys(mergedData).length > 0 ? { mergedData } : {}),
-    },
-  });
+  // 새 그룹 생성 (race condition 대비 try-catch)
+  let newGroup;
+  try {
+    newGroup = await prisma.projectGroup.create({
+      data: {
+        normalizedName: normalized.normalizedName,
+        projectYear: normalized.projectYear,
+        canonicalProjectId: canonicalId,
+        mergeConfidence: similarity,
+        reviewStatus,
+        sourceCount: 2,
+        ...(Object.keys(mergedData).length > 0 ? { mergedData } : {}),
+      },
+    });
+  } catch (error: unknown) {
+    // Unique constraint 에러 시 기존 그룹 사용
+    if (
+      error instanceof Error &&
+      error.message.includes("Unique constraint")
+    ) {
+      const existingGroup = await prisma.projectGroup.findFirst({
+        where: {
+          normalizedName: normalized.normalizedName,
+          projectYear: normalized.projectYear,
+        },
+      });
+
+      if (existingGroup) {
+        await prisma.supportProject.update({
+          where: { id: project.id },
+          data: {
+            groupId: existingGroup.id,
+            isCanonical: false,
+            normalizedName: normalized.normalizedName,
+            projectYear: normalized.projectYear,
+          },
+        });
+
+        await prisma.projectGroup.update({
+          where: { id: existingGroup.id },
+          data: { sourceCount: { increment: 1 } },
+        });
+
+        return {
+          action: "merged",
+          groupId: existingGroup.id,
+          isCanonical: false,
+          mergeConfidence: similarity,
+          duplicatesFound: candidates.length,
+        };
+      }
+    }
+    throw error;
+  }
 
   // 두 프로젝트 모두 업데이트
   await prisma.supportProject.update({
