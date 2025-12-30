@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth"
 import { prisma } from "@/lib/prisma"
 import type { Prisma } from "@prisma/client"
 import { checkCompanyPermission } from "@/lib/rebac"
+import { rateLimit } from "@/lib/cache"
 import { createLogger } from "@/lib/logger"
 import {
   consumeCredit,
@@ -41,6 +42,30 @@ export async function POST(
     }
 
     const userId = session.user.id
+
+    // Rate limiting: 마스터 프로필 생성은 분당 3회로 제한
+    const rateLimitResult = await rateLimit(
+      `ai-master-profile:${userId}`,
+      3,
+      60
+    )
+
+    if (!rateLimitResult.success) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "요청이 너무 많습니다. 잠시 후 다시 시도해주세요.",
+        },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(
+              Math.ceil((rateLimitResult.reset - Date.now()) / 1000)
+            ),
+          },
+        }
+      )
+    }
 
     // 권한 체크 (admin+ 필요)
     const hasPermission = await checkCompanyPermission(userId, companyId, "admin")

@@ -9,6 +9,7 @@ import { auth } from "@/lib/auth"
 import { runDiagnosis, getUserDiagnoses } from "@/lib/diagnosis"
 import { hasSufficientCredit, getInsufficientCreditMessage, getCreditBalance } from "@/lib/credits"
 import { CREDIT_COSTS } from "@/types/diagnosis"
+import { rateLimit } from "@/lib/cache"
 import { createLogger } from "@/lib/logger"
 
 const logger = createLogger({ api: "diagnosis" })
@@ -56,6 +57,31 @@ export async function POST(request: NextRequest) {
 
     if (!session?.user?.id) {
       return NextResponse.json({ error: "인증이 필요합니다" }, { status: 401 })
+    }
+
+    // Rate limiting: AI 진단은 비용이 높으므로 분당 5회로 제한
+    const rateLimitResult = await rateLimit(
+      `ai-diagnosis:${session.user.id}`,
+      5,
+      60
+    )
+
+    if (!rateLimitResult.success) {
+      return NextResponse.json(
+        {
+          error: "요청이 너무 많습니다. 잠시 후 다시 시도해주세요.",
+          retryAfter: Math.ceil((rateLimitResult.reset - Date.now()) / 1000),
+        },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(
+              Math.ceil((rateLimitResult.reset - Date.now()) / 1000)
+            ),
+            "X-RateLimit-Remaining": String(rateLimitResult.remaining),
+          },
+        }
+      )
     }
 
     const body = await request.json()

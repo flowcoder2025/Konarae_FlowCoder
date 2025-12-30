@@ -75,7 +75,7 @@ export async function ensureBucketExists(
             "application/vnd.hancom.hwp",
             "application/vnd.hancom.hwpx",
             "application/zip", // HWPX는 ZIP 기반
-            "application/octet-stream", // 일반 바이너리
+            // application/octet-stream 제거 - 보안 위험: 모든 바이너리 파일 허용됨
           ],
         }
       );
@@ -279,6 +279,7 @@ export async function deleteProjectFiles(projectId: string): Promise<boolean> {
 
 /**
  * 파일 타입에 따른 MIME 타입 반환
+ * 보안: unknown 타입은 허용하지 않음
  */
 function getMimeType(fileType: FileType): string {
   switch (fileType) {
@@ -288,8 +289,10 @@ function getMimeType(fileType: FileType): string {
       return "application/x-hwp";
     case "hwpx":
       return "application/vnd.hancom.hwpx";
+    case "unknown":
+      throw new Error("Unknown file type is not allowed for security reasons");
     default:
-      return "application/octet-stream";
+      throw new Error(`Unsupported file type: ${fileType}`);
   }
 }
 
@@ -514,6 +517,7 @@ export async function getEvaluationFileSignedUrl(
 
 /**
  * 파일 타입에 따른 MIME 타입 반환 (내부 함수 래퍼)
+ * 보안: unknown 타입은 허용하지 않음
  */
 function getMimeTypeFromFileType(fileType: FileType): string {
   switch (fileType) {
@@ -523,7 +527,9 @@ function getMimeTypeFromFileType(fileType: FileType): string {
       return "application/x-hwp";
     case "hwpx":
       return "application/vnd.hancom.hwpx";
+    case "unknown":
+      throw new Error("Unknown file type is not allowed for security reasons");
     default:
-      return "application/octet-stream";
+      throw new Error(`Unsupported file type: ${fileType}`);
   }
 }

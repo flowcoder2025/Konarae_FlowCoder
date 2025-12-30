@@ -25,6 +25,86 @@ export interface FileValidationResult {
 }
 
 /**
+ * Magic Byte 시그니처 정의
+ * 파일의 실제 내용을 검증하여 위변조 방지
+ */
+const MAGIC_BYTES: Record<string, number[][]> = {
+  // PDF: %PDF
+  "application/pdf": [[0x25, 0x50, 0x44, 0x46]],
+  // JPEG: FFD8FF
+  "image/jpeg": [[0xff, 0xd8, 0xff]],
+  // PNG: 89 50 4E 47 0D 0A 1A 0A
+  "image/png": [[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]],
+  // WEBP: RIFF....WEBP
+  "image/webp": [[0x52, 0x49, 0x46, 0x46]], // RIFF (WEBP 확인은 offset 8에서 추가 검증)
+};
+
+/**
+ * Magic byte 검증
+ * 파일의 실제 바이트 시그니처를 확인하여 MIME 타입 위변조 방지
+ */
+async function validateMagicBytes(file: File): Promise<FileValidationResult> {
+  try {
+    // 파일의 처음 16바이트 읽기 (대부분의 magic bytes는 8바이트 이내)
+    const buffer = await file.slice(0, 16).arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+
+    const expectedSignatures = MAGIC_BYTES[file.type];
+    if (!expectedSignatures) {
+      // Magic byte 정의가 없는 MIME 타입은 허용하지 않음
+      return {
+        valid: false,
+        error: `지원되지 않는 파일 형식입니다.`,
+      };
+    }
+
+    // 시그니처 검증
+    const isValidSignature = expectedSignatures.some((signature) => {
+      for (let i = 0; i < signature.length; i++) {
+        if (bytes[i] !== signature[i]) {
+          return false;
+        }
+      }
+      return true;
+    });
+
+    if (!isValidSignature) {
+      logger.warn("Magic byte mismatch detected", {
+        claimedType: file.type,
+        fileName: file.name,
+        actualBytes: Array.from(bytes.slice(0, 8))
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join(" "),
+      });
+      return {
+        valid: false,
+        error: `파일 내용이 확장자와 일치하지 않습니다. 올바른 파일을 업로드해주세요.`,
+      };
+    }
+
+    // WEBP 추가 검증: offset 8에서 "WEBP" 시그니처 확인
+    if (file.type === "image/webp") {
+      const webpSignature = [0x57, 0x45, 0x42, 0x50]; // WEBP
+      const isWebp = webpSignature.every((b, i) => bytes[8 + i] === b);
+      if (!isWebp) {
+        return {
+          valid: false,
+          error: `유효하지 않은 WEBP 파일입니다.`,
+        };
+      }
+    }
+
+    return { valid: true };
+  } catch (error) {
+    logger.error("Magic byte validation error", { error });
+    return {
+      valid: false,
+      error: `파일 검증 중 오류가 발생했습니다.`,
+    };
+  }
+}
+
+/**
  * 파일 유효성 검증
  * - 파일 타입 (PDF, 이미지만 허용)
  * - 파일 크기 (10MB 이하)
@@ -58,6 +138,29 @@ export function validateFile(file: File): FileValidationResult {
   return { valid: true };
 }
 
+/**
+ * 파일 유효성 검증 (비동기 버전 - Magic byte 포함)
+ * - MIME 타입 검증
+ * - 파일 확장자 검증
+ * - 파일 크기 검증
+ * - Magic byte 검증 (파일 내용 실제 확인)
+ */
+export async function validateFileAsync(file: File): Promise<FileValidationResult> {
+  // 기본 검증 (동기)
+  const basicValidation = validateFile(file);
+  if (!basicValidation.valid) {
+    return basicValidation;
+  }
+
+  // Magic byte 검증 (비동기)
+  const magicByteValidation = await validateMagicBytes(file);
+  if (!magicByteValidation.valid) {
+    return magicByteValidation;
+  }
+
+  return { valid: true };
+}
+
 // ============================================
 // Supabase Storage 업로드
 // ============================================
@@ -86,8 +189,8 @@ export async function uploadToStorage({
   documentType,
   file,
 }: UploadOptions): Promise<UploadResult> {
-  // 파일 검증
-  const validation = validateFile(file);
+  // 파일 검증 (Magic byte 포함)
+  const validation = await validateFileAsync(file);
   if (!validation.valid) {
     return {
       success: false,

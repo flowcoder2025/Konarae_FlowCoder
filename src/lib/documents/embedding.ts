@@ -268,31 +268,39 @@ export async function searchSimilarDocuments(
   }>
 > {
   try {
-    // pgvector 코사인 유사도 검색
+    // pgvector 코사인 유사도 검색 - 파라미터화된 쿼리 사용
     const embeddingStr = `[${queryEmbedding.join(",")}]`;
 
-    const query = `
-      SELECT
-        de.documentId,
-        de.content,
-        de.metadata,
-        1 - (de.embedding <=> $1::vector) as similarity
-      FROM "CompanyDocumentEmbedding" de
-      INNER JOIN "CompanyDocument" cd ON cd.id = de.documentId
-      WHERE cd."deletedAt" IS NULL
-        ${companyId ? `AND cd."companyId" = $2` : ""}
-      ORDER BY de.embedding <=> $1::vector
-      LIMIT $${companyId ? "3" : "2"}
-    `;
-
-    const params = companyId
-      ? [embeddingStr, companyId, limit]
-      : [embeddingStr, limit];
-
-    const results = await prisma.$queryRawUnsafe<any[]>(query, ...params);
+    // companyId 유무에 따라 별도 쿼리 실행 (SQL Injection 방지)
+    const results = companyId
+      ? await prisma.$queryRaw<any[]>`
+          SELECT
+            de."documentId",
+            de.content,
+            de.metadata,
+            1 - (de.embedding <=> ${embeddingStr}::vector) as similarity
+          FROM "CompanyDocumentEmbedding" de
+          INNER JOIN "CompanyDocument" cd ON cd.id = de."documentId"
+          WHERE cd."deletedAt" IS NULL
+            AND cd."companyId" = ${companyId}
+          ORDER BY de.embedding <=> ${embeddingStr}::vector
+          LIMIT ${limit}
+        `
+      : await prisma.$queryRaw<any[]>`
+          SELECT
+            de."documentId",
+            de.content,
+            de.metadata,
+            1 - (de.embedding <=> ${embeddingStr}::vector) as similarity
+          FROM "CompanyDocumentEmbedding" de
+          INNER JOIN "CompanyDocument" cd ON cd.id = de."documentId"
+          WHERE cd."deletedAt" IS NULL
+          ORDER BY de.embedding <=> ${embeddingStr}::vector
+          LIMIT ${limit}
+        `;
 
     return results.map((r) => ({
-      documentId: r.documentid,
+      documentId: r.documentId,
       content: r.content,
       similarity: parseFloat(r.similarity),
       metadata: r.metadata,

@@ -15,7 +15,7 @@ function initializeMermaid() {
   mermaid.initialize({
     startOnLoad: false,
     theme: "default",
-    securityLevel: "loose",
+    securityLevel: "strict", // XSS 방지: HTML 태그 인코딩, 클릭 이벤트 비활성화
     fontFamily: "inherit",
   });
 

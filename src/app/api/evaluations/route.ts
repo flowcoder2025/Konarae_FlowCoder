@@ -9,6 +9,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { evaluateBusinessPlan } from "@/lib/evaluation-engine";
 import { sendEvaluationCompleteNotification } from "@/lib/notifications";
+import { rateLimit } from "@/lib/cache";
 import { z } from "zod";
 import { createLogger } from "@/lib/logger";
 
@@ -77,6 +78,32 @@ export async function POST(req: NextRequest) {
     const session = await auth();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Rate limiting: AI 평가는 비용이 높으므로 분당 5회로 제한
+    const rateLimitResult = await rateLimit(
+      `ai-evaluation:${session.user.id}`,
+      5,
+      60
+    );
+
+    if (!rateLimitResult.success) {
+      return NextResponse.json(
+        {
+          error: "Too many requests",
+          message: "AI 평가 요청이 너무 많습니다. 잠시 후 다시 시도해주세요.",
+          retryAfter: Math.ceil((rateLimitResult.reset - Date.now()) / 1000),
+        },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(
+              Math.ceil((rateLimitResult.reset - Date.now()) / 1000)
+            ),
+            "X-RateLimit-Remaining": String(rateLimitResult.remaining),
+          },
+        }
+      );
     }
 
     const body = await req.json();
