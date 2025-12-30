@@ -3,11 +3,11 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { EmptyState } from "@/components/ui/empty-state";
 import {
   ArrowRight,
   Calendar,
   TrendingUp,
-  FolderOpen,
   Sparkles,
   Building,
   Coins,
@@ -57,20 +57,19 @@ export function MatchingPreview({ recommendations, hasCompany }: MatchingPreview
 
       {recommendations.length === 0 ? (
         <Card>
-          <CardContent className="py-12 text-center">
-            <FolderOpen className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-            <h3 className="font-semibold mb-2">추천 지원사업이 없습니다</h3>
-            <p className="text-sm text-muted-foreground mb-4">
-              기업 정보를 보완하면 더 정확한 추천을 받을 수 있어요
-            </p>
-            <div className="flex justify-center gap-2">
-              <Button variant="outline" asChild>
-                <Link href="/company">기업 정보 보완</Link>
-              </Button>
-              <Button asChild>
-                <Link href="/projects">지원사업 둘러보기</Link>
-              </Button>
-            </div>
+          <CardContent className="p-0">
+            <EmptyState
+              variant="matching"
+              action={{
+                label: "지원사업 둘러보기",
+                href: "/projects",
+              }}
+              secondaryAction={{
+                label: "기업 정보 보완",
+                href: "/company",
+                variant: "outline",
+              }}
+            />
           </CardContent>
         </Card>
       ) : (

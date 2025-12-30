@@ -54,6 +54,12 @@ export {
 export { IconBox, iconBoxVariants } from "./icon-box"
 
 // ============================================
+// Feedback Components
+// ============================================
+export { EmptyState, InlineEmptyState } from "./empty-state"
+export type { EmptyStateVariant } from "./empty-state"
+
+// ============================================
 // Type Exports
 // ============================================
 export type { VariantProps } from "class-variance-authority"

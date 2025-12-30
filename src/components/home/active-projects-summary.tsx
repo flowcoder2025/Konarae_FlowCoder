@@ -1,10 +1,10 @@
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { EmptyState } from "@/components/ui/empty-state";
 import {
   ArrowRight,
   Clock,
-  CheckCircle2,
   Building2,
   Calendar,
   ChevronRight,
@@ -36,16 +36,33 @@ const STATUS_STYLES: Record<string, { bg: string; text: string; label: string }>
 };
 
 export function ActiveProjectsSummary({ projects }: ActiveProjectsSummaryProps) {
-  if (projects.length === 0) {
-    return null;
-  }
-
   const activeProjects = projects.filter(
     (p) => p.status !== "SUBMITTED" && p.status !== "ARCHIVED"
   );
 
+  // 프로젝트가 없을 때 Empty State 표시
   if (activeProjects.length === 0) {
-    return null;
+    return (
+      <section className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-semibold flex items-center gap-2">
+            <Clock className="h-5 w-5 text-primary" />
+            진행 중인 프로젝트
+          </h2>
+        </div>
+        <Card>
+          <CardContent className="p-0">
+            <EmptyState
+              variant="projects"
+              action={{
+                label: "지원사업 찾기",
+                href: "/projects",
+              }}
+            />
+          </CardContent>
+        </Card>
+      </section>
+    );
   }
 
   return (

@@ -16,6 +16,7 @@ import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { UserMenu } from "./user-menu";
 import { CreditBalance } from "@/components/credits/credit-balance";
 import { cn } from "@/lib/utils";
@@ -170,8 +171,11 @@ export function Navbar({ user, isAdmin = false }: NavbarProps) {
             })}
         </nav>
 
-        {/* Right side: User Menu */}
+        {/* Right side: Theme Toggle + User Menu */}
         <div className="ml-auto flex items-center gap-2">
+          {/* Theme Toggle */}
+          <ThemeToggle />
+
           {/* Desktop: UserMenu 드롭다운 */}
           <div className="hidden md:block">
             <UserMenu user={user} isAdmin={isAdmin} />
