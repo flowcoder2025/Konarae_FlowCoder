@@ -27,16 +27,16 @@ model User {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
-  accounts            Account[]
-  sessions            Session[]
-  companies           CompanyMember[]
-  businessPlans       BusinessPlan[]
-  matchingResults     MatchingResult[]
-  matchingPreferences MatchingPreference[]
-  evaluations         Evaluation[]
-  notifications       Notification[]
-  notificationSetting NotificationSetting?
-  uploadedDocuments   CompanyDocument[]
+  accounts                Account[]
+  sessions                Session[]
+  companies               CompanyMember[]
+  businessPlans           BusinessPlan[]
+  matchingResults         MatchingResult[]
+  matchingPreferences     MatchingPreference[]
+  evaluations             Evaluation[]
+  notifications           Notification[]
+  notificationSetting     NotificationSetting?
+  uploadedDocuments       CompanyDocument[]
   credit                  Credit?
   gapDiagnoses            GapDiagnosis[]
   userProjects            UserProject[]
@@ -269,6 +269,35 @@ model CompanyAchievement {
 // Support Project Tables
 // ============================================
 
+/// 프로젝트 그룹 - 중복 지원사업 통합 관리
+/// 같은 사업이 여러 출처에서 크롤링될 때 하나의 그룹으로 묶음
+model ProjectGroup {
+  id                 String @id @default(cuid())
+  normalizedName     String // 정규화된 사업명 (연도 제외)
+  projectYear        Int? // 사업 연도 (2024, 2025 등)
+  canonicalProjectId String @unique // 대표 프로젝트 ID
+
+  // 그룹핑 메타데이터
+  mergeConfidence Float  @default(1.0) // 병합 신뢰도 (0.0-1.0)
+  reviewStatus    String @default("auto") // auto | pending_review | confirmed | rejected
+  sourceCount     Int    @default(1) // 출처 개수 캐시
+
+  // 병합된 보완 정보 (다른 출처에서 가져온 추가 정보)
+  mergedData Json? // { description, eligibility, attachmentUrls, ... }
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  canonicalProject SupportProject   @relation("CanonicalProject", fields: [canonicalProjectId], references: [id], onDelete: Cascade)
+  projects         SupportProject[] @relation("GroupedProjects")
+
+  @@unique([normalizedName, projectYear]) // 같은 이름+연도는 하나의 그룹
+  @@index([normalizedName])
+  @@index([projectYear])
+  @@index([reviewStatus])
+  @@map("project_groups")
+}
+
 model SupportProject {
   id           String  @id @default(cuid())
   externalId   String? @unique
@@ -277,8 +306,14 @@ model SupportProject {
   category     String
   subCategory  String?
   target       String
-  region       String    // 광역시·도 (17개 + 전국) - UI 표시용
-  subRegion    String?   // 시·군·구 (검색용 메타데이터)
+  region       String // 광역시·도 (17개 + 전국) - UI 표시용
+  subRegion    String? // 시·군·구 (검색용 메타데이터)
+
+  // 중복 관리 (NEW)
+  groupId        String? // ProjectGroup 소속
+  isCanonical    Boolean @default(false) // 대표 프로젝트 여부
+  normalizedName String? // 정규화된 이름 (연도 제외, 검색/비교용)
+  projectYear    Int? // 사업 연도 추출값
 
   // Amount
   amountMin         BigInt?
@@ -324,6 +359,10 @@ model SupportProject {
   // Embedding queue flag
   needsEmbedding Boolean @default(true) // Flag for async embedding generation
 
+  // Relations
+  group        ProjectGroup? @relation("GroupedProjects", fields: [groupId], references: [id])
+  canonicalFor ProjectGroup? @relation("CanonicalProject")
+
   matchingResults MatchingResult[]
   businessPlans   BusinessPlan[]
   attachments     ProjectAttachment[]
@@ -335,6 +374,10 @@ model SupportProject {
   @@index([subRegion])
   @@index([status])
   @@index([deadline])
+  @@index([groupId])
+  @@index([normalizedName])
+  @@index([projectYear])
+  @@index([isCanonical])
 }
 
 model ProjectAttachment {

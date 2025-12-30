@@ -42,12 +42,14 @@ export async function GET(req: NextRequest) {
       new Set(searchResults.map((r) => r.sourceId))
     );
 
-    // Fetch full project details
+    // Fetch full project details (canonical only)
     const projects = await prisma.supportProject.findMany({
       where: {
         id: { in: projectIds },
         deletedAt: null,
         status: "active",
+        // 중복 필터: canonical 또는 미그룹화 프로젝트만
+        OR: [{ isCanonical: true }, { groupId: null }],
       },
       select: {
         id: true,

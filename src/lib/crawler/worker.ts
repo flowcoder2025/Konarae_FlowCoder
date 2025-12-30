@@ -18,6 +18,8 @@ import {
 } from "@/lib/supabase-storage";
 import { validateProject } from "@/lib/crawler/validators";
 import { createLogger } from "@/lib/logger";
+import { normalizeProject } from "@/lib/project-normalize";
+import { processProjectDeduplication } from "@/lib/deduplication";
 
 const logger = createLogger({ lib: "crawler-worker" });
 
@@ -2442,6 +2444,9 @@ async function saveProjects(
 
       let projectId: string;
 
+      // 정규화 필드 추출
+      const normalized = normalizeProject(project.name);
+
       if (existing) {
         // Update existing project
         await prisma.supportProject.update({
@@ -2451,24 +2456,49 @@ async function saveProjects(
             crawledAt: new Date(),
             updatedAt: new Date(),
             needsEmbedding: true, // Re-queue for embedding update
+            // 정규화 필드 업데이트
+            normalizedName: normalized.normalizedName,
+            projectYear: normalized.projectYear,
           },
         });
         projectId = existing.id;
         updatedCount++;
         logger.debug(`Updated project: ${project.name}`);
       } else {
-        // Create new project
+        // Create new project with normalized fields
         const created = await prisma.supportProject.create({
           data: {
             ...projectData,
             crawledAt: new Date(),
             status: "active",
             needsEmbedding: true, // Queue for async embedding generation
+            // 정규화 필드 추가
+            normalizedName: normalized.normalizedName,
+            projectYear: normalized.projectYear,
           },
         });
         projectId = created.id;
         newCount++;
         logger.debug(`Created project: ${project.name}`);
+
+        // 중복 감지 및 그룹 처리 (새 프로젝트만)
+        try {
+          const dedupeResult = await processProjectDeduplication(created);
+          if (dedupeResult.action === "merged") {
+            logger.info(
+              `Project merged into group ${dedupeResult.groupId} (confidence: ${(dedupeResult.mergeConfidence * 100).toFixed(1)}%, duplicates: ${dedupeResult.duplicatesFound})`
+            );
+          } else if (dedupeResult.action === "review") {
+            logger.info(
+              `Project flagged for review in group ${dedupeResult.groupId} (confidence: ${(dedupeResult.mergeConfidence * 100).toFixed(1)}%)`
+            );
+          } else {
+            logger.debug(`New project group created: ${dedupeResult.groupId}`);
+          }
+        } catch (dedupeError) {
+          // 중복 감지 실패해도 프로젝트 저장은 유지
+          logger.error("Deduplication processing failed", { error: dedupeError });
+        }
       }
 
       // Process and save attachments (NEW)
