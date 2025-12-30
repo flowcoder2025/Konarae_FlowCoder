@@ -1,0 +1,115 @@
+/**
+ * Footer Component
+ *
+ * 전역 하단 푸터
+ * - 로고/브랜드
+ * - 주요 링크
+ * - 저작권 정보
+ */
+
+import Link from "next/link";
+import Image from "next/image";
+
+const footerLinks = {
+  service: [
+    { label: "서비스 소개", href: "/about" },
+    { label: "이용 가이드", href: "/guide" },
+    { label: "자주 묻는 질문", href: "/faq" },
+  ],
+  legal: [
+    { label: "이용약관", href: "/terms" },
+    { label: "개인정보처리방침", href: "/privacy" },
+  ],
+  support: [
+    { label: "고객센터", href: "/support" },
+    { label: "제휴 문의", href: "/partnership" },
+  ],
+};
+
+export function Footer() {
+  const currentYear = new Date().getFullYear();
+
+  return (
+    <footer className="border-t bg-muted/30">
+      <div className="container mx-auto px-4 md:px-6 lg:px-8 max-w-7xl py-12">
+        {/* 상단: 로고 + 링크 */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
+          {/* 로고 & 설명 */}
+          <div className="md:col-span-1">
+            <Link href="/home" className="flex items-center gap-2 mb-4">
+              <Image
+                src="/Flow_icon.png"
+                alt="FlowMate"
+                width={32}
+                height={32}
+                className="rounded-lg"
+              />
+              <span className="font-semibold text-lg">FlowMate</span>
+            </Link>
+            <p className="text-sm text-muted-foreground">
+              정부 지원사업 매칭의 새로운 기준
+            </p>
+          </div>
+
+          {/* 서비스 링크 */}
+          <div>
+            <h3 className="font-medium mb-3 text-sm">서비스</h3>
+            <ul className="space-y-2">
+              {footerLinks.service.map((link) => (
+                <li key={link.href}>
+                  <Link
+                    href={link.href}
+                    className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    {link.label}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          {/* 법적 링크 */}
+          <div>
+            <h3 className="font-medium mb-3 text-sm">법적 고지</h3>
+            <ul className="space-y-2">
+              {footerLinks.legal.map((link) => (
+                <li key={link.href}>
+                  <Link
+                    href={link.href}
+                    className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    {link.label}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          {/* 지원 링크 */}
+          <div>
+            <h3 className="font-medium mb-3 text-sm">고객 지원</h3>
+            <ul className="space-y-2">
+              {footerLinks.support.map((link) => (
+                <li key={link.href}>
+                  <Link
+                    href={link.href}
+                    className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    {link.label}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+
+        {/* 하단: 저작권 */}
+        <div className="border-t pt-8">
+          <p className="text-sm text-muted-foreground text-center">
+            © {currentYear} FlowMate. All rights reserved.
+          </p>
+        </div>
+      </div>
+    </footer>
+  );
+}

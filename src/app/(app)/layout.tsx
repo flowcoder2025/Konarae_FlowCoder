@@ -8,7 +8,7 @@
 
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
-import { Navbar } from "@/components/layout";
+import { Navbar, Footer } from "@/components/layout";
 
 export default async function AppLayout({
   children,
@@ -31,6 +31,7 @@ export default async function AppLayout({
         }}
       />
       <main className="flex-1 px-4 md:px-6 lg:px-8">{children}</main>
+      <Footer />
     </div>
   );
 }

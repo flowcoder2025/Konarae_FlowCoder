@@ -123,8 +123,17 @@ async function getHomeData(userId: string): Promise<HomeData> {
   const hasCompany = userCompanies.length > 0;
 
   // Build recommendations from matching results or upcoming projects
-  const recommendations = matchingResults.length > 0
-    ? matchingResults.map((m) => ({
+  // 중복 프로젝트 제거: 동일 project.id가 여러 번 매칭된 경우 점수가 가장 높은 것만 유지
+  const uniqueMatchingResults = matchingResults.reduce((acc, m) => {
+    const existing = acc.find((item) => item.project.id === m.project.id);
+    if (!existing || m.totalScore > existing.totalScore) {
+      return [...acc.filter((item) => item.project.id !== m.project.id), m];
+    }
+    return acc;
+  }, [] as typeof matchingResults);
+
+  const recommendations = uniqueMatchingResults.length > 0
+    ? uniqueMatchingResults.map((m) => ({
         id: m.project.id,
         title: m.project.name,
         agency: formatOrganization(m.project.organization, m.project.sourceUrl),
