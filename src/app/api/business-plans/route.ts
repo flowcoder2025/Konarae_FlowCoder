@@ -13,14 +13,8 @@ import { createLogger } from "@/lib/logger";
 
 const logger = createLogger({ api: "business-plans" });
 
-// 기본 섹션 정의 (빈 템플릿에도 자동 생성)
-const DEFAULT_SECTIONS = [
-  { sectionIndex: 0, title: "기업 개요", content: "" },
-  { sectionIndex: 1, title: "사업 개요", content: "" },
-  { sectionIndex: 2, title: "수행 계획", content: "" },
-  { sectionIndex: 3, title: "수행 역량", content: "" },
-  { sectionIndex: 4, title: "사업 예산", content: "" },
-];
+// 참고: 기본 섹션은 /api/business-plans/[id]/sections API에서
+// mode: "template"으로 초기화 시 기업 프로필 + 사용자 입력 데이터와 함께 생성됨
 
 // 구조화된 입력 스키마
 const milestoneSchema = z.object({
@@ -159,16 +153,9 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      // 기본 섹션 자동 생성 (빈 템플릿도 섹션 구조 포함)
-      await tx.businessPlanSection.createMany({
-        data: DEFAULT_SECTIONS.map((section) => ({
-          businessPlanId: plan.id,
-          sectionIndex: section.sectionIndex,
-          title: section.title,
-          content: section.content,
-          isAiGenerated: false,
-        })),
-      });
+      // 참고: 섹션은 사용자가 "빈 템플릿으로 시작" 클릭 시
+      // /api/business-plans/[id]/sections (mode: "template")에서 생성됨
+      // 이때 기업 프로필 + 사용자 입력 데이터가 자동으로 섹션에 채워짐
 
       // Create reference plan relations if provided
       if (validatedData.referenceBusinessPlanIds?.length) {
