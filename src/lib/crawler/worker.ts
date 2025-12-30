@@ -50,6 +50,129 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * Parse Korean currency text to number
+ * Handles formats like "4억원", "500만원", "3천만원", "1억 5천만원", "최대 400만원"
+ *
+ * @param text Korean currency text
+ * @returns Parsed number in KRW, or null if parsing fails
+ */
+function parseKoreanAmount(text: string | undefined | null): number | null {
+  if (!text) return null;
+
+  // Clean the text: remove spaces, commas, and extract numbers
+  const cleanText = text.replace(/[,\s]/g, '');
+
+  // Try to extract numeric value with Korean units
+  // Pattern: numbers + optional units (억, 천만, 백만, 만, 원)
+  // Examples: "4억", "500만원", "3천만원", "1억5천만원", "4억원", "최대 400만원"
+
+  let total = 0;
+  let matched = false;
+
+  // Pattern for 억 (100 million)
+  const eokMatch = cleanText.match(/(\d+(?:\.\d+)?)\s*억/);
+  if (eokMatch) {
+    total += parseFloat(eokMatch[1]) * 100000000;
+    matched = true;
+  }
+
+  // Pattern for 천만 (10 million)
+  const cheonmanMatch = cleanText.match(/(\d+(?:\.\d+)?)\s*천만/);
+  if (cheonmanMatch) {
+    total += parseFloat(cheonmanMatch[1]) * 10000000;
+    matched = true;
+  }
+
+  // Pattern for 백만 (1 million)
+  const baekmanMatch = cleanText.match(/(\d+(?:\.\d+)?)\s*백만/);
+  if (baekmanMatch) {
+    total += parseFloat(baekmanMatch[1]) * 1000000;
+    matched = true;
+  }
+
+  // Pattern for 만 (10 thousand) - but not 천만 or 백만
+  const manMatch = cleanText.match(/(\d+(?:\.\d+)?)\s*만(?![\u4E00-\u9FA5])/);
+  if (manMatch && !cheonmanMatch && !baekmanMatch) {
+    total += parseFloat(manMatch[1]) * 10000;
+    matched = true;
+  }
+
+  // If no Korean units matched, try to find raw number
+  if (!matched) {
+    // Try to find a number with optional "원" suffix
+    const rawMatch = cleanText.match(/(\d{1,3}(?:,?\d{3})*(?:\.\d+)?)\s*원?$/);
+    if (rawMatch) {
+      const numStr = rawMatch[1].replace(/,/g, '');
+      const num = parseFloat(numStr);
+      if (!isNaN(num) && num > 0) {
+        total = num;
+        matched = true;
+      }
+    }
+  }
+
+  return matched && total > 0 ? total : null;
+}
+
+/**
+ * Extract amount range from text
+ * Handles patterns like:
+ * - "최대 4억원" → { min: null, max: 400000000 }
+ * - "500만원 ~ 1억원" → { min: 5000000, max: 100000000 }
+ * - "최소 1천만원 ~ 최대 5천만원" → { min: 10000000, max: 50000000 }
+ * - "업체당 500만원 이내" → { min: null, max: 5000000 }
+ *
+ * @param text Amount description text
+ * @returns { amountMin, amountMax } parsed values
+ */
+function extractAmountRange(text: string | undefined | null): { amountMin: number | null; amountMax: number | null } {
+  if (!text) return { amountMin: null, amountMax: null };
+
+  const cleanText = text.replace(/[,\s]+/g, ' ').trim();
+
+  // Pattern 1: Range with separator (~ or -)
+  // e.g., "500만원 ~ 1억원", "1천만원-5천만원"
+  const rangeMatch = cleanText.match(/(\d+(?:\.\d+)?\s*(?:억|천만|백만|만)?원?)\s*[~\-～]\s*(\d+(?:\.\d+)?\s*(?:억|천만|백만|만)?원?)/);
+  if (rangeMatch) {
+    return {
+      amountMin: parseKoreanAmount(rangeMatch[1]),
+      amountMax: parseKoreanAmount(rangeMatch[2]),
+    };
+  }
+
+  // Pattern 2: "최대 X" or "X 이내" or "X까지"
+  const maxOnlyMatch = cleanText.match(/(?:최대|이내|까지|한도)\s*(\d+(?:\.\d+)?\s*(?:억|천만|백만|만)?원?)|(\d+(?:\.\d+)?\s*(?:억|천만|백만|만)?원?)\s*(?:이내|까지|한도)/);
+  if (maxOnlyMatch) {
+    const amountText = maxOnlyMatch[1] || maxOnlyMatch[2];
+    return {
+      amountMin: null,
+      amountMax: parseKoreanAmount(amountText),
+    };
+  }
+
+  // Pattern 3: "최소 X" or "X 이상"
+  const minOnlyMatch = cleanText.match(/(?:최소|이상)\s*(\d+(?:\.\d+)?\s*(?:억|천만|백만|만)?원?)|(\d+(?:\.\d+)?\s*(?:억|천만|백만|만)?원?)\s*(?:이상)/);
+  if (minOnlyMatch) {
+    const amountText = minOnlyMatch[1] || minOnlyMatch[2];
+    return {
+      amountMin: parseKoreanAmount(amountText),
+      amountMax: null,
+    };
+  }
+
+  // Pattern 4: Single amount - treat as max
+  const singleAmount = parseKoreanAmount(cleanText);
+  if (singleAmount) {
+    return {
+      amountMin: null,
+      amountMax: singleAmount,
+    };
+  }
+
+  return { amountMin: null, amountMax: null };
+}
+
+/**
  * Fetch with retry and exponential backoff
  * Handles transient network errors common in serverless environments
  */
@@ -1031,6 +1154,11 @@ async function extractFileText(buffer: Buffer): Promise<string | null> {
 
 /**
  * Step 4: Analyze document with Gemini AI
+ *
+ * 지원금액 추출 전략:
+ * 1. Gemini에게 amountMin, amountMax 숫자 추출 요청
+ * 2. AI가 숫자로 반환하지 않으면 fundingSummary에서 폴백 파싱
+ * 3. 최종적으로 amountDescription에서 폴백 파싱
  */
 async function analyzeWithGemini(text: string): Promise<{
   summary?: string;
@@ -1040,6 +1168,8 @@ async function analyzeWithGemini(text: string): Promise<{
   evaluationCriteria?: string;
   fundingSummary?: string;
   amountDescription?: string;
+  amountMin?: number;
+  amountMax?: number;
   deadline?: string;
   startDate?: string;
   endDate?: string;
@@ -1067,9 +1197,17 @@ async function analyzeWithGemini(text: string): Promise<{
 5. evaluationCriteria: 평가 기준 (있는 경우)
 6. fundingSummary: 지원 금액을 한 줄로 간결하게 요약 (예: "최대 400만원", "업체당 500만원 이내", "최대 1억원 (전액 무상)", "70% 보조금 지원"). 반드시 10~30자 이내로 핵심만 작성.
 7. amountDescription: 지원 금액에 대한 상세 설명. 세부 항목별 금액, 지원 조건, 자부담 비율 등 상세 내용을 포함.
-8. deadline: 신청 마감일 (YYYY-MM-DD 형식, 있는 경우)
-9. startDate: 사업/접수 시작일 (YYYY-MM-DD 형식, 있는 경우)
-10. endDate: 사업/접수 종료일 (YYYY-MM-DD 형식, 있는 경우)
+8. amountMin: 최소 지원 금액 (원화 숫자만, 예: 5000000). 범위가 있는 경우 최소값, 없으면 생략.
+9. amountMax: 최대 지원 금액 (원화 숫자만, 예: 100000000). "최대 1억원"이면 100000000, "500만원"이면 5000000.
+10. deadline: 신청 마감일 (YYYY-MM-DD 형식, 있는 경우)
+11. startDate: 사업/접수 시작일 (YYYY-MM-DD 형식, 있는 경우)
+12. endDate: 사업/접수 종료일 (YYYY-MM-DD 형식, 있는 경우)
+
+중요: amountMin, amountMax는 반드시 숫자(number)로 반환하세요. 문자열이 아닌 순수 숫자입니다.
+- "최대 4억원" → amountMax: 400000000
+- "500만원 ~ 1억원" → amountMin: 5000000, amountMax: 100000000
+- "업체당 3천만원 이내" → amountMax: 30000000
+- "최소 1천만원" → amountMin: 10000000
 
 응답은 반드시 다음 JSON 형식으로만 작성해주세요:
 {
@@ -1080,12 +1218,14 @@ async function analyzeWithGemini(text: string): Promise<{
   "evaluationCriteria": "...",
   "fundingSummary": "...",
   "amountDescription": "...",
+  "amountMin": 5000000,
+  "amountMax": 100000000,
   "deadline": "2025-12-31",
   "startDate": "2025-01-01",
   "endDate": "2025-12-31"
 }
 
-정보가 없는 항목은 생략하세요. 날짜는 반드시 YYYY-MM-DD 형식으로 작성하세요.
+정보가 없는 항목은 생략하세요. 날짜는 반드시 YYYY-MM-DD 형식으로, 금액은 반드시 숫자로 작성하세요.
 
 원문:
 ${text}`;
@@ -1104,7 +1244,42 @@ ${text}`;
     }
 
     const parsed = JSON.parse(jsonMatch[0]);
-    logger.debug("AI analysis complete");
+    logger.debug("AI analysis complete", {
+      hasAmountMin: parsed.amountMin !== undefined,
+      hasAmountMax: parsed.amountMax !== undefined,
+      amountMin: parsed.amountMin,
+      amountMax: parsed.amountMax,
+    });
+
+    // Fallback: If AI didn't return numeric amounts, try parsing from text fields
+    if (parsed.amountMin === undefined && parsed.amountMax === undefined) {
+      logger.debug("AI didn't extract numeric amounts, attempting fallback parsing...");
+
+      // Try parsing from fundingSummary first
+      let fallbackResult = extractAmountRange(parsed.fundingSummary);
+
+      // If fundingSummary parsing failed, try amountDescription
+      if (!fallbackResult.amountMin && !fallbackResult.amountMax && parsed.amountDescription) {
+        fallbackResult = extractAmountRange(parsed.amountDescription);
+      }
+
+      if (fallbackResult.amountMin || fallbackResult.amountMax) {
+        parsed.amountMin = fallbackResult.amountMin ?? undefined;
+        parsed.amountMax = fallbackResult.amountMax ?? undefined;
+        logger.debug("Fallback parsing successful", {
+          amountMin: parsed.amountMin,
+          amountMax: parsed.amountMax,
+        });
+      }
+    }
+
+    // Ensure amounts are numbers (in case AI returned strings)
+    if (typeof parsed.amountMin === 'string') {
+      parsed.amountMin = parseKoreanAmount(parsed.amountMin) ?? undefined;
+    }
+    if (typeof parsed.amountMax === 'string') {
+      parsed.amountMax = parseKoreanAmount(parsed.amountMax) ?? undefined;
+    }
 
     return parsed;
   } catch (error: any) {
@@ -1161,6 +1336,8 @@ async function processProjectFiles(
     evaluationCriteria?: string;
     fundingSummary?: string;
     amountDescription?: string;
+    amountMin?: number;
+    amountMax?: number;
     deadline?: string;
     startDate?: string;
     endDate?: string;
@@ -1175,6 +1352,8 @@ async function processProjectFiles(
     evaluationCriteria?: string;
     fundingSummary?: string;
     amountDescription?: string;
+    amountMin?: number;
+    amountMax?: number;
     deadline?: string;
     startDate?: string;
     endDate?: string;
@@ -2344,6 +2523,12 @@ async function saveProjects(
               return isNaN(date.getTime()) ? undefined : date;
             };
 
+            // Convert amounts to BigInt for database storage
+            const parseBigInt = (amount?: number): bigint | undefined => {
+              if (amount === undefined || amount === null || isNaN(amount)) return undefined;
+              return BigInt(Math.round(amount));
+            };
+
             await prisma.supportProject.update({
               where: { id: projectId },
               data: {
@@ -2355,12 +2540,20 @@ async function saveProjects(
                 evaluationCriteria: aiAnalysis.evaluationCriteria || undefined,
                 fundingSummary: aiAnalysis.fundingSummary || undefined,
                 amountDescription: aiAnalysis.amountDescription || undefined,
+                // NEW: 지원금액 숫자 필드 업데이트
+                amountMin: parseBigInt(aiAnalysis.amountMin),
+                amountMax: parseBigInt(aiAnalysis.amountMax),
                 deadline: parseDate(aiAnalysis.deadline),
                 startDate: parseDate(aiAnalysis.startDate),
                 endDate: parseDate(aiAnalysis.endDate),
               },
             });
-            logger.debug("Updated project with AI analysis (summary, description, eligibility, etc.)");
+
+            // Log amount extraction result
+            if (aiAnalysis.amountMin || aiAnalysis.amountMax) {
+              logger.info(`Updated project amounts: min=${aiAnalysis.amountMin}, max=${aiAnalysis.amountMax}`);
+            }
+            logger.debug("Updated project with AI analysis (summary, description, eligibility, amounts, etc.)");
           }
         } catch (fileError) {
           logger.error("Error processing attachments", { error: fileError });
