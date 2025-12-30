@@ -112,6 +112,10 @@ async function main() {
           name: true,
           summary: true,
           fundingSummary: true,
+          amountMin: true,
+          amountMax: true,
+          startDate: true,
+          endDate: true,
           deadline: true,
           attachments: {
             select: {
@@ -122,19 +126,39 @@ async function main() {
         },
       });
 
+      // Format amount for display
+      const formatAmount = (amount: bigint | null): string => {
+        if (!amount) return "N/A";
+        const num = Number(amount);
+        if (num >= 100000000) {
+          return `${(num / 100000000).toFixed(1)}억원`;
+        } else if (num >= 10000) {
+          return `${(num / 10000).toFixed(0)}만원`;
+        }
+        return `${num.toLocaleString()}원`;
+      };
+
       projects.forEach((project, idx) => {
         console.log(`\n${idx + 1}. ${project.name}`);
         if (project.summary) {
           console.log(`   Summary: ${project.summary.substring(0, 100)}...`);
         }
         if (project.fundingSummary) {
-          console.log(`   Funding: ${project.fundingSummary}`);
+          console.log(`   💰 Funding Summary: ${project.fundingSummary}`);
+        }
+        // NEW: Show extracted amounts
+        console.log(`   💵 Amount Min: ${formatAmount(project.amountMin)}`);
+        console.log(`   💵 Amount Max: ${formatAmount(project.amountMax)}`);
+        if (project.startDate || project.endDate) {
+          const start = project.startDate?.toISOString().split("T")[0] || "N/A";
+          const end = project.endDate?.toISOString().split("T")[0] || "N/A";
+          console.log(`   📅 Period: ${start} ~ ${end}`);
         }
         if (project.deadline) {
-          console.log(`   Deadline: ${project.deadline.toISOString().split("T")[0]}`);
+          console.log(`   ⏰ Deadline: ${project.deadline.toISOString().split("T")[0]}`);
         }
         if (project.attachments.length > 0) {
-          console.log(`   Attachments: ${project.attachments.length} files`);
+          console.log(`   📎 Attachments: ${project.attachments.length} files`);
           project.attachments.slice(0, 2).forEach((att) => {
             const size = att.fileSize ? `${(att.fileSize / 1024).toFixed(1)}KB` : "N/A";
             console.log(`     - ${att.fileName} (${size})`);
