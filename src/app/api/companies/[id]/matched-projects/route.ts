@@ -20,7 +20,7 @@ interface RouteContext {
 }
 
 // Default minimum score for recommended projects
-const DEFAULT_MIN_SCORE = 60;
+const DEFAULT_MIN_SCORE = 50;
 
 export async function GET(req: NextRequest, { params }: RouteContext) {
   try {

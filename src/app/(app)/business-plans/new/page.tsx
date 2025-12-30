@@ -646,7 +646,7 @@ function NewBusinessPlanForm() {
                           <div className="flex items-start gap-2 p-3 bg-primary/5 rounded-lg text-sm">
                             <Info className="h-4 w-4 text-primary mt-0.5 shrink-0" />
                             <span className="text-muted-foreground">
-                              매칭 점수 60점 이상, 접수 중인 지원사업만 표시됩니다.
+                              매칭 점수 50점 이상, 접수 중인 지원사업만 표시됩니다.
                             </span>
                           </div>
 
