@@ -1,11 +1,13 @@
 "use client"
 
-import { useState, useCallback } from "react"
+import { useState, useCallback, Suspense } from "react"
+import dynamic from "next/dynamic"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Textarea } from "@/components/ui/textarea"
 import { Input } from "@/components/ui/input"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   Pencil,
   Check,
@@ -41,7 +43,17 @@ const ICON_MAP: Record<string, LucideIcon> = {
 import { BLOCK_CATEGORIES } from "@/lib/master-profile/constants"
 import type { ProfileBlock } from "@prisma/client"
 import { toast } from "sonner"
-import ReactMarkdown from "react-markdown"
+
+// 동적 import: ReactMarkdown - 무거운 마크다운 파서
+const ReactMarkdown = dynamic(
+  () => import("react-markdown").then((mod) => mod.default),
+  {
+    ssr: false,
+    loading: () => <Skeleton className="h-20 w-full" />,
+  }
+)
+
+// remark-gfm은 ReactMarkdown과 함께 사용되므로 별도로 import
 import remarkGfm from "remark-gfm"
 
 interface ProfileBlocksViewProps {

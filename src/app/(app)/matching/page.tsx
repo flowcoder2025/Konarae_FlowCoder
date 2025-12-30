@@ -14,57 +14,59 @@ export default async function MatchingPage() {
     redirect("/login");
   }
 
-  // Get user's companies with matching preferences status
-  const companies = await prisma.company.findMany({
-    where: {
-      members: {
-        some: { userId: session.user.id },
+  // 병렬 데이터 페칭 - 두 쿼리를 동시에 실행
+  const [companies, recentResults] = await Promise.all([
+    // Get user's companies with matching preferences status
+    prisma.company.findMany({
+      where: {
+        members: {
+          some: { userId: session.user.id },
+        },
+        deletedAt: null,
       },
-      deletedAt: null,
-    },
-    select: {
-      id: true,
-      name: true,
-      businessCategory: true,
-      _count: {
-        select: {
-          matchingResults: true,
-          matchingPreferences: true,
+      select: {
+        id: true,
+        name: true,
+        businessCategory: true,
+        _count: {
+          select: {
+            matchingResults: true,
+            matchingPreferences: true,
+          },
         },
       },
-    },
-  });
+    }),
+    // Get recent matching results
+    prisma.matchingResult.findMany({
+      where: {
+        userId: session.user.id,
+      },
+      take: 5,
+      orderBy: {
+        createdAt: "desc",
+      },
+      include: {
+        company: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        project: {
+          select: {
+            id: true,
+            name: true,
+            organization: true,
+          },
+        },
+      },
+    }),
+  ]);
 
   // Check if any company is missing matching preferences
   const companiesWithoutPreferences = companies.filter(
     (c) => c._count.matchingPreferences === 0
   );
-
-  // Get recent matching results
-  const recentResults = await prisma.matchingResult.findMany({
-    where: {
-      userId: session.user.id,
-    },
-    take: 5,
-    orderBy: {
-      createdAt: "desc",
-    },
-    include: {
-      company: {
-        select: {
-          id: true,
-          name: true,
-        },
-      },
-      project: {
-        select: {
-          id: true,
-          name: true,
-          organization: true,
-        },
-      },
-    },
-  });
 
   return (
     <div className="container mx-auto py-8 max-w-7xl">

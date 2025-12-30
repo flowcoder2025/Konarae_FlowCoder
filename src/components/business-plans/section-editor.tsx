@@ -1,15 +1,30 @@
 "use client";
 
 import { useState } from "react";
+import dynamic from "next/dynamic";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card } from "@/components/ui/card";
-import { MermaidRenderer } from "@/components/ui/mermaid-renderer";
+import { Skeleton } from "@/components/ui/skeleton";
 import { createLogger } from "@/lib/logger";
 import { Trash2 } from "lucide-react";
+
+// 동적 import: Mermaid (~800KB) - 필요할 때만 로드
+const MermaidRenderer = dynamic(
+  () => import("@/components/ui/mermaid-renderer").then((m) => m.MermaidRenderer),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="my-4 p-4 bg-muted rounded-lg">
+        <Skeleton className="h-32 w-full" />
+        <p className="text-xs text-muted-foreground mt-2">다이어그램 로딩 중...</p>
+      </div>
+    ),
+  }
+);
 
 const logger = createLogger({ component: "section-editor" });
 
