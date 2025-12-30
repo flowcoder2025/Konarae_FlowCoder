@@ -11,6 +11,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
 import { Button } from "@/components/ui/button";
@@ -24,7 +25,6 @@ import {
   Search,
   FolderKanban,
   Kanban,
-  Settings,
   Menu,
   X,
   User,
@@ -76,11 +76,6 @@ const navItems: NavItem[] = [
     href: "/company",
     icon: Building2,
   },
-  {
-    label: "설정",
-    href: "/settings/notifications",
-    icon: Settings,
-  },
 ];
 
 interface NavbarProps {
@@ -131,15 +126,19 @@ export function Navbar({ user, isAdmin = false }: NavbarProps) {
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <div className="container mx-auto px-4 md:px-6 lg:px-8 max-w-7xl flex h-14 items-center">
         {/* Logo */}
-        <Link href="/home" className="flex items-center gap-2 mr-6">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
-            <span className="text-sm font-bold text-primary-foreground">F</span>
-          </div>
+        <Link href="/home" className="flex items-center gap-2 shrink-0">
+          <Image
+            src="/Flow_icon.png"
+            alt="FlowMate"
+            width={32}
+            height={32}
+            className="rounded-lg"
+          />
           <span className="hidden font-semibold sm:inline-block">FlowMate</span>
         </Link>
 
         {/* Desktop Navigation */}
-        <nav className="hidden md:flex items-center gap-1 flex-1">
+        <nav className="hidden md:flex items-center justify-center gap-1 flex-1">
           {navItems.map((item) => {
             const Icon = item.icon;
             const active = isActive(item.href);
