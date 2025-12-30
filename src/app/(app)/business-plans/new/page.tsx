@@ -417,17 +417,21 @@ function NewBusinessPlanForm() {
 
     try {
       // Create business plan with structured data
+      // 빈 문자열인 projectId는 undefined로 변환하여 전송
+      const submitData = {
+        ...formData,
+        projectId: formData.projectId || undefined,
+        referenceBusinessPlanIds: selectedReferencePlanIds,
+        // 구조화된 입력 데이터
+        executionPlan,
+        budgetPlan,
+        expectedOutcomes,
+      };
+
       const res = await fetch("/api/business-plans", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...formData,
-          referenceBusinessPlanIds: selectedReferencePlanIds,
-          // 구조화된 입력 데이터
-          executionPlan,
-          budgetPlan,
-          expectedOutcomes,
-        }),
+        body: JSON.stringify(submitData),
       });
 
       if (!res.ok) {
