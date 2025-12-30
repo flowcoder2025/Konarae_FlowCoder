@@ -13,6 +13,7 @@ import {
   Users,
   Coins,
   Target,
+  Copy,
 } from "lucide-react";
 
 export default async function AdminLayout({
@@ -56,6 +57,11 @@ export default async function AdminLayout({
       name: "매칭 현황",
       href: "/admin/matching",
       icon: Target,
+    },
+    {
+      name: "중복 관리",
+      href: "/admin/duplicates",
+      icon: Copy,
     },
   ];
 
