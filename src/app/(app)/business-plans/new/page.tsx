@@ -143,6 +143,48 @@ function NewBusinessPlanForm() {
   const [isSearching, setIsSearching] = useState(false);
   const [selectedSearchProject, setSelectedSearchProject] = useState<SearchedProject | null>(null);
 
+  // 사업 기간 계산 함수 (fetchProjectById보다 먼저 정의)
+  const calculateDuration = useCallback((startDate: string | null, endDate: string | null): string => {
+    if (!startDate || !endDate) return "";
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    const months = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24 * 30));
+    if (months <= 0) return "";
+    if (months <= 6) return "6개월";
+    if (months <= 12) return "12개월";
+    if (months <= 18) return "18개월";
+    if (months <= 24) return "24개월";
+    return "36개월";
+  }, []);
+
+  // 지원사업 선택 시 자동 채움 (fetchProjectById보다 먼저 정의)
+  const autoFillFromProject = useCallback((project: {
+    amountMax?: string | null;
+    startDate?: string | null;
+    endDate?: string | null;
+  }) => {
+    // 사업 기간 자동 채움
+    const duration = calculateDuration(project.startDate || null, project.endDate || null);
+    if (duration) {
+      setExecutionPlan(prev => ({ ...prev, duration }));
+    }
+
+    // 정부지원금 자동 채움
+    if (project.amountMax) {
+      const amount = parseInt(project.amountMax);
+      if (!isNaN(amount) && amount > 0) {
+        setBudgetPlan(prev => ({
+          ...prev,
+          governmentFunding: amount,
+          totalAmount: amount + prev.selfFunding,
+        }));
+        toast.success("지원사업 정보가 자동으로 입력되었습니다", {
+          description: `사업기간: ${duration || "미정"}, 정부지원금: ${amount.toLocaleString()}원`,
+        });
+      }
+    }
+  }, [calculateDuration]);
+
   // Fetch a specific project by ID (for URL param case)
   const fetchProjectById = useCallback(async (projectId: string) => {
     try {
@@ -160,15 +202,21 @@ function NewBusinessPlanForm() {
             deadline: project.deadline,
             isPermanent: project.isPermanent,
             summary: project.summary || "",
+            // 자동 채움용 필드 추가
+            amountMax: project.amountMax?.toString() || null,
+            startDate: project.startDate || null,
+            endDate: project.endDate || null,
           };
           setSelectedSearchProject(searchedProject);
           setFormData((prev) => ({ ...prev, projectId: project.id }));
+          // 자동 채움 실행
+          autoFillFromProject(searchedProject);
         }
       }
     } catch (error) {
       logger.error("Fetch project by id error", { error });
     }
-  }, []);
+  }, [autoFillFromProject]);
 
   // Fetch companies on mount
   useEffect(() => {
@@ -296,48 +344,6 @@ function NewBusinessPlanForm() {
     if (!deadline) return false;
     return new Date(deadline) < new Date();
   };
-
-  // 사업 기간 계산 함수
-  const calculateDuration = (startDate: string | null, endDate: string | null): string => {
-    if (!startDate || !endDate) return "";
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    const months = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24 * 30));
-    if (months <= 0) return "";
-    if (months <= 6) return "6개월";
-    if (months <= 12) return "12개월";
-    if (months <= 18) return "18개월";
-    if (months <= 24) return "24개월";
-    return "36개월";
-  };
-
-  // 지원사업 선택 시 자동 채움
-  const autoFillFromProject = useCallback((project: {
-    amountMax?: string | null;
-    startDate?: string | null;
-    endDate?: string | null;
-  }) => {
-    // 사업 기간 자동 채움
-    const duration = calculateDuration(project.startDate || null, project.endDate || null);
-    if (duration) {
-      setExecutionPlan(prev => ({ ...prev, duration }));
-    }
-
-    // 정부지원금 자동 채움
-    if (project.amountMax) {
-      const amount = parseInt(project.amountMax);
-      if (!isNaN(amount) && amount > 0) {
-        setBudgetPlan(prev => ({
-          ...prev,
-          governmentFunding: amount,
-          totalAmount: amount + prev.selfFunding,
-        }));
-        toast.success("지원사업 정보가 자동으로 입력되었습니다", {
-          description: `사업기간: ${duration || "미정"}, 정부지원금: ${amount.toLocaleString()}원`,
-        });
-      }
-    }
-  }, []);
 
   // Clear search selection and go back to recommended
   const clearSearchSelection = () => {
@@ -527,7 +533,6 @@ function NewBusinessPlanForm() {
                   onValueChange={(value: string) =>
                     setFormData({ ...formData, companyId: value })
                   }
-                  required
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="기업을 선택하세요" />
@@ -802,7 +807,6 @@ function NewBusinessPlanForm() {
                 }
                 placeholder="신규 사업의 목적, 내용, 기대 효과를 상세히 작성해주세요. 해결하고자 하는 문제, 해결 방안, 목표 시장, 차별화 포인트 등을 포함하면 좋습니다."
                 className="min-h-[150px]"
-                required
               />
             </div>
 
@@ -1005,7 +1009,7 @@ function NewBusinessPlanForm() {
           <Button
             type="submit"
             className="flex-1"
-            disabled={isSubmitting || !formData.companyId || !formData.title}
+            disabled={isSubmitting || !formData.title}
           >
             {isSubmitting ? (
               <>

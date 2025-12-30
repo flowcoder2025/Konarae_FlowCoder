@@ -176,7 +176,24 @@ export function Step3Plan({
         toast.success("AI가 사업계획서를 생성하고 있습니다");
       }
 
-      // 3. 상세 페이지로 이동
+      // 3. UserProject의 step3 완료 및 다음 단계로 업데이트
+      if (userProjectId) {
+        try {
+          await fetch(`/api/user-projects/${userProjectId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              businessPlanId: businessPlan.id,
+              step3Completed: true,
+              currentStep: 4,
+            }),
+          });
+        } catch (error) {
+          console.error("Failed to update user project step", error);
+        }
+      }
+
+      // 4. 상세 페이지로 이동
       setShowAiModal(false);
       router.push(`/business-plans/${businessPlan.id}`);
     } catch (error) {
