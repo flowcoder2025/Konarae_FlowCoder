@@ -13,6 +13,15 @@ import { createLogger } from "@/lib/logger";
 
 const logger = createLogger({ api: "business-plans" });
 
+// 기본 섹션 정의 (빈 템플릿에도 자동 생성)
+const DEFAULT_SECTIONS = [
+  { sectionIndex: 0, title: "기업 개요", content: "" },
+  { sectionIndex: 1, title: "사업 개요", content: "" },
+  { sectionIndex: 2, title: "수행 계획", content: "" },
+  { sectionIndex: 3, title: "수행 역량", content: "" },
+  { sectionIndex: 4, title: "사업 예산", content: "" },
+];
+
 // 구조화된 입력 스키마
 const milestoneSchema = z.object({
   phase: z.string(),
@@ -148,6 +157,17 @@ export async function POST(req: NextRequest) {
           budgetPlan: validatedData.budgetPlan ?? undefined,
           expectedOutcomes: validatedData.expectedOutcomes ?? undefined,
         },
+      });
+
+      // 기본 섹션 자동 생성 (빈 템플릿도 섹션 구조 포함)
+      await tx.businessPlanSection.createMany({
+        data: DEFAULT_SECTIONS.map((section) => ({
+          businessPlanId: plan.id,
+          sectionIndex: section.sectionIndex,
+          title: section.title,
+          content: section.content,
+          isAiGenerated: false,
+        })),
       });
 
       // Create reference plan relations if provided
