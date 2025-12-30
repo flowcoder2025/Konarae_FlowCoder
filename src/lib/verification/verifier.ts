@@ -29,42 +29,45 @@ const VERIFICATION_PROMPT = `## 역할
 마감일: {deadline}
 제출 요건: {requirements}
 
-## 사업계획서 정보
+## 사업계획서 정보 (시스템에서 작성 완료됨)
+작성 상태: {planStatus}
 제목: {planTitle}
-페이지 수: {pageCount}
 섹션 목록: {sections}
+섹션 개수: {sectionCount}개
 
-## 첨부서류 현황
+※ 사업계획서는 본 시스템에서 온라인으로 작성되었으며, 제출 시 PDF로 자동 변환됩니다.
+따라서 "사업계획서 파일 첨부" 여부는 검증할 필요가 없습니다.
+
+## 사업계획서 첨부 파일 (사업계획서에 포함될 첨부자료)
 {attachments}
 
-## 기업 문서 현황
+## 기업 증빙서류 현황
 {companyDocuments}
 
 ## 검증 항목
 
 ### 1. 형식 검증 (format)
-- PDF 형식 여부
-- 페이지 수 제한 준수
-- 파일 크기 제한
+- 사업계획서 섹션 구성 적절성
+- 필수 항목 포함 여부
 
 ### 2. 내용 검증 (content)
-- 필수 섹션 포함 여부
-- 최소 분량 요건 충족
+- 필수 섹션 포함 여부 (사업개요, 추진계획, 예산 등)
 - 핵심 정보 누락 여부
+- 섹션별 내용 충실도
 
 ### 3. 첨부서류 검증 (attachment)
-- 필수 서류 첨부 여부
-- 파일명 규정 준수
-- 서류 유효기간
+- 기업 증빙서류 첨부 여부 (사업자등록증, 재무제표 등)
+- 파일 형식 적절성 (PDF 권장)
+- 서류 유효기간 확인
+- 중복 파일 여부
 
 ### 4. 계산 검증 (calculation)
-- 예산 총액과 세부 항목 합계 일치
-- 자부담 비율 준수
-- 인건비 비율 준수
+- 예산 항목 일관성
+- 자부담/정부지원 비율 적절성
 
 ### 5. 규정 준수 (compliance)
-- 공고 요건 충족
-- 자격 요건 확인
+- 공고 자격 요건 충족
+- 제출 기한 준수 가능성
 
 ## 출력 형식 (JSON만 출력, 마크다운 코드블록 없이)
 {
@@ -162,6 +165,9 @@ export async function verify(params: VerifyParams): Promise<VerificationResult> 
         : "등록된 기업 문서 없음"
 
     // 프롬프트 구성
+    const sectionCount = businessPlan.sections.length
+    const planStatus = sectionCount > 0 ? "✅ 작성 완료" : "⚠️ 미작성"
+
     const prompt = VERIFICATION_PROMPT.replace("{projectName}", project.name)
       .replace("{agency}", project.agency || "정보 없음")
       .replace(
@@ -171,8 +177,9 @@ export async function verify(params: VerifyParams): Promise<VerificationResult> 
           : "정보 없음"
       )
       .replace("{requirements}", project.requirements || "요건 정보 없음")
+      .replace("{planStatus}", planStatus)
       .replace("{planTitle}", businessPlan.title)
-      .replace("{pageCount}", businessPlan.pageCount?.toString() || "알 수 없음")
+      .replace("{sectionCount}", sectionCount.toString())
       .replace("{sections}", businessPlan.sections.join(", ") || "섹션 정보 없음")
       .replace("{attachments}", attachmentsText)
       .replace("{companyDocuments}", companyDocsText)
