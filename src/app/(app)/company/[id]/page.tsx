@@ -26,7 +26,7 @@ interface CompanyDetailPageProps {
   params: Promise<{ id: string }>;
 }
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://konarae.com";
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://mate.flow-coder.com";
 
 export async function generateMetadata({
   params,
@@ -90,7 +90,7 @@ export async function generateMetadata({
       follow: false,
     },
     openGraph: {
-      title: `${company.name} | Konarae`,
+      title: `${company.name} | FlowMate`,
       description: truncatedDescription,
       type: "profile",
       url: `${SITE_URL}/companies/${id}`,

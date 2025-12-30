@@ -14,7 +14,7 @@ interface ProjectDetailPageProps {
   params: Promise<{ id: string }>;
 }
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://konarae.com";
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://mate.flow-coder.com";
 
 export async function generateMetadata({
   params,
@@ -72,7 +72,7 @@ export async function generateMetadata({
     description,
     keywords,
     openGraph: {
-      title: `${project.name} | Konarae`,
+      title: `${project.name} | FlowMate`,
       description,
       type: "article",
       url: `${SITE_URL}/projects/${id}`,

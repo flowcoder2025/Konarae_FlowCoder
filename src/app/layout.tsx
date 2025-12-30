@@ -6,9 +6,9 @@ import { JsonLd } from "@/components/seo/json-ld";
 
 const inter = Inter({ subsets: ["latin"] });
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://konarae.com";
-const SITE_NAME = "Konarae by FlowCoder";
-const SITE_DESCRIPTION = "중소기업과 스타트업을 위한 정부 지원사업 자동 매칭 및 사업계획서 AI 작성 서비스";
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://mate.flow-coder.com";
+const SITE_NAME = "FlowMate";
+const SITE_DESCRIPTION = "당신의 업무 흐름을 함께하는 AI 파트너 - 정부 지원사업 자동 매칭 및 사업계획서 AI 작성 서비스";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
@@ -27,9 +27,9 @@ export const metadata: Metadata = {
     "R&D 지원",
     "소상공인 지원",
   ],
-  authors: [{ name: "Konarae", url: SITE_URL }],
-  creator: "Konarae",
-  publisher: "Konarae",
+  authors: [{ name: "FlowMate", url: SITE_URL }],
+  creator: "FlowMate",
+  publisher: "FlowMate",
   formatDetection: {
     email: false,
     address: false,

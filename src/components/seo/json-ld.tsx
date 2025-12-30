@@ -1,5 +1,5 @@
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://konarae.com";
-const SITE_NAME = "Konarae by FlowCoder";
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://mate.flow-coder.com";
+const SITE_NAME = "FlowMate";
 const SITE_DESCRIPTION =
   "중소기업과 스타트업을 위한 정부 지원사업 자동 매칭 및 사업계획서 AI 작성 서비스";
 

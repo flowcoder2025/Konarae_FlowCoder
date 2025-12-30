@@ -6,7 +6,7 @@ interface BusinessPlanLayoutProps {
   children: React.ReactNode;
 }
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://konarae.com";
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://mate.flow-coder.com";
 
 export async function generateMetadata({
   params,
@@ -71,7 +71,7 @@ export async function generateMetadata({
       follow: false,
     },
     openGraph: {
-      title: `${title} | Konarae`,
+      title: `${title} | FlowMate`,
       description: `${businessPlan.company.name}의 사업계획서`,
       type: "article",
       url: `${SITE_URL}/business-plans/${id}`,

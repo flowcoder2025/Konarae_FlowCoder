@@ -97,7 +97,7 @@ async function sendEmailNotification(
     }
 
     await resend.emails.send({
-      from: "Konarae FlowCoder <noreply@konarae.com>",
+      from: "FlowMate <noreply@flow-coder.com>",
       to: user.email,
       subject: payload.title,
       html: buildEmailHtml(payload, user.name || "사용자"),
@@ -129,7 +129,7 @@ async function sendDiscordNotification(
             url: payload.url,
             timestamp: new Date().toISOString(),
             footer: {
-              text: "Konarae FlowCoder",
+              text: "FlowMate",
             },
           },
         ],
@@ -233,7 +233,7 @@ function buildEmailHtml(payload: NotificationPayload, userName: string): string 
       ${payload.url ? `<a href="${payload.url}" class="button">자세히 보기</a>` : ""}
     </div>
     <div class="footer">
-      <p>© ${new Date().getFullYear()} Konarae FlowCoder. All rights reserved.</p>
+      <p>© ${new Date().getFullYear()} FlowMate. All rights reserved.</p>
     </div>
   </div>
 </body>

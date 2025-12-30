@@ -393,7 +393,7 @@ export function CompanyForm() {
             <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="name">기업명 *</Label>
-                <Input id="name" {...register("name")} placeholder="주식회사 코나래" />
+                <Input id="name" {...register("name")} placeholder="주식회사 OO" />
                 {errors.name && (
                   <p className="text-sm text-destructive">{errors.name.message}</p>
                 )}
@@ -475,7 +475,7 @@ export function CompanyForm() {
                   id="email"
                   type="email"
                   {...register("email")}
-                  placeholder="contact@konarae.com"
+                  placeholder="contact@example.com"
                 />
                 {errors.email && (
                   <p className="text-sm text-destructive">{errors.email.message}</p>

@@ -2,8 +2,8 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Konarae by FlowCoder - 정부 지원사업 매칭 플랫폼",
-    short_name: "Konarae",
+    name: "FlowMate - 정부 지원사업 매칭 플랫폼",
+    short_name: "FlowMate",
     description:
       "중소기업과 스타트업을 위한 정부 지원사업 자동 매칭 및 사업계획서 AI 작성 서비스",
     start_url: "/",

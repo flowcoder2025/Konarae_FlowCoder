@@ -1,4 +1,6 @@
-# Konarae FlowCoder
+# FlowMate
+
+**당신의 업무 흐름을 함께하는 AI 파트너**
 
 정부 지원사업 매칭 및 사업계획서 자동화 플랫폼
 
@@ -108,7 +110,7 @@ pnpm dev
 ## 📁 프로젝트 구조
 
 ```
-konarae_flowcoder/
+flowmate/
 ├── src/
 │   ├── app/                    # Next.js App Router
 │   │   ├── api/               # API Routes

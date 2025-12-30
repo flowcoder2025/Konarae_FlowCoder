@@ -133,9 +133,9 @@ export function Navbar({ user, isAdmin = false }: NavbarProps) {
         {/* Logo */}
         <Link href="/home" className="flex items-center gap-2 mr-6">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
-            <span className="text-sm font-bold text-primary-foreground">K</span>
+            <span className="text-sm font-bold text-primary-foreground">F</span>
           </div>
-          <span className="hidden font-semibold sm:inline-block">Konarae</span>
+          <span className="hidden font-semibold sm:inline-block">FlowMate</span>
         </Link>
 
         {/* Desktop Navigation */}

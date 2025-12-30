@@ -16,7 +16,7 @@ export default async function LoginPage() {
         <CardHeader>
           <CardTitle>로그인</CardTitle>
           <CardDescription>
-            Konarae FlowCoder에 로그인하여 시작하세요
+            FlowMate에 로그인하여 시작하세요
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
