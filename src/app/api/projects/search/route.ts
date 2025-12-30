@@ -59,6 +59,8 @@ export async function GET(req: NextRequest) {
         region: true,
         amountMin: true,
         amountMax: true,
+        startDate: true,
+        endDate: true,
         deadline: true,
         summary: true,
         viewCount: true,
