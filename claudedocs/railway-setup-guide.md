@@ -26,11 +26,11 @@ Railway 웹 대시보드에서 Worker 서비스를 처음 생성하는 방법입
    - Deploy from GitHub Repository 선택
 
 3. **레포지토리 선택**
-   - `flowcoder2025/Konarae_FlowCoder` 선택
+   - `flowcoder2025/FlowMate` 선택
    - 권한 없으면 "Configure GitHub App" 클릭하여 권한 부여
 
 4. **서비스 이름 설정**
-   - 서비스 이름: `konarae-worker` (또는 원하는 이름)
+   - 서비스 이름: `flowmate-worker` (또는 원하는 이름)
 
 ### 3단계: 환경변수 설정
 
@@ -83,12 +83,12 @@ NEXT_PUBLIC_SITE_URL=<https://your-app.vercel.app>
 
 2. **"Generate Domain" 클릭**
    - Railway가 자동으로 도메인 생성
-   - 예: `konarae-worker-production.up.railway.app`
+   - 예: `flowmate-worker-production.up.railway.app`
 
 3. **URL 복사**
    - 이 URL을 Vercel 환경변수에 추가:
    ```env
-   RAILWAY_CRAWLER_URL=https://konarae-worker-production.up.railway.app
+   RAILWAY_CRAWLER_URL=https://flowmate-worker-production.up.railway.app
    ```
 
 ## ✅ 배포 확인

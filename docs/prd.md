@@ -1,4 +1,4 @@
-# Konarae FlowCoder - Product Requirements Document (PRD)
+# FlowMate - Product Requirements Document (PRD)
 
 ## 1. Executive Summary
 
@@ -1239,7 +1239,7 @@ services:
 
 ## Appendix A: UI Component Migration
 
-기존 konarae_new 프로젝트에서 다음 UI 컴포넌트와 CSS 설정을 그대로 가져옵니다:
+기존 프로젝트에서 다음 UI 컴포넌트와 CSS 설정을 그대로 가져옵니다:
 
 ### Components (shadcn/ui)
 - alert, avatar, badge, button, card
