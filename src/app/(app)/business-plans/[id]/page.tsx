@@ -167,7 +167,25 @@ export default function BusinessPlanDetailPage() {
         throw new Error(data.error || "템플릿 초기화 실패");
       }
 
-      toast.success("기본 템플릿이 생성되었습니다. 각 섹션을 수정해주세요.");
+      const data = await res.json();
+
+      // 적용된 데이터 안내 메시지 생성
+      const appliedItems: string[] = [];
+      if (data.appliedData?.companyProfile) appliedItems.push("기업 프로필");
+      if (data.appliedData?.projectInfo) appliedItems.push("지원사업 정보");
+      if (data.appliedData?.executionPlan) appliedItems.push("추진 계획");
+      if (data.appliedData?.budgetPlan) appliedItems.push("예산 계획");
+      if (data.appliedData?.expectedOutcomes) appliedItems.push("기대 효과");
+
+      if (appliedItems.length > 0) {
+        toast.success("템플릿에 입력하신 정보가 자동 적용되었습니다", {
+          description: `적용 항목: ${appliedItems.join(", ")}`,
+          duration: 5000,
+        });
+      } else {
+        toast.success("기본 템플릿이 생성되었습니다. 각 섹션을 수정해주세요.");
+      }
+
       await fetchBusinessPlan();
     } catch (error) {
       logger.error("Initialize template error", { error });
