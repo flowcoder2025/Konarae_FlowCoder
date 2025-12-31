@@ -217,9 +217,6 @@ export default async function CompanyPage({ searchParams }: Props) {
             ) : (
               <h1 className="text-xl sm:text-2xl font-bold truncate">{company.name}</h1>
             )}
-            <p className="text-sm text-muted-foreground truncate">
-              {company.registrationNumber || "사업자번호 미등록"}
-            </p>
           </div>
         </div>
         {company.isOwner && (

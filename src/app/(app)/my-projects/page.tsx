@@ -50,26 +50,26 @@ function ProjectCard({ project }: ProjectCardProps) {
 
   return (
     <Link href={`/my-projects/${project.id}`}>
-      <Card className="hover:border-primary/50 transition-colors cursor-pointer">
-        <CardContent className="py-5">
-          <div className="flex items-center gap-4">
+      <Card className="hover:border-primary/50 transition-colors cursor-pointer overflow-hidden">
+        <CardContent className="py-4 sm:py-5">
+          <div className="flex items-start sm:items-center gap-3 sm:gap-4">
             {/* Left: Project Info */}
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-1">
-                <h3 className="font-semibold truncate">{project.project.name}</h3>
-                <Badge className={`${statusStyle.bg} ${statusStyle.text}`}>
+              <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 mb-1">
+                <h3 className="font-semibold text-sm sm:text-base truncate max-w-[180px] sm:max-w-none">{project.project.name}</h3>
+                <Badge className={`${statusStyle.bg} ${statusStyle.text} text-[10px] sm:text-xs shrink-0`}>
                   {statusStyle.label}
                 </Badge>
               </div>
-              <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                <span className="flex items-center gap-1">
-                  <Building2 className="h-4 w-4" />
-                  {project.company.name}
+              <div className="flex flex-wrap items-center gap-2 sm:gap-4 text-xs sm:text-sm text-muted-foreground">
+                <span className="flex items-center gap-1 truncate max-w-[120px] sm:max-w-none">
+                  <Building2 className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
+                  <span className="truncate">{project.company.name}</span>
                 </span>
-                <span>{project.project.organization}</span>
+                <span className="hidden sm:inline truncate">{project.project.organization}</span>
                 {daysLeft !== null && (
-                  <span className="flex items-center gap-1">
-                    <Calendar className="h-4 w-4" />
+                  <span className="flex items-center gap-1 shrink-0">
+                    <Calendar className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
                     D-{daysLeft}
                   </span>
                 )}
@@ -100,7 +100,7 @@ function ProjectCard({ project }: ProjectCardProps) {
             </div>
 
             {/* Right: Arrow */}
-            <ChevronRight className="h-5 w-5 text-muted-foreground" />
+            <ChevronRight className="h-5 w-5 text-muted-foreground shrink-0" />
           </div>
 
           {/* Mobile Progress Bar */}
@@ -112,8 +112,8 @@ function ProjectCard({ project }: ProjectCardProps) {
                   style={{ width: `${(project.currentStep / 5) * 100}%` }}
                 />
               </div>
-              <span className="text-xs text-muted-foreground">
-                {project.currentStep}/5 단계
+              <span className="text-xs text-muted-foreground shrink-0">
+                {project.currentStep}/5
               </span>
             </div>
           </div>
