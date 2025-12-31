@@ -40,6 +40,7 @@ export async function POST(request: Request) {
         message: body.message,
         submittedAt: body.submittedAt,
         source: "FlowMate",
+        referenceUrl: "https://mate.flow-coder.com",
       }),
     });
 
