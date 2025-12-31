@@ -32,9 +32,11 @@ export default async function ProjectsPage({
   const skip = (page - 1) * pageSize;
 
   // Build where clause
+  // isCanonical: true로 중복 제거된 대표 프로젝트만 표시
   const where: any = {
     deletedAt: null,
     status: "active",
+    isCanonical: true,
   };
 
   if (params.category) {
@@ -127,13 +129,13 @@ export default async function ProjectsPage({
     prisma.supportProject.count({ where }),
     prisma.supportProject.groupBy({
       by: ["category"],
-      where: { deletedAt: null, status: "active" },
+      where: { deletedAt: null, status: "active", isCanonical: true },
       _count: true,
       orderBy: { _count: { category: "desc" } },
     }),
     prisma.supportProject.groupBy({
       by: ["region"],
-      where: { deletedAt: null, status: "active" },
+      where: { deletedAt: null, status: "active", isCanonical: true },
       _count: true,
       orderBy: { _count: { region: "desc" } },
     }),
