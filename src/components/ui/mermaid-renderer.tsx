@@ -115,15 +115,27 @@ function sanitizeMermaid(code: string): string {
   // 10. 빈 괄호 제거
   sanitized = sanitized.replace(/\(\s*\)/g, "");
 
-  // 11. 연속 공백 정리 (mindmap 제외 - 들여쓰기가 중요)
-  if (!isMindmap) {
-    sanitized = sanitized.replace(/  +/g, " ");
-  }
-
-  // 12. 라인 끝 공백 제거
+  // 11. 최종 공백 정규화 (모든 다이어그램 타입에 적용)
+  // - 들여쓰기(leading spaces)는 보존
+  // - 라인 내용의 연속 공백은 단일 공백으로
+  // - 라인 끝 공백 제거
+  // - 특수 공백 문자 정규화
   sanitized = sanitized
     .split("\n")
-    .map((line) => line.trimEnd())
+    .map((line) => {
+      // 들여쓰기(leading spaces) 추출
+      const leadingMatch = line.match(/^(\s*)/);
+      const leadingSpaces = leadingMatch ? leadingMatch[1] : "";
+      // 나머지 내용
+      let content = line.slice(leadingSpaces.length);
+      // 특수 공백 문자를 일반 공백으로 변환
+      content = content.replace(/[\u00A0\u2002\u2003\u2009\t]/g, " ");
+      // 연속 공백을 단일 공백으로
+      content = content.replace(/\s{2,}/g, " ");
+      // 라인 끝 공백 제거
+      content = content.trimEnd();
+      return leadingSpaces + content;
+    })
     .join("\n");
 
   return sanitized;
@@ -133,6 +145,8 @@ function sanitizeMermaid(code: string): string {
  * Mindmap 전용 sanitizer
  * - 단일 루트 노드 보장
  * - 들여쓰기 계층 구조 정규화
+ * - 노드 라벨 내 연속 공백 제거 (SPACELIST 파싱 에러 방지)
+ * - 괄호 내용 변환 (예: "데이터(Data)" → "데이터/Data")
  */
 function sanitizeMindmap(code: string): string {
   const lines = code.split("\n");
@@ -142,13 +156,23 @@ function sanitizeMindmap(code: string): string {
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    const trimmed = line.trim();
+    let trimmed = line.trim();
 
     // 빈 줄 또는 mindmap 선언 유지
     if (!trimmed || trimmed === "mindmap") {
       result.push(line);
       continue;
     }
+
+    // 1. 노드 라벨 내 괄호를 슬래시로 변환 (파싱 에러 방지)
+    // 예: "데이터(Data)" → "데이터/Data", "불확실성(Black Box)" → "불확실성/Black Box"
+    trimmed = trimmed.replace(/\(([^)]+)\)/g, "/$1");
+
+    // 2. 연속 공백을 단일 공백으로 치환 (SPACELIST 에러 방지)
+    trimmed = trimmed.replace(/\s{2,}/g, " ");
+
+    // 3. 특수 공백 문자를 일반 공백으로 변환
+    trimmed = trimmed.replace(/[\u00A0\u2002\u2003\u2009]/g, " ");
 
     // 들여쓰기 레벨 계산 (스페이스 기준)
     const leadingSpaces = line.match(/^(\s*)/)?.[1]?.length || 0;
