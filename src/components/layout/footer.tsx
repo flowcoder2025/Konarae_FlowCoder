@@ -95,11 +95,14 @@ export function Footer() {
                 />
               </li>
               <li>
-                <SupportModal>
-                  <button className="text-xs text-muted-foreground hover:text-foreground transition-colors">
-                    제휴 문의
-                  </button>
-                </SupportModal>
+                <a
+                  href="https://about.flow-coder.com/#contact"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  제휴 문의
+                </a>
               </li>
             </ul>
           </div>
