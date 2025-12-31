@@ -353,9 +353,12 @@ export function MermaidRenderer({ chart, className }: MermaidRendererProps) {
   }
 
   // Success state - render SVG
+  // mermaid-container 클래스와 data-mermaid 속성 추가: PDF/DOCX 내보내기 시 캡처용
   return (
     <div
-      className={`my-4 p-4 bg-background rounded-lg border border-border overflow-x-auto ${className || ""}`}
+      className={`mermaid-container my-4 p-4 bg-background rounded-lg border border-border overflow-x-auto ${className || ""}`}
+      data-mermaid="true"
+      data-mermaid-code={chart}
       dangerouslySetInnerHTML={{ __html: svg }}
     />
   );

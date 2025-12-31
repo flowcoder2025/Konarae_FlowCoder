@@ -1,6 +1,6 @@
 /**
  * Document Export Library (PRD Feature 2 - 내보내기)
- * - PDF 내보내기 (pdf-lib) - 서버리스 환경 완벽 지원
+ * - PDF 내보내기 (Puppeteer + HTML/CSS) - 완벽한 스타일링 지원
  * - DOCX 내보내기 (docx + 마크다운 파싱) - 완전한 마크다운 지원
  * - HWP 내보내기 (외부 서비스)
  */
@@ -26,23 +26,13 @@ import {
   STYLES,
 } from "./markdown-to-docx";
 import type { MermaidImage } from "./mermaid-to-image";
-import { PDFDocument, rgb } from "pdf-lib";
-import fontkit from "@pdf-lib/fontkit";
+import puppeteer from "puppeteer-core";
+import chromium from "@sparticuz/chromium";
 import { formatDateKST } from "@/lib/utils";
-import { readFile } from "fs/promises";
 import { join } from "path";
 import { createLogger } from "@/lib/logger";
 
 const logger = createLogger({ lib: "export" });
-
-// 로컬 폰트 파일 경로 (public/fonts에 포함) - TTF 형식 사용
-const LOCAL_FONT_PATH = join(process.cwd(), "public", "fonts", "NotoSansKR-Regular.ttf");
-
-// CDN 폴백 URL - TTF 형식
-const NOTO_SANS_KR_CDN = "https://github.com/googlefonts/noto-cjk/raw/main/Sans/TTF/Korean/NotoSansKR-Regular.ttf";
-
-// 폰트 캐시 (메모리 내 캐싱)
-let cachedFontBytes: ArrayBuffer | null = null;
 
 export type ExportFormat = "pdf" | "docx" | "hwp";
 
@@ -71,190 +61,151 @@ export interface ExportResult {
   error?: string;
 }
 
-/**
- * 한글 폰트 로드 (로컬 파일 우선, CDN 폴백, 캐싱 지원)
- * pdf-lib에 전달할 Uint8Array 반환
- */
-async function loadKoreanFont(): Promise<Uint8Array | null> {
-  if (cachedFontBytes) {
-    return new Uint8Array(cachedFontBytes);
-  }
-
-  // 1. 로컬 파일 시도 (가장 안정적)
-  try {
-    const buffer = await readFile(LOCAL_FONT_PATH);
-    // Buffer를 새 Uint8Array로 복사 (정확한 바이트 보장)
-    const uint8Array = new Uint8Array(buffer.length);
-    for (let i = 0; i < buffer.length; i++) {
-      uint8Array[i] = buffer[i];
-    }
-    cachedFontBytes = uint8Array.buffer as ArrayBuffer;
-    logger.info(`Korean font loaded from local file, size: ${buffer.length}`);
-    return uint8Array;
-  } catch (localError) {
-    logger.warn("Local font not found, trying CDN", { error: localError });
-  }
-
-  // 2. CDN 폴백
-  try {
-    const response = await fetch(NOTO_SANS_KR_CDN);
-    if (!response.ok) {
-      throw new Error(`CDN response: ${response.status}`);
-    }
-    cachedFontBytes = await response.arrayBuffer();
-    logger.info(`Korean font loaded from CDN, size: ${cachedFontBytes.byteLength}`);
-    return new Uint8Array(cachedFontBytes);
-  } catch (cdnError) {
-    logger.error("Failed to load Korean font from all sources", { error: cdnError });
-    return null;
-  }
-}
-
-/**
- * 텍스트를 지정된 폭에 맞게 줄바꿈 처리
- */
-function wrapText(text: string, maxCharsPerLine: number): string[] {
-  const lines: string[] = [];
-  const paragraphs = text.split("\n");
-
-  for (const paragraph of paragraphs) {
-    if (paragraph.length === 0) {
-      lines.push("");
-      continue;
-    }
-
-    let remaining = paragraph;
-    while (remaining.length > 0) {
-      if (remaining.length <= maxCharsPerLine) {
-        lines.push(remaining);
-        break;
-      }
-
-      // 단어 단위로 끊기 시도
-      let breakPoint = remaining.lastIndexOf(" ", maxCharsPerLine);
-      if (breakPoint === -1 || breakPoint < maxCharsPerLine * 0.5) {
-        breakPoint = maxCharsPerLine;
-      }
-
-      lines.push(remaining.substring(0, breakPoint));
-      remaining = remaining.substring(breakPoint).trimStart();
-    }
-  }
-
-  return lines;
-}
-
 // ============================================================================
-// PDF 마크다운 파싱 타입
+// PDF HTML 템플릿 생성
 // ============================================================================
 
-interface PDFContentBlock {
-  type: "heading" | "paragraph" | "list" | "code" | "mermaid" | "table";
-  level?: number; // heading level (1-6)
-  content: string;
-  items?: string[]; // list items
-  ordered?: boolean; // ordered list
-  rows?: string[][]; // table rows
-}
-
 /**
- * 마크다운 콘텐츠를 PDF용 블록으로 파싱
+ * 마크다운을 HTML로 변환 (PDF용)
+ * - 헤딩, 리스트, 테이블, 코드 블록 지원
+ * - Mermaid 다이어그램은 이미지로 대체
  */
-function parseMarkdownForPDF(content: string): PDFContentBlock[] {
-  const blocks: PDFContentBlock[] = [];
+function markdownToHtml(content: string, mermaidImages: MermaidImage[], mermaidIndex: { current: number }): string {
   const lines = content.split("\n");
+  let html = "";
   let i = 0;
+  let inList = false;
+  let listType = "";
+
+  const closeList = () => {
+    if (inList) {
+      html += listType === "ul" ? "</ul>" : "</ol>";
+      inList = false;
+    }
+  };
 
   while (i < lines.length) {
     const line = lines[i];
 
-    // 빈 줄 건너뛰기
-    if (line.trim() === "") {
-      i++;
-      continue;
-    }
-
-    // Mermaid 코드 블록
-    if (line.trim().startsWith("```mermaid")) {
-      let mermaidContent = "";
+    // Mermaid 코드 블록 → 이미지로 대체
+    // 대소문자 무시, 공백 허용
+    const trimmedLine = line.trim().toLowerCase();
+    if (trimmedLine.startsWith("```mermaid") || trimmedLine === "```mermaid") {
+      closeList();
       i++;
       while (i < lines.length && !lines[i].trim().startsWith("```")) {
-        mermaidContent += lines[i] + "\n";
         i++;
       }
-      blocks.push({ type: "mermaid", content: mermaidContent.trim() });
       i++; // 닫는 ``` 건너뛰기
+
+      // Mermaid 이미지 삽입
+      if (mermaidImages && mermaidIndex.current < mermaidImages.length) {
+        const img = mermaidImages[mermaidIndex.current];
+        mermaidIndex.current++;
+        html += `<div class="mermaid-image"><img src="data:image/png;base64,${img.imageData}" alt="Mermaid Diagram" /></div>`;
+      } else {
+        // 이미지가 없으면 placeholder 표시
+        html += `<div class="mermaid-placeholder">[다이어그램 ${mermaidIndex.current + 1}]</div>`;
+        mermaidIndex.current++; // 인덱스는 증가시켜 다음 블록과 매칭되도록
+      }
       continue;
     }
 
     // 일반 코드 블록
     if (line.trim().startsWith("```")) {
-      let codeContent = "";
+      closeList();
       const lang = line.trim().slice(3);
+      let codeContent = "";
       i++;
       while (i < lines.length && !lines[i].trim().startsWith("```")) {
-        codeContent += lines[i] + "\n";
+        codeContent += escapeHtml(lines[i]) + "\n";
         i++;
       }
-      blocks.push({ type: "code", content: codeContent.trimEnd(), level: lang ? 1 : 0 });
       i++; // 닫는 ``` 건너뛰기
+      html += `<pre class="code-block"><code>${codeContent.trimEnd()}</code></pre>`;
       continue;
     }
 
-    // 헤딩 (# ~ ######)
+    // 헤딩
     const headingMatch = line.match(/^(#{1,6})\s+(.+)$/);
     if (headingMatch) {
-      blocks.push({
-        type: "heading",
-        level: headingMatch[1].length,
-        content: headingMatch[2],
-      });
+      closeList();
+      const level = headingMatch[1].length;
+      const text = parseInlineMarkdown(headingMatch[2]);
+      html += `<h${level}>${text}</h${level}>`;
       i++;
+      continue;
+    }
+
+    // 테이블
+    if (line.trim().startsWith("|")) {
+      closeList();
+      const tableRows: string[][] = [];
+      while (i < lines.length && lines[i].trim().startsWith("|")) {
+        const cells = lines[i]
+          .split("|")
+          .map((cell) => cell.trim())
+          .filter((cell) => cell.length > 0 && !cell.match(/^[-:]+$/));
+        if (cells.length > 0) {
+          tableRows.push(cells);
+        }
+        i++;
+      }
+      if (tableRows.length > 0) {
+        html += `<table><thead><tr>`;
+        for (const cell of tableRows[0]) {
+          html += `<th>${parseInlineMarkdown(cell)}</th>`;
+        }
+        html += `</tr></thead><tbody>`;
+        for (let r = 1; r < tableRows.length; r++) {
+          html += `<tr>`;
+          for (const cell of tableRows[r]) {
+            html += `<td>${parseInlineMarkdown(cell)}</td>`;
+          }
+          html += `</tr>`;
+        }
+        html += `</tbody></table>`;
+      }
       continue;
     }
 
     // 순서 없는 리스트
-    if (line.match(/^[\s]*[-*+]\s+/)) {
-      const items: string[] = [];
-      while (i < lines.length && lines[i].match(/^[\s]*[-*+]\s+/)) {
-        items.push(lines[i].replace(/^[\s]*[-*+]\s+/, ""));
-        i++;
+    const ulMatch = line.match(/^(\s*)[-*+]\s+(.+)$/);
+    if (ulMatch) {
+      if (!inList || listType !== "ul") {
+        closeList();
+        html += "<ul>";
+        inList = true;
+        listType = "ul";
       }
-      blocks.push({ type: "list", content: "", items, ordered: false });
+      html += `<li>${parseInlineMarkdown(ulMatch[2])}</li>`;
+      i++;
       continue;
     }
 
     // 순서 있는 리스트
-    if (line.match(/^[\s]*\d+\.\s+/)) {
-      const items: string[] = [];
-      while (i < lines.length && lines[i].match(/^[\s]*\d+\.\s+/)) {
-        items.push(lines[i].replace(/^[\s]*\d+\.\s+/, ""));
-        i++;
+    const olMatch = line.match(/^(\s*)\d+\.\s+(.+)$/);
+    if (olMatch) {
+      if (!inList || listType !== "ol") {
+        closeList();
+        html += "<ol>";
+        inList = true;
+        listType = "ol";
       }
-      blocks.push({ type: "list", content: "", items, ordered: true });
+      html += `<li>${parseInlineMarkdown(olMatch[2])}</li>`;
+      i++;
       continue;
     }
 
-    // 테이블 (| 로 시작)
-    if (line.trim().startsWith("|")) {
-      const rows: string[][] = [];
-      while (i < lines.length && lines[i].trim().startsWith("|")) {
-        const row = lines[i]
-          .split("|")
-          .map((cell) => cell.trim())
-          .filter((cell) => cell && !cell.match(/^[-:]+$/));
-        if (row.length > 0) {
-          rows.push(row);
-        }
-        i++;
-      }
-      if (rows.length > 0) {
-        blocks.push({ type: "table", content: "", rows });
-      }
+    // 빈 줄
+    if (line.trim() === "") {
+      closeList();
+      i++;
       continue;
     }
 
-    // 일반 문단 (여러 줄 수집)
+    // 일반 문단
+    closeList();
     let paragraphContent = line;
     i++;
     while (
@@ -269,444 +220,378 @@ function parseMarkdownForPDF(content: string): PDFContentBlock[] {
       paragraphContent += " " + lines[i];
       i++;
     }
-    blocks.push({ type: "paragraph", content: paragraphContent });
+    html += `<p>${parseInlineMarkdown(paragraphContent)}</p>`;
   }
 
-  return blocks;
+  closeList();
+  return html;
 }
 
 /**
- * 마크다운 인라인 스타일 제거 (볼드, 이탤릭 등)
- * PDF에서는 단순 텍스트로 표시
+ * HTML 특수문자 이스케이프
  */
-function stripInlineMarkdown(text: string): string {
+function escapeHtml(text: string): string {
   return text
-    .replace(/\*\*([^*]+)\*\*/g, "$1") // 볼드
-    .replace(/\*([^*]+)\*/g, "$1") // 이탤릭
-    .replace(/__([^_]+)__/g, "$1") // 볼드
-    .replace(/_([^_]+)_/g, "$1") // 이탤릭
-    .replace(/`([^`]+)`/g, "$1") // 인라인 코드
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1"); // 링크
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 /**
- * PDF 내보내기 (pdf-lib 사용 - 서버리스 환경 완벽 지원)
- * - Vercel 서버리스 환경에서 안정적으로 동작
- * - 한글 폰트 임베딩 지원 (Noto Sans KR)
+ * 마크다운 인라인 스타일을 HTML로 변환
+ */
+function parseInlineMarkdown(text: string): string {
+  return text
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>") // 볼드
+    .replace(/\*([^*]+)\*/g, "<em>$1</em>") // 이탤릭
+    .replace(/__([^_]+)__/g, "<strong>$1</strong>") // 볼드
+    .replace(/_([^_]+)_/g, "<em>$1</em>") // 이탤릭
+    .replace(/`([^`]+)`/g, "<code>$1</code>") // 인라인 코드
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>') // 링크
+    .replace(/<br>/g, "<br/>"); // BR 태그 정규화
+}
+
+/**
+ * PDF용 HTML 문서 생성
+ */
+function generatePdfHtml(data: BusinessPlanExportData): string {
+  const mermaidIndex = { current: 0 };
+  const sortedSections = [...(data.sections || [])].sort((a, b) => a.order - b.order);
+
+  // Mermaid 이미지 처리 로깅
+  if (data.mermaidImages && data.mermaidImages.length > 0) {
+    logger.info("PDF export: Mermaid images embedded", {
+      count: data.mermaidImages.length,
+      sizes: data.mermaidImages.map(img => img.imageData?.length || 0),
+    });
+  }
+
+  let sectionsHtml = "";
+  for (const section of sortedSections) {
+    sectionsHtml += `
+      <div class="section">
+        <h2 class="section-title">${escapeHtml(section.title)}</h2>
+        <div class="section-content">
+          ${markdownToHtml(section.content || "", data.mermaidImages || [], mermaidIndex)}
+        </div>
+      </div>
+    `;
+  }
+
+  return `<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${escapeHtml(data.title || "사업계획서")}</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap');
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Noto Sans KR', -apple-system, BlinkMacSystemFont, sans-serif;
+      font-size: 11pt;
+      line-height: 1.6;
+      color: #333;
+      background: white;
+      padding: 40px 50px;
+    }
+
+    /* 표지 */
+    .cover {
+      text-align: center;
+      padding: 60px 0 40px;
+      border-bottom: 2px solid #e0e0e0;
+      margin-bottom: 40px;
+    }
+
+    .cover h1 {
+      font-size: 28pt;
+      font-weight: 700;
+      color: #1a1a1a;
+      margin-bottom: 20px;
+    }
+
+    .cover .company-name {
+      font-size: 14pt;
+      font-weight: 500;
+      color: #333;
+      margin-bottom: 8px;
+    }
+
+    .cover .project-name {
+      font-size: 12pt;
+      color: #666;
+      margin-bottom: 8px;
+    }
+
+    .cover .date {
+      font-size: 10pt;
+      color: #888;
+      font-style: italic;
+    }
+
+    /* 섹션 */
+    .section {
+      margin-bottom: 30px;
+      page-break-inside: avoid;
+    }
+
+    .section-title {
+      font-size: 16pt;
+      font-weight: 700;
+      color: #1a1a1a;
+      border-bottom: 2px solid #0ea5e9;
+      padding-bottom: 8px;
+      margin-bottom: 16px;
+    }
+
+    .section-content {
+      font-size: 11pt;
+    }
+
+    /* 헤딩 */
+    h1 { font-size: 20pt; font-weight: 700; margin: 24px 0 12px; color: #1a1a1a; }
+    h2 { font-size: 16pt; font-weight: 700; margin: 20px 0 10px; color: #1a1a1a; }
+    h3 { font-size: 14pt; font-weight: 600; margin: 16px 0 8px; color: #333; }
+    h4 { font-size: 12pt; font-weight: 600; margin: 14px 0 6px; color: #333; }
+    h5 { font-size: 11pt; font-weight: 600; margin: 12px 0 4px; color: #444; }
+    h6 { font-size: 10pt; font-weight: 600; margin: 10px 0 4px; color: #555; }
+
+    /* 문단 */
+    p {
+      margin: 8px 0;
+      text-align: justify;
+    }
+
+    /* 리스트 */
+    ul, ol {
+      margin: 8px 0 8px 24px;
+    }
+
+    li {
+      margin: 4px 0;
+    }
+
+    /* 테이블 */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 16px 0;
+      font-size: 10pt;
+    }
+
+    th, td {
+      border: 1px solid #d0d0d0;
+      padding: 8px 12px;
+      text-align: left;
+    }
+
+    th {
+      background-color: #f5f5f5;
+      font-weight: 600;
+      color: #333;
+    }
+
+    tr:nth-child(even) td {
+      background-color: #fafafa;
+    }
+
+    /* 코드 블록 */
+    .code-block {
+      background-color: #f8f8f8;
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
+      padding: 12px 16px;
+      margin: 12px 0;
+      overflow-x: auto;
+      font-family: 'Consolas', 'Monaco', monospace;
+      font-size: 9pt;
+      line-height: 1.4;
+    }
+
+    code {
+      font-family: 'Consolas', 'Monaco', monospace;
+      background-color: #f0f0f0;
+      padding: 2px 4px;
+      border-radius: 3px;
+      font-size: 9pt;
+    }
+
+    .code-block code {
+      background: none;
+      padding: 0;
+    }
+
+    /* 강조 */
+    strong {
+      font-weight: 700;
+      color: #1a1a1a;
+    }
+
+    em {
+      font-style: italic;
+    }
+
+    /* Mermaid 이미지 */
+    .mermaid-image {
+      text-align: center;
+      margin: 20px 0;
+      page-break-inside: avoid;
+    }
+
+    .mermaid-image img {
+      max-width: 100%;
+      height: auto;
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
+      padding: 10px;
+      background: white;
+    }
+
+    .mermaid-placeholder {
+      background: #f5f5f5;
+      border: 1px dashed #ccc;
+      padding: 20px;
+      text-align: center;
+      color: #888;
+      margin: 16px 0;
+    }
+
+    /* 메타데이터 */
+    .metadata {
+      margin-top: 40px;
+      padding-top: 20px;
+      border-top: 1px solid #e0e0e0;
+      text-align: right;
+      font-size: 9pt;
+      color: #888;
+    }
+
+    /* 인쇄 설정 */
+    @media print {
+      body {
+        padding: 0;
+      }
+
+      .section {
+        page-break-inside: avoid;
+      }
+
+      .mermaid-image {
+        page-break-inside: avoid;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="cover">
+    <h1>${escapeHtml(data.title || "사업계획서")}</h1>
+    ${data.companyName ? `<div class="company-name">회사명: ${escapeHtml(data.companyName)}</div>` : ""}
+    ${data.projectName ? `<div class="project-name">지원사업: ${escapeHtml(data.projectName)}</div>` : ""}
+    <div class="date">생성일: ${formatDateKST(data.createdAt)}</div>
+  </div>
+
+  ${sectionsHtml}
+
+  <div class="metadata">
+    ${data.metadata?.author ? `<div>작성자: ${escapeHtml(data.metadata.author)}</div>` : ""}
+    ${data.metadata?.tags?.length ? `<div>태그: ${data.metadata.tags.map(escapeHtml).join(", ")}</div>` : ""}
+  </div>
+</body>
+</html>`;
+}
+
+/**
+ * PDF 내보내기 (Puppeteer + HTML/CSS - 완벽한 스타일링 지원)
+ * - HTML/CSS 기반으로 DOCX와 동일한 품질의 PDF 생성
  * - Mermaid 다이어그램 이미지 삽입 지원
- * - 마크다운 스타일링 (헤딩, 리스트, 코드 블록, 테이블)
+ * - 완전한 마크다운 스타일링
+ * - Vercel 서버리스 환경 지원 (@sparticuz/chromium)
  */
 export async function exportToPDF(
   data: BusinessPlanExportData
 ): Promise<ExportResult> {
+  let browser = null;
+
   try {
-    // PDF 문서 생성
-    const pdfDoc = await PDFDocument.create();
-    pdfDoc.registerFontkit(fontkit);
+    // HTML 생성
+    const html = generatePdfHtml(data);
 
-    // 한글 폰트 로드 (필수)
-    const koreanFontBytes = await loadKoreanFont();
+    // Puppeteer 브라우저 시작 (환경에 따라 다른 설정)
+    const isProduction = process.env.NODE_ENV === "production";
 
-    if (!koreanFontBytes) {
-      logger.error("Korean font not available");
-      return {
-        success: false,
-        error: "PDF 생성에 필요한 한글 폰트를 로드할 수 없습니다. DOCX 형식을 사용해주세요.",
-      };
-    }
-
-    let font;
-    try {
-      font = await pdfDoc.embedFont(koreanFontBytes);
-    } catch (fontError) {
-      logger.error("Korean font embedding failed", { error: fontError });
-      return {
-        success: false,
-        error: "한글 폰트 임베딩에 실패했습니다. DOCX 형식을 사용해주세요.",
-      };
-    }
-
-    // A4 크기 설정
-    const pageWidth = 595.28; // A4 width in points
-    const pageHeight = 841.89; // A4 height in points
-    const margin = 50;
-    const contentWidth = pageWidth - margin * 2;
-    const lineHeight = 16;
-    const titleSize = 24;
-    const headingSize = 16;
-    const subHeadingSize = 14;
-    const bodySize = 11;
-    const codeSize = 10;
-    const listIndent = 20;
-
-    // 텍스트 안전 처리 함수
-    const safeText = (text: string | null | undefined): string => {
-      return (text || "").toString();
-    };
-
-    // 최대 문자 수 계산 (대략적)
-    const maxCharsPerLine = Math.floor(contentWidth / (bodySize * 0.5));
-    const maxCodeCharsPerLine = Math.floor(contentWidth / (codeSize * 0.5));
-
-    let currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
-    let yPosition = pageHeight - margin;
-
-    // Mermaid 이미지 인덱스 (섹션 순서대로 매칭)
-    let mermaidImageIndex = 0;
-
-    // 새 페이지 추가 함수
-    const ensureSpace = (requiredSpace: number) => {
-      if (yPosition - requiredSpace < margin) {
-        currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
-        yPosition = pageHeight - margin;
-      }
-    };
-
-    // 텍스트 그리기 헬퍼
-    const drawTextLine = (
-      text: string,
-      x: number,
-      size: number,
-      color: { r: number; g: number; b: number } = { r: 0.2, g: 0.2, b: 0.2 }
-    ) => {
-      ensureSpace(lineHeight);
-      if (text.length > 0) {
-        currentPage.drawText(text, {
-          x,
-          y: yPosition,
-          size,
-          font,
-          color: rgb(color.r, color.g, color.b),
-        });
-      }
-      yPosition -= lineHeight;
-    };
-
-    // Mermaid 이미지 그리기
-    const drawMermaidImage = async () => {
-      if (!data.mermaidImages || mermaidImageIndex >= data.mermaidImages.length) {
-        // 이미지가 없으면 플레이스홀더 텍스트
-        drawTextLine("[Mermaid 다이어그램]", margin, bodySize, { r: 0.5, g: 0.5, b: 0.5 });
-        return;
-      }
-
-      const mermaidImage = data.mermaidImages[mermaidImageIndex];
-      mermaidImageIndex++;
-
-      try {
-        // Base64를 Uint8Array로 변환
-        const imageBytes = Uint8Array.from(atob(mermaidImage.imageData), (c) =>
-          c.charCodeAt(0)
-        );
-
-        // PNG 이미지 임베드
-        const pngImage = await pdfDoc.embedPng(imageBytes);
-
-        // 이미지 크기 계산 (contentWidth에 맞게 조정)
-        const aspectRatio = mermaidImage.width / mermaidImage.height;
-        let drawWidth = Math.min(mermaidImage.width, contentWidth);
-        let drawHeight = drawWidth / aspectRatio;
-
-        // 최대 높이 제한 (페이지의 60%)
-        const maxHeight = pageHeight * 0.6;
-        if (drawHeight > maxHeight) {
-          drawHeight = maxHeight;
-          drawWidth = drawHeight * aspectRatio;
-        }
-
-        // 페이지 공간 확보
-        ensureSpace(drawHeight + lineHeight);
-
-        // 이미지 그리기 (중앙 정렬)
-        const imageX = margin + (contentWidth - drawWidth) / 2;
-        currentPage.drawImage(pngImage, {
-          x: imageX,
-          y: yPosition - drawHeight,
-          width: drawWidth,
-          height: drawHeight,
-        });
-
-        yPosition -= drawHeight + lineHeight;
-      } catch (imgError) {
-        logger.warn("Failed to embed Mermaid image", { error: imgError });
-        drawTextLine("[이미지 로드 실패]", margin, bodySize, { r: 0.7, g: 0.3, b: 0.3 });
-      }
-    };
-
-    // 코드 블록 그리기
-    const drawCodeBlock = (content: string) => {
-      const codeLines = content.split("\n");
-      const blockHeight = (codeLines.length + 1) * lineHeight + 10;
-
-      ensureSpace(blockHeight);
-
-      // 배경 그리기
-      const bgY = yPosition - blockHeight + lineHeight;
-      currentPage.drawRectangle({
-        x: margin - 5,
-        y: bgY,
-        width: contentWidth + 10,
-        height: blockHeight,
-        color: rgb(0.95, 0.95, 0.95),
-        borderColor: rgb(0.85, 0.85, 0.85),
-        borderWidth: 1,
+    if (isProduction) {
+      // Vercel 서버리스 환경
+      browser = await puppeteer.launch({
+        args: chromium.args,
+        executablePath: await chromium.executablePath(),
+        headless: true,
+        defaultViewport: { width: 1200, height: 800 },
       });
+    } else {
+      // 로컬 개발 환경 - 시스템 Chrome 사용
+      const executablePath = process.platform === "darwin"
+        ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        : process.platform === "win32"
+          ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+          : "/usr/bin/google-chrome";
 
-      yPosition -= 5; // 상단 패딩
-
-      for (const codeLine of codeLines) {
-        const wrappedLines = wrapText(codeLine, maxCodeCharsPerLine);
-        for (const wrappedLine of wrappedLines) {
-          drawTextLine(wrappedLine, margin + 5, codeSize, { r: 0.3, g: 0.3, b: 0.3 });
-        }
-      }
-
-      yPosition -= 5; // 하단 패딩
-    };
-
-    // 테이블 그리기
-    const drawTable = (rows: string[][]) => {
-      if (rows.length === 0) return;
-
-      const colCount = Math.max(...rows.map((r) => r.length));
-      const colWidth = contentWidth / colCount;
-      const rowHeight = lineHeight * 1.5;
-      const tableHeight = rows.length * rowHeight;
-
-      ensureSpace(tableHeight + lineHeight);
-
-      // 테이블 그리기
-      for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
-        const row = rows[rowIdx];
-        const rowY = yPosition - rowHeight;
-        const isHeader = rowIdx === 0;
-
-        // 헤더 배경
-        if (isHeader) {
-          currentPage.drawRectangle({
-            x: margin,
-            y: rowY,
-            width: contentWidth,
-            height: rowHeight,
-            color: rgb(0.9, 0.9, 0.9),
-          });
-        }
-
-        // 셀 텍스트
-        for (let colIdx = 0; colIdx < row.length; colIdx++) {
-          const cellX = margin + colIdx * colWidth + 5;
-          const cellText = stripInlineMarkdown(row[colIdx]).substring(0, 30); // 30자 제한
-          currentPage.drawText(cellText, {
-            x: cellX,
-            y: rowY + rowHeight / 3,
-            size: bodySize,
-            font,
-            color: rgb(0.2, 0.2, 0.2),
-          });
-        }
-
-        // 행 테두리
-        currentPage.drawLine({
-          start: { x: margin, y: rowY },
-          end: { x: margin + contentWidth, y: rowY },
-          thickness: 0.5,
-          color: rgb(0.7, 0.7, 0.7),
-        });
-
-        yPosition = rowY;
-      }
-
-      yPosition -= lineHeight / 2;
-    };
-
-    // 리스트 그리기
-    const drawList = (items: string[], ordered: boolean) => {
-      for (let i = 0; i < items.length; i++) {
-        const bullet = ordered ? `${i + 1}.` : "•";
-        const itemText = stripInlineMarkdown(items[i]);
-        const wrappedLines = wrapText(itemText, maxCharsPerLine - 5);
-
-        for (let j = 0; j < wrappedLines.length; j++) {
-          ensureSpace(lineHeight);
-          if (j === 0) {
-            // 첫 줄에 불릿/번호 추가
-            currentPage.drawText(bullet, {
-              x: margin + listIndent - 15,
-              y: yPosition,
-              size: bodySize,
-              font,
-              color: rgb(0.3, 0.3, 0.3),
-            });
-          }
-          currentPage.drawText(wrappedLines[j], {
-            x: margin + listIndent,
-            y: yPosition,
-            size: bodySize,
-            font,
-            color: rgb(0.2, 0.2, 0.2),
-          });
-          yPosition -= lineHeight;
-        }
-      }
-    };
-
-    // =====================================================
-    // 문서 헤더 렌더링
-    // =====================================================
-
-    // 제목
-    ensureSpace(titleSize + lineHeight);
-    currentPage.drawText(safeText(data.title) || "사업계획서", {
-      x: margin,
-      y: yPosition,
-      size: titleSize,
-      font,
-      color: rgb(0.1, 0.1, 0.1),
-    });
-    yPosition -= titleSize + lineHeight;
-
-    // 회사명
-    if (data.companyName) {
-      ensureSpace(lineHeight * 2);
-      currentPage.drawText(`회사명: ${safeText(data.companyName)}`, {
-        x: margin,
-        y: yPosition,
-        size: bodySize,
-        font,
-        color: rgb(0.3, 0.3, 0.3),
+      browser = await puppeteer.launch({
+        headless: true,
+        executablePath,
+        args: ["--no-sandbox", "--disable-setuid-sandbox"],
       });
-      yPosition -= lineHeight;
     }
 
-    // 프로젝트명
-    if (data.projectName) {
-      ensureSpace(lineHeight * 2);
-      currentPage.drawText(`지원사업: ${safeText(data.projectName)}`, {
-        x: margin,
-        y: yPosition,
-        size: bodySize,
-        font,
-        color: rgb(0.3, 0.3, 0.3),
-      });
-      yPosition -= lineHeight;
-    }
+    const page = await browser.newPage();
 
-    yPosition -= lineHeight; // 여백
-
-    // =====================================================
-    // 섹션별 내용 렌더링 (마크다운 파싱 적용)
-    // =====================================================
-    const sortedSections = [...(data.sections || [])].sort((a, b) => a.order - b.order);
-
-    for (const section of sortedSections) {
-      // 섹션 제목
-      ensureSpace(headingSize + lineHeight * 2);
-      currentPage.drawText(safeText(section.title), {
-        x: margin,
-        y: yPosition,
-        size: headingSize,
-        font,
-        color: rgb(0.15, 0.15, 0.15),
-      });
-      yPosition -= headingSize + lineHeight * 0.5;
-
-      // 섹션 내용 파싱
-      const blocks = parseMarkdownForPDF(safeText(section.content));
-
-      for (const block of blocks) {
-        switch (block.type) {
-          case "heading": {
-            const hSize =
-              block.level === 1
-                ? headingSize
-                : block.level === 2
-                  ? subHeadingSize
-                  : bodySize + 1;
-            ensureSpace(hSize + lineHeight);
-            yPosition -= lineHeight / 2;
-            currentPage.drawText(stripInlineMarkdown(block.content), {
-              x: margin,
-              y: yPosition,
-              size: hSize,
-              font,
-              color: rgb(0.15, 0.15, 0.15),
-            });
-            yPosition -= hSize + lineHeight / 2;
-            break;
-          }
-
-          case "paragraph": {
-            const paraText = stripInlineMarkdown(block.content);
-            const wrappedLines = wrapText(paraText, maxCharsPerLine);
-            for (const line of wrappedLines) {
-              drawTextLine(line, margin, bodySize);
-            }
-            yPosition -= lineHeight / 2;
-            break;
-          }
-
-          case "list": {
-            if (block.items && block.items.length > 0) {
-              drawList(block.items, block.ordered || false);
-            }
-            yPosition -= lineHeight / 2;
-            break;
-          }
-
-          case "code": {
-            drawCodeBlock(block.content);
-            yPosition -= lineHeight / 2;
-            break;
-          }
-
-          case "mermaid": {
-            await drawMermaidImage();
-            break;
-          }
-
-          case "table": {
-            if (block.rows && block.rows.length > 0) {
-              drawTable(block.rows);
-            }
-            yPosition -= lineHeight / 2;
-            break;
-          }
-        }
-      }
-
-      yPosition -= lineHeight; // 섹션 간 여백
-    }
-
-    // =====================================================
-    // 메타데이터 (작성자, 날짜)
-    // =====================================================
-    ensureSpace(lineHeight * 3);
-    yPosition -= lineHeight;
-
-    if (data.metadata?.author) {
-      currentPage.drawText(`작성자: ${safeText(data.metadata.author)}`, {
-        x: pageWidth - margin - 150,
-        y: yPosition,
-        size: 9,
-        font,
-        color: rgb(0.5, 0.5, 0.5),
-      });
-      yPosition -= lineHeight;
-    }
-
-    currentPage.drawText(`생성일: ${formatDateKST(data.createdAt)}`, {
-      x: pageWidth - margin - 150,
-      y: yPosition,
-      size: 9,
-      font,
-      color: rgb(0.5, 0.5, 0.5),
+    // HTML 로드 (waitUntil로 폰트 로딩 대기)
+    await page.setContent(html, {
+      waitUntil: ["load", "networkidle0"],
     });
 
-    // PDF를 Uint8Array로 저장
-    const pdfBytes = await pdfDoc.save();
-    // 새 ArrayBuffer로 복사하여 Blob 생성 (타입 호환성)
-    const arrayBuffer = new ArrayBuffer(pdfBytes.length);
-    new Uint8Array(arrayBuffer).set(pdfBytes);
+    // 폰트 로딩을 위한 추가 대기
+    await page.evaluate(() => {
+      return document.fonts.ready;
+    });
+
+    // PDF 생성 (A4 크기, 여백 설정)
+    const pdfBuffer = await page.pdf({
+      format: "A4",
+      printBackground: true,
+      margin: {
+        top: "20mm",
+        right: "15mm",
+        bottom: "20mm",
+        left: "15mm",
+      },
+      displayHeaderFooter: true,
+      headerTemplate: `
+        <div style="font-size: 9px; color: #888; width: 100%; text-align: right; padding-right: 15mm;">
+          ${escapeHtml(data.title || "사업계획서")}
+        </div>
+      `,
+      footerTemplate: `
+        <div style="font-size: 9px; color: #888; width: 100%; text-align: center;">
+          <span class="pageNumber"></span> / <span class="totalPages"></span>
+        </div>
+      `,
+    });
+
+    await browser.close();
+    browser = null;
+
+    // Buffer를 Blob으로 변환 (타입 호환성 보장)
+    const arrayBuffer = new ArrayBuffer(pdfBuffer.length);
+    new Uint8Array(arrayBuffer).set(pdfBuffer);
     const blob = new Blob([arrayBuffer], { type: "application/pdf" });
     const filename = generateExportFilename(data.title, data.companyName, "pdf");
 
@@ -717,6 +602,15 @@ export async function exportToPDF(
     };
   } catch (error) {
     logger.error("PDF export error", { error });
+
+    if (browser) {
+      try {
+        await browser.close();
+      } catch {
+        // 무시
+      }
+    }
+
     return {
       success: false,
       error: error instanceof Error ? error.message : "PDF export failed",

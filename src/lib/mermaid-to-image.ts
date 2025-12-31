@@ -2,10 +2,8 @@
  * Mermaid to Image Converter (Client-side)
  *
  * 브라우저에서 렌더링된 Mermaid 다이어그램을 PNG 이미지로 캡처합니다.
- * html2canvas를 사용하여 SVG를 포함한 DOM 요소를 캡처합니다.
+ * SVG를 직접 Canvas로 변환하여 "Unable to find element in cloned iframe" 에러를 회피합니다.
  */
-
-import html2canvas from "html2canvas";
 
 // ============================================================================
 // 타입 정의
@@ -70,14 +68,74 @@ export function extractMermaidCodes(markdown: string): string[] {
 }
 
 // ============================================================================
-// 이미지 캡처 함수
+// SVG를 Canvas로 직접 변환 (html2canvas 없이)
 // ============================================================================
 
 /**
- * 단일 Mermaid 요소를 PNG로 캡처
+ * foreignObject 내의 HTML 콘텐츠를 SVG 텍스트로 변환
+ * 브라우저 보안 제한으로 foreignObject가 포함된 SVG는 이미지로 로드 불가
  */
-async function captureElement(
-  element: HTMLElement,
+function convertForeignObjectToText(svg: SVGElement): void {
+  const foreignObjects = svg.querySelectorAll("foreignObject");
+
+  foreignObjects.forEach((fo) => {
+    const parent = fo.parentNode;
+    if (!parent) return;
+
+    // foreignObject의 위치 정보 가져오기
+    const x = parseFloat(fo.getAttribute("x") || "0");
+    const y = parseFloat(fo.getAttribute("y") || "0");
+    const width = parseFloat(fo.getAttribute("width") || "100");
+    const height = parseFloat(fo.getAttribute("height") || "50");
+
+    // 내부 텍스트 추출
+    const textContent = fo.textContent?.trim() || "";
+    if (!textContent) {
+      parent.removeChild(fo);
+      return;
+    }
+
+    // foreignObject 내부의 스타일 정보 추출
+    const divElement = fo.querySelector("div");
+    let fontSize = "14";
+    let fill = "#000000";
+    const textAnchor = "middle";
+
+    if (divElement) {
+      const computedStyle = window.getComputedStyle(divElement);
+      fontSize = computedStyle.fontSize?.replace("px", "") || "14";
+      fill = computedStyle.color || "#000000";
+      // RGB to hex 변환
+      if (fill.startsWith("rgb")) {
+        const rgbMatch = fill.match(/\d+/g);
+        if (rgbMatch) {
+          fill = `#${rgbMatch.map((n) => parseInt(n).toString(16).padStart(2, "0")).join("")}`;
+        }
+      }
+    }
+
+    // SVG 텍스트 요소 생성
+    const textElement = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    textElement.setAttribute("x", String(x + width / 2));
+    textElement.setAttribute("y", String(y + height / 2));
+    textElement.setAttribute("text-anchor", textAnchor);
+    textElement.setAttribute("dominant-baseline", "middle");
+    textElement.setAttribute("font-size", fontSize);
+    textElement.setAttribute("fill", fill);
+    textElement.setAttribute("font-family", "Arial, sans-serif");
+    textElement.textContent = textContent;
+
+    // foreignObject를 텍스트로 교체
+    parent.replaceChild(textElement, fo);
+  });
+}
+
+/**
+ * SVG 요소를 PNG 이미지로 변환
+ * html2canvas의 iframe 복제 문제를 회피하기 위해 직접 변환 사용
+ */
+async function svgToImage(
+  svgElement: SVGElement,
   options: CaptureOptions = {}
 ): Promise<{ imageData: string; width: number; height: number } | null> {
   const {
@@ -87,6 +145,175 @@ async function captureElement(
   } = options;
 
   try {
+    // SVG 크기 가져오기
+    const bbox = svgElement.getBoundingClientRect();
+    const svgWidth = bbox.width || svgElement.clientWidth || 400;
+    const svgHeight = bbox.height || svgElement.clientHeight || 300;
+
+    // SVG 복제 및 스타일 인라인화
+    const clonedSvg = svgElement.cloneNode(true) as SVGElement;
+
+    // SVG에 명시적 크기 설정
+    clonedSvg.setAttribute("width", String(svgWidth));
+    clonedSvg.setAttribute("height", String(svgHeight));
+
+    // viewBox가 없으면 추가
+    if (!clonedSvg.getAttribute("viewBox")) {
+      clonedSvg.setAttribute("viewBox", `0 0 ${svgWidth} ${svgHeight}`);
+    }
+
+    // 인라인 스타일 추출 및 적용
+    inlineStyles(clonedSvg);
+
+    // foreignObject를 SVG 텍스트로 변환 (브라우저 보안 제한 우회)
+    // foreignObject가 포함된 SVG는 이미지로 로드 시 렌더링되지 않음
+    convertForeignObjectToText(clonedSvg);
+
+    // SVG를 문자열로 직렬화
+    const serializer = new XMLSerializer();
+    let svgString = serializer.serializeToString(clonedSvg);
+
+    // SVG namespace 추가 (더 정확한 체크)
+    if (!svgString.includes('xmlns="http://www.w3.org/2000/svg"')) {
+      svgString = svgString.replace("<svg", '<svg xmlns="http://www.w3.org/2000/svg"');
+    }
+
+    // xlink namespace 추가 (use 요소 등에서 필요)
+    if (!svgString.includes("xmlns:xlink") && svgString.includes("xlink:")) {
+      svgString = svgString.replace(
+        'xmlns="http://www.w3.org/2000/svg"',
+        'xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"'
+      );
+    }
+
+    // Data URL 방식 사용 (Blob URL보다 더 안정적)
+    const base64Svg = btoa(unescape(encodeURIComponent(svgString)));
+    const dataUrl = `data:image/svg+xml;base64,${base64Svg}`;
+
+    // 이미지로 로드
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error("Image load timeout"));
+      }, 5000);
+
+      img.onload = () => {
+        clearTimeout(timeout);
+        resolve();
+      };
+      img.onerror = (e) => {
+        clearTimeout(timeout);
+        console.error("SVG image load error:", e);
+        reject(new Error(`Image load failed`));
+      };
+      img.src = dataUrl;
+    });
+
+    // 캔버스 생성
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      throw new Error("Canvas context not available");
+    }
+
+    // 스케일 적용된 크기
+    const scaledWidth = svgWidth * scale;
+    const scaledHeight = svgHeight * scale;
+
+    canvas.width = scaledWidth;
+    canvas.height = scaledHeight;
+
+    // 배경색 채우기
+    ctx.fillStyle = backgroundColor;
+    ctx.fillRect(0, 0, scaledWidth, scaledHeight);
+
+    // 이미지 그리기
+    ctx.drawImage(img, 0, 0, scaledWidth, scaledHeight);
+
+    // PNG로 변환
+    const pngDataUrl = canvas.toDataURL("image/png");
+    const imageData = pngDataUrl.replace(/^data:image\/png;base64,/, "");
+
+    // 출력 크기 계산
+    const outputWidth = Math.min(svgWidth, maxWidth);
+    const outputHeight = svgHeight * (outputWidth / svgWidth);
+
+    return {
+      imageData,
+      width: Math.round(outputWidth),
+      height: Math.round(outputHeight),
+    };
+  } catch (error) {
+    console.error("SVG to image conversion failed:", error);
+    return null;
+  }
+}
+
+/**
+ * 요소의 계산된 스타일을 인라인으로 적용
+ */
+function inlineStyles(element: Element): void {
+  const computedStyle = window.getComputedStyle(element);
+
+  // 중요한 스타일 속성들만 인라인화
+  const importantStyles = [
+    "fill", "stroke", "stroke-width", "font-family", "font-size",
+    "font-weight", "text-anchor", "dominant-baseline", "opacity",
+    "transform", "color", "background-color"
+  ];
+
+  if (element instanceof SVGElement || element instanceof HTMLElement) {
+    importantStyles.forEach(prop => {
+      const value = computedStyle.getPropertyValue(prop);
+      if (value && value !== "none" && value !== "normal" && value !== "auto") {
+        (element as SVGElement).style.setProperty(prop, value);
+      }
+    });
+  }
+
+  // 자식 요소들에도 적용
+  Array.from(element.children).forEach(child => {
+    inlineStyles(child);
+  });
+}
+
+// ============================================================================
+// 이미지 캡처 함수
+// ============================================================================
+
+/**
+ * 단일 Mermaid SVG 요소를 PNG로 캡처
+ */
+async function captureElement(
+  element: HTMLElement,
+  options: CaptureOptions = {}
+): Promise<{ imageData: string; width: number; height: number } | null> {
+  try {
+    // SVG 요소 찾기
+    const svgElement = element.querySelector("svg") ||
+                       (element.tagName === "svg" ? element : null);
+
+    if (svgElement && svgElement instanceof SVGElement) {
+      // SVG 직접 변환 시도 (더 안정적)
+      const result = await svgToImage(svgElement, options);
+      if (result) {
+        return result;
+      }
+    }
+
+    // SVG가 없거나 변환 실패 시 html2canvas 폴백
+    console.warn("SVG direct conversion failed, trying html2canvas fallback...");
+
+    const { default: html2canvas } = await import("html2canvas");
+
+    const {
+      scale = 2,
+      backgroundColor = "#ffffff",
+      maxWidth = 800,
+    } = options;
+
     // 요소가 화면에 보이도록 스크롤
     element.scrollIntoView({ behavior: "instant", block: "center" });
 
@@ -99,9 +326,8 @@ async function captureElement(
       useCORS: true,
       allowTaint: true,
       logging: false,
-      // foreignObject 렌더링 문제 해결
+      foreignObjectRendering: true,
       onclone: (clonedDoc, clonedElement) => {
-        // SVG 내부의 foreignObject 스타일 보정
         const svgs = clonedElement.querySelectorAll("svg");
         svgs.forEach((svg) => {
           svg.style.overflow = "visible";
@@ -109,12 +335,9 @@ async function captureElement(
       },
     });
 
-    // PNG로 변환
     const dataUrl = canvas.toDataURL("image/png");
-    // "data:image/png;base64," 접두사 제거
     const imageData = dataUrl.replace(/^data:image\/png;base64,/, "");
 
-    // 실제 크기 계산 (스케일 적용 전)
     const width = Math.min(canvas.width / scale, maxWidth);
     const height = (canvas.height / scale) * (width / (canvas.width / scale));
 
@@ -170,6 +393,8 @@ export async function captureMermaidDiagrams(
       ...Array.from(mermaidSvgContainers),
     ]);
 
+    console.log(`[Mermaid Capture] Found ${allElements.size} elements to capture`);
+
     if (allElements.size === 0) {
       return {
         success: true,
@@ -181,7 +406,7 @@ export async function captureMermaidDiagrams(
     let index = 0;
     for (const element of allElements) {
       try {
-        // SVG 요소 또는 부모 컨테이너 확인
+        // SVG 요소 확인
         const svgElement = element.querySelector("svg");
         if (!svgElement) {
           errors.push(`No SVG found in element ${index}`);
@@ -195,10 +420,10 @@ export async function captureMermaidDiagrams(
           svgElement.getAttribute("data-mermaid") ||
           `mermaid-diagram-${index}`;
 
-        // 캡처 대상 요소 결정 (SVG의 부모 div)
-        const captureTarget = svgElement.parentElement as HTMLElement || element as HTMLElement;
+        console.log(`[Mermaid Capture] Capturing element ${index}...`);
 
-        const result = await captureElement(captureTarget, options);
+        // SVG 직접 변환 시도
+        const result = await svgToImage(svgElement as SVGElement, options);
 
         if (result) {
           images.push({
@@ -207,15 +432,31 @@ export async function captureMermaidDiagrams(
             width: result.width,
             height: result.height,
           });
+          console.log(`[Mermaid Capture] Element ${index} captured successfully`);
         } else {
-          errors.push(`Failed to capture element ${index}`);
+          // 폴백: captureElement 사용
+          const fallbackResult = await captureElement(element as HTMLElement, options);
+          if (fallbackResult) {
+            images.push({
+              code: mermaidCode,
+              imageData: fallbackResult.imageData,
+              width: fallbackResult.width,
+              height: fallbackResult.height,
+            });
+            console.log(`[Mermaid Capture] Element ${index} captured via fallback`);
+          } else {
+            errors.push(`Failed to capture element ${index}`);
+          }
         }
       } catch (err) {
         errors.push(`Error capturing element ${index}: ${err}`);
+        console.error(`[Mermaid Capture] Error on element ${index}:`, err);
       }
 
       index++;
     }
+
+    console.log(`[Mermaid Capture] Complete: ${images.length} images, ${errors.length} errors`);
 
     return {
       success: true,
@@ -223,6 +464,7 @@ export async function captureMermaidDiagrams(
       errors,
     };
   } catch (error) {
+    console.error("[Mermaid Capture] Fatal error:", error);
     return {
       success: false,
       images: [],
@@ -255,7 +497,7 @@ export async function captureMermaidFromSections(
     for (const section of sections) {
       // 섹션 내 Mermaid 컨테이너들 찾기
       const mermaidContainers = section.querySelectorAll(
-        "div:has(> svg), .my-4.p-4.bg-background"
+        "div:has(> svg), .mermaid-container"
       );
 
       for (const mermaidContainer of mermaidContainers) {
@@ -267,10 +509,7 @@ export async function captureMermaidFromSections(
         if (!svgId.includes("mermaid")) continue;
 
         try {
-          const result = await captureElement(
-            mermaidContainer as HTMLElement,
-            options
-          );
+          const result = await svgToImage(svg as SVGElement, options);
 
           if (result) {
             // 코드 식별자 생성 (SVG ID 기반)

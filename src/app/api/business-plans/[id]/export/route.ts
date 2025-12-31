@@ -53,6 +53,14 @@ export async function POST(
     const body = await req.json();
     const validatedData = exportSchema.parse(body);
 
+    // Mermaid 이미지 수신 로깅
+    if (validatedData.mermaidImages && validatedData.mermaidImages.length > 0) {
+      logger.info("Export API: Mermaid images received", {
+        format: validatedData.format,
+        count: validatedData.mermaidImages.length,
+      });
+    }
+
     // Get business plan with sections
     const businessPlan = await prisma.businessPlan.findUnique({
       where: { id },

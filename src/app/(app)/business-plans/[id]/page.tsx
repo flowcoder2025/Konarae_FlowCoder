@@ -125,8 +125,8 @@ export default function BusinessPlanDetailPage() {
     try {
       let mermaidImages: MermaidImage[] = [];
 
-      // DOCX 내보내기 시 Mermaid 다이어그램 캡처
-      if (format === "docx" && businessPlan?.sections) {
+      // PDF/DOCX 내보내기 시 Mermaid 다이어그램 캡처
+      if (businessPlan?.sections) {
         const mermaidCount = countMermaidInSections(businessPlan.sections);
 
         if (mermaidCount > 0) {
@@ -139,9 +139,19 @@ export default function BusinessPlanDetailPage() {
             maxWidth: 600,
           });
 
+          // 디버그 로깅
+          console.log("[Export] Mermaid capture result:", {
+            success: captureResult.success,
+            imageCount: captureResult.images.length,
+            errors: captureResult.errors,
+          });
+
           if (captureResult.success && captureResult.images.length > 0) {
             mermaidImages = captureResult.images;
             setExportMessage(`다이어그램 ${mermaidImages.length}개 캡처 완료`);
+            console.log("[Export] Mermaid images captured:", mermaidImages.length);
+          } else {
+            console.warn("[Export] Mermaid capture failed or empty:", captureResult.errors);
           }
 
           // 잠시 대기 후 다음 단계로
@@ -150,6 +160,9 @@ export default function BusinessPlanDetailPage() {
       }
 
       setExportMessage("문서 생성 중...");
+
+      // 디버그 로깅
+      console.log("[Export] Sending request with mermaidImages:", mermaidImages.length);
 
       const res = await fetch(`/api/business-plans/${id}/export`, {
         method: "POST",
@@ -166,10 +179,29 @@ export default function BusinessPlanDetailPage() {
 
       setExportMessage("다운로드 준비 중...");
 
-      // Content-Disposition 헤더에서 파일명 추출
+      // Content-Disposition 헤더에서 파일명 추출 (RFC 5987 한글 지원)
       const contentDisposition = res.headers.get("Content-Disposition");
-      const filenameMatch = contentDisposition?.match(/filename="(.+)"/);
-      const filename = filenameMatch?.[1] || `사업계획서.${format}`;
+      let filename = `사업계획서.${format}`;
+
+      if (contentDisposition) {
+        // filename*=UTF-8'' 형식 우선 (한글 지원)
+        const utf8Match = contentDisposition.match(/filename\*=UTF-8''(.+?)(?:;|$)/i);
+        if (utf8Match) {
+          try {
+            filename = decodeURIComponent(utf8Match[1]);
+          } catch {
+            // 디코딩 실패 시 ASCII 버전 사용
+          }
+        }
+
+        // UTF-8 버전이 없으면 일반 filename 사용
+        if (filename === `사업계획서.${format}`) {
+          const basicMatch = contentDisposition.match(/filename="(.+?)"/);
+          if (basicMatch) {
+            filename = basicMatch[1];
+          }
+        }
+      }
 
       // Blob으로 변환 후 다운로드
       const blob = await res.blob();
@@ -338,13 +370,19 @@ export default function BusinessPlanDetailPage() {
           onClick={() => handleExport("pdf")}
           variant="outline"
           disabled={isExporting}
+          className="min-w-[140px]"
         >
           {isExporting ? (
-            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            <>
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              {exportMessage || "내보내기 중..."}
+            </>
           ) : (
-            <FileDown className="h-4 w-4 mr-2" />
+            <>
+              <FileDown className="h-4 w-4 mr-2" />
+              PDF 내보내기
+            </>
           )}
-          PDF 내보내기
         </Button>
         <Button
           onClick={() => handleExport("docx")}
