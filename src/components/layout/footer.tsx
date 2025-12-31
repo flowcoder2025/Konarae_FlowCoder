@@ -1,3 +1,5 @@
+"use client";
+
 /**
  * Footer Component
  *
@@ -9,6 +11,7 @@
 
 import Link from "next/link";
 import Image from "next/image";
+import { SupportModal } from "@/components/support/support-modal";
 
 const footerLinks = {
   service: [
@@ -20,10 +23,6 @@ const footerLinks = {
     { label: "이용약관", href: "/terms" },
     { label: "개인정보처리방침", href: "/privacy" },
     { label: "환불약관", href: "/refund" },
-  ],
-  support: [
-    { label: "고객센터", href: "/support" },
-    { label: "제휴 문의", href: "/partnership" },
   ],
 };
 
@@ -86,20 +85,22 @@ export function Footer() {
             </ul>
           </div>
 
-          {/* 지원 링크 */}
+          {/* 고객 지원 */}
           <div>
             <h3 className="font-medium mb-2 text-xs">고객 지원</h3>
             <ul className="space-y-1">
-              {footerLinks.support.map((link) => (
-                <li key={link.href}>
-                  <Link
-                    href={link.href}
-                    className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    {link.label}
-                  </Link>
-                </li>
-              ))}
+              <li>
+                <SupportModal
+                  triggerClassName="text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                />
+              </li>
+              <li>
+                <SupportModal>
+                  <button className="text-xs text-muted-foreground hover:text-foreground transition-colors">
+                    제휴 문의
+                  </button>
+                </SupportModal>
+              </li>
             </ul>
           </div>
         </div>
