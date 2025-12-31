@@ -113,6 +113,7 @@ async function getHomeData(userId: string): Promise<HomeData> {
           lte: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
         },
         status: "active",
+        isCanonical: true,
       },
       orderBy: { deadline: "asc" },
       take: 6,

@@ -64,6 +64,7 @@ export async function POST(request: Request) {
     // Build where clause for projects
     const projectWhere: any = {
       status: "active",
+      isCanonical: true,
       OR: [
         { isPermanent: true },
         {

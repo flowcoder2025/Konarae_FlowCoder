@@ -44,6 +44,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     where: {
       status: "active",
       deletedAt: null,
+      isCanonical: true,
     },
     select: {
       id: true,
