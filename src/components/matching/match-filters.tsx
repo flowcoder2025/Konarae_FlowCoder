@@ -14,6 +14,8 @@ import { X } from "lucide-react";
 
 interface MatchFiltersProps {
   companies: Array<{ id: string; name: string }>;
+  hideCompanyFilter?: boolean;
+  basePath?: string; // 기본값: /matching/results
 }
 
 const CONFIDENCE_OPTIONS = [
@@ -30,7 +32,11 @@ const SORT_OPTIONS = [
   { value: "deadline", label: "마감일 임박순" },
 ] as const;
 
-export function MatchFilters({ companies }: MatchFiltersProps) {
+export function MatchFilters({
+  companies,
+  hideCompanyFilter = false,
+  basePath = "/matching/results",
+}: MatchFiltersProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -50,15 +56,15 @@ export function MatchFilters({ companies }: MatchFiltersProps) {
     // Reset to page 1 when filters change
     params.delete("page");
 
-    router.push(`/matching/results?${params.toString()}`);
+    router.push(`${basePath}?${params.toString()}`);
   };
 
   const clearFilters = () => {
-    router.push("/matching/results");
+    router.push(basePath);
   };
 
   const hasActiveFilters =
-    currentCompanyId !== "all" ||
+    (!hideCompanyFilter && currentCompanyId !== "all") ||
     currentConfidence !== "all" ||
     currentSort !== "score";
 
@@ -66,22 +72,24 @@ export function MatchFilters({ companies }: MatchFiltersProps) {
     <div className="space-y-4">
       {/* Filter Controls */}
       <div className="flex flex-wrap gap-4 items-center">
-        {/* Company Filter */}
-        <div className="flex-1 min-w-[200px]">
-          <Select value={currentCompanyId} onValueChange={(value) => updateFilter("companyId", value)}>
-            <SelectTrigger>
-              <SelectValue placeholder="기업 선택" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">전체 기업</SelectItem>
-              {companies.map((company) => (
-                <SelectItem key={company.id} value={company.id}>
-                  {company.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        {/* Company Filter - 기업 상세 페이지에서는 숨김 */}
+        {!hideCompanyFilter && (
+          <div className="flex-1 min-w-[200px]">
+            <Select value={currentCompanyId} onValueChange={(value) => updateFilter("companyId", value)}>
+              <SelectTrigger>
+                <SelectValue placeholder="기업 선택" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">전체 기업</SelectItem>
+                {companies.map((company) => (
+                  <SelectItem key={company.id} value={company.id}>
+                    {company.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
 
         {/* Confidence Filter */}
         <div className="flex gap-2">
@@ -125,7 +133,7 @@ export function MatchFilters({ companies }: MatchFiltersProps) {
       {/* Active Filters Display */}
       {hasActiveFilters && (
         <div className="flex flex-wrap gap-2">
-          {currentCompanyId !== "all" && (
+          {!hideCompanyFilter && currentCompanyId !== "all" && (
             <Badge variant="outline">
               기업: {companies.find((c) => c.id === currentCompanyId)?.name}
             </Badge>

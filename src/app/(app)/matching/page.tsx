@@ -130,11 +130,13 @@ export default async function MatchingPage() {
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             {companies.map((company) => {
               const hasPreferences = company._count.matchingPreferences > 0;
+              const hasResults = company._count.matchingResults > 0;
+              // 매칭 결과가 있으면 기업 매칭 상세 페이지로, 없으면 새 매칭 실행 페이지로
+              const href = hasResults
+                ? `/matching/company/${company.id}`
+                : `/matching/new?companyId=${company.id}`;
               return (
-                <Link
-                  key={company.id}
-                  href={`/matching/new?companyId=${company.id}`}
-                >
+                <Link key={company.id} href={href}>
                   <Card className="p-6 hover:border-primary transition-colors cursor-pointer">
                     <div className="flex items-start justify-between mb-2">
                       <h3 className="font-semibold">{company.name}</h3>
@@ -155,7 +157,9 @@ export default async function MatchingPage() {
                       <Badge variant="outline">
                         매칭 결과 {company._count.matchingResults}개
                       </Badge>
-                      <span className="text-sm text-primary">매칭 실행 →</span>
+                      <span className="text-sm text-primary">
+                        {hasResults ? "결과 보기 →" : "매칭 실행 →"}
+                      </span>
                     </div>
                   </Card>
                 </Link>
