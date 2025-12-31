@@ -6,6 +6,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ProjectFiles } from "@/components/project/project-files";
+import { StartProjectButton } from "@/components/project/start-project-button";
 import { PageHeader } from "@/components/common";
 import { ExternalLink } from "lucide-react";
 import type { Metadata } from "next";
@@ -104,17 +105,40 @@ export default async function ProjectDetailPage({
 
   const { id } = await params;
 
-  const project = await prisma.supportProject.findUnique({
-    where: { id, deletedAt: null },
-    include: {
-      _count: {
-        select: {
-          matchingResults: true,
-          businessPlans: true,
+  // Parallel queries for project, user's companies, and existing user projects
+  const [project, userCompanies, existingUserProjects] = await Promise.all([
+    prisma.supportProject.findUnique({
+      where: { id, deletedAt: null },
+      include: {
+        _count: {
+          select: {
+            matchingResults: true,
+            businessPlans: true,
+          },
         },
       },
-    },
-  });
+    }),
+    prisma.companyMember.findMany({
+      where: { userId: session.user.id },
+      include: {
+        company: {
+          select: { id: true, name: true },
+        },
+      },
+    }),
+    prisma.userProject.findMany({
+      where: {
+        userId: session.user.id,
+        projectId: id,
+        deletedAt: null,
+      },
+      include: {
+        company: {
+          select: { name: true },
+        },
+      },
+    }),
+  ]);
 
   if (!project) {
     notFound();
@@ -125,6 +149,12 @@ export default async function ProjectDetailPage({
     where: { id },
     data: { viewCount: { increment: 1 } },
   });
+
+  const companies = userCompanies.map((uc) => uc.company);
+  const existingProjects = existingUserProjects.map((up) => ({
+    id: up.id,
+    companyName: up.company.name,
+  }));
 
   const formatAmount = (amount: bigint) => {
     const num = Number(amount);
@@ -158,7 +188,7 @@ export default async function ProjectDetailPage({
         listHref="/projects"
         listLabel="지원사업 목록"
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <Badge variant="outline">{project.category}</Badge>
             {project.subCategory && (
               <Badge variant="outline">{project.subCategory}</Badge>
@@ -177,6 +207,14 @@ export default async function ProjectDetailPage({
                   원본 공고
                 </a>
               </Button>
+            )}
+            {project.status === "active" && (
+              <StartProjectButton
+                projectId={project.id}
+                projectName={project.name}
+                companies={companies}
+                existingProjects={existingProjects}
+              />
             )}
           </div>
         }
