@@ -495,12 +495,12 @@ export function Step2Diagnosis({
         )}
 
         {/* Actions - 이전 단계 & 건너뛰기 */}
-        <div className="flex justify-between items-center pt-4 border-t">
-          <Button variant="outline" onClick={onPrevious}>
+        <div className="flex flex-col-reverse sm:flex-row justify-between items-stretch sm:items-center gap-3 pt-4 border-t">
+          <Button variant="outline" onClick={onPrevious} className="w-full sm:w-auto">
             <ChevronLeft className="h-4 w-4 mr-2" />
             이전 단계
           </Button>
-          <Button variant="outline" onClick={onSkip}>
+          <Button variant="outline" onClick={onSkip} className="w-full sm:w-auto">
             <SkipForward className="h-4 w-4 mr-2" />
             이 단계 건너뛰기
           </Button>
@@ -608,29 +608,29 @@ export function Step2Diagnosis({
       </div>
 
       {/* Actions */}
-      <div className="flex justify-between items-center pt-4 border-t">
-        <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={onPrevious}>
+      <div className="flex flex-col gap-3 pt-4 border-t">
+        {!allCriticalResolved && (
+          <p className="text-sm text-muted-foreground text-center sm:text-right">
+            필수 항목을 보완하거나 건너뛸 수 있습니다
+          </p>
+        )}
+        <div className="flex flex-col-reverse sm:flex-row justify-between items-stretch sm:items-center gap-2">
+          <Button variant="outline" onClick={onPrevious} className="w-full sm:w-auto">
             <ChevronLeft className="h-4 w-4 mr-2" />
             이전 단계
           </Button>
-        </div>
-        <div className="flex items-center gap-2">
-          {!allCriticalResolved && (
-            <p className="text-sm text-muted-foreground mr-2">
-              필수 항목을 보완하거나 건너뛸 수 있습니다
-            </p>
-          )}
-          {!allCriticalResolved && (
-            <Button variant="outline" onClick={onSkip}>
-              <SkipForward className="h-4 w-4 mr-2" />
-              건너뛰기
+          <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+            {!allCriticalResolved && (
+              <Button variant="outline" onClick={onSkip} className="w-full sm:w-auto">
+                <SkipForward className="h-4 w-4 mr-2" />
+                건너뛰기
+              </Button>
+            )}
+            <Button onClick={onComplete} disabled={criticalCount > 0 && !onSkip} className="w-full sm:w-auto">
+              <CheckCircle2 className="h-4 w-4 mr-2" />
+              다음 단계로
             </Button>
-          )}
-          <Button onClick={onComplete} disabled={criticalCount > 0 && !onSkip}>
-            <CheckCircle2 className="h-4 w-4 mr-2" />
-            다음 단계로
-          </Button>
+          </div>
         </div>
       </div>
 

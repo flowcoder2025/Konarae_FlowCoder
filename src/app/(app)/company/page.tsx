@@ -234,23 +234,25 @@ export default async function CompanyPage({ searchParams }: Props) {
 
       {/* Tabs */}
       <Tabs defaultValue="profile" className="space-y-6">
-        <TabsList>
-          <TabsTrigger value="profile" className="gap-2">
-            <Building2 className="h-4 w-4" />
-            기업 정보
-          </TabsTrigger>
-          <TabsTrigger value="documents" className="gap-2">
-            <FileText className="h-4 w-4" />
-            증빙 보관함
-            <span className="ml-1 text-xs bg-muted px-1.5 rounded">
-              {company.documentsCount}
-            </span>
-          </TabsTrigger>
-          <TabsTrigger value="master-profile" className="gap-2">
-            <Sparkles className="h-4 w-4" />
-            마스터 프로필
-          </TabsTrigger>
-        </TabsList>
+        <div className="overflow-x-auto scrollbar-hide touch-scroll -mx-1 px-1">
+          <TabsList className="inline-flex w-auto min-w-full sm:w-full">
+            <TabsTrigger value="profile" className="gap-2 shrink-0">
+              <Building2 className="h-4 w-4" />
+              <span className="whitespace-nowrap">기업 정보</span>
+            </TabsTrigger>
+            <TabsTrigger value="documents" className="gap-2 shrink-0">
+              <FileText className="h-4 w-4" />
+              <span className="whitespace-nowrap">증빙 보관함</span>
+              <span className="ml-1 text-xs bg-muted px-1.5 rounded">
+                {company.documentsCount}
+              </span>
+            </TabsTrigger>
+            <TabsTrigger value="master-profile" className="gap-2 shrink-0">
+              <Sparkles className="h-4 w-4" />
+              <span className="whitespace-nowrap">마스터 프로필</span>
+            </TabsTrigger>
+          </TabsList>
+        </div>
 
         {/* Profile Tab */}
         <TabsContent value="profile" className="space-y-4">

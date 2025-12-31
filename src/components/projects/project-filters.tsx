@@ -1,11 +1,58 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Search, X, Calendar, ArrowUpDown } from "lucide-react";
+
+// Scroll container with fade indicators for mobile
+function ScrollFade({ children }: { children: React.ReactNode }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [showLeftFade, setShowLeftFade] = useState(false);
+  const [showRightFade, setShowRightFade] = useState(false);
+
+  const updateFadeState = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+
+    const { scrollLeft, scrollWidth, clientWidth } = el;
+    setShowLeftFade(scrollLeft > 8);
+    setShowRightFade(scrollLeft < scrollWidth - clientWidth - 8);
+  }, []);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+
+    updateFadeState();
+    el.addEventListener("scroll", updateFadeState, { passive: true });
+    window.addEventListener("resize", updateFadeState);
+
+    return () => {
+      el.removeEventListener("scroll", updateFadeState);
+      window.removeEventListener("resize", updateFadeState);
+    };
+  }, [updateFadeState]);
+
+  return (
+    <div className="relative flex-1 min-w-0">
+      {showLeftFade && (
+        <div className="absolute left-0 top-0 bottom-0 w-6 bg-gradient-to-r from-background to-transparent z-10 pointer-events-none" />
+      )}
+      <div
+        ref={scrollRef}
+        className="flex gap-2 overflow-x-auto scrollbar-hide touch-scroll pb-1 -mb-1"
+      >
+        {children}
+      </div>
+      {showRightFade && (
+        <div className="absolute right-0 top-0 bottom-0 w-6 bg-gradient-to-l from-background to-transparent z-10 pointer-events-none" />
+      )}
+    </div>
+  );
+}
 
 interface ProjectFiltersProps {
   categories: { value: string; count: number }[];
@@ -184,7 +231,7 @@ export function ProjectFilters({
           <span className="text-sm text-muted-foreground py-1 shrink-0">
             분야:
           </span>
-          <div className="flex gap-2 overflow-x-auto scrollbar-hide touch-scroll pb-1 -mb-1">
+          <ScrollFade>
             {categories.map((cat) => (
               <button
                 key={cat.value}
@@ -197,7 +244,7 @@ export function ProjectFilters({
                 {cat.value} ({cat.count})
               </button>
             ))}
-          </div>
+          </ScrollFade>
         </div>
       )}
 
@@ -207,7 +254,7 @@ export function ProjectFilters({
           <span className="text-sm text-muted-foreground py-1 shrink-0">
             지역:
           </span>
-          <div className="flex gap-2 overflow-x-auto scrollbar-hide touch-scroll pb-1 -mb-1">
+          <ScrollFade>
             {regions.slice(0, 10).map((region) => (
               <button
                 key={region.value}
@@ -221,7 +268,7 @@ export function ProjectFilters({
                 {region.value} ({region.count})
               </button>
             ))}
-          </div>
+          </ScrollFade>
         </div>
       )}
 
@@ -250,7 +297,7 @@ export function ProjectFilters({
           <Calendar className="h-3.5 w-3.5" />
           마감:
         </span>
-        <div className="flex gap-2 overflow-x-auto scrollbar-hide touch-scroll pb-1 -mb-1">
+        <ScrollFade>
           {DEADLINE_OPTIONS.map((option) => (
             <button
               key={option.value}
@@ -264,7 +311,7 @@ export function ProjectFilters({
               {option.label}
             </button>
           ))}
-        </div>
+        </ScrollFade>
       </div>
 
       {/* Active Filters & Count */}

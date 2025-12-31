@@ -268,12 +268,12 @@ export function Step4Verify({
         </Card>
 
         {/* Actions - 이전 단계 & 건너뛰기 */}
-        <div className="flex justify-between items-center pt-4 border-t">
-          <Button variant="outline" onClick={onPrevious}>
+        <div className="flex flex-col-reverse sm:flex-row justify-between items-stretch sm:items-center gap-3 pt-4 border-t">
+          <Button variant="outline" onClick={onPrevious} className="w-full sm:w-auto">
             <ChevronLeft className="h-4 w-4 mr-2" />
             이전 단계
           </Button>
-          <Button variant="outline" onClick={onSkip}>
+          <Button variant="outline" onClick={onSkip} className="w-full sm:w-auto">
             <SkipForward className="h-4 w-4 mr-2" />
             이 단계 건너뛰기
           </Button>
@@ -372,36 +372,35 @@ export function Step4Verify({
       </div>
 
       {/* Actions */}
-      <div className="flex justify-between items-center pt-4 border-t">
-        <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={onPrevious}>
+      <div className="flex flex-col gap-3 pt-4 border-t">
+        <div className="text-center sm:text-right">
+          {failCount > 0 ? (
+            <p className="text-sm text-red-600">
+              실패 항목이 있지만 건너뛸 수 있습니다
+            </p>
+          ) : warningCount > 0 ? (
+            <p className="text-sm text-yellow-600">
+              주의 항목을 확인 후 진행하세요
+            </p>
+          ) : (
+            <p className="text-sm text-green-600">
+              모든 검증을 통과했습니다
+            </p>
+          )}
+        </div>
+        <div className="flex flex-col-reverse sm:flex-row justify-between items-stretch sm:items-center gap-2">
+          <Button variant="outline" onClick={onPrevious} className="w-full sm:w-auto">
             <ChevronLeft className="h-4 w-4 mr-2" />
             이전 단계
           </Button>
-        </div>
-        <div className="flex items-center gap-3">
-          <div>
-            {failCount > 0 ? (
-              <p className="text-sm text-red-600">
-                실패 항목이 있지만 건너뛸 수 있습니다
-              </p>
-            ) : warningCount > 0 ? (
-              <p className="text-sm text-yellow-600">
-                주의 항목을 확인 후 진행하세요
-              </p>
-            ) : (
-              <p className="text-sm text-green-600">
-                모든 검증을 통과했습니다
-              </p>
-            )}
-          </div>
-          <div className="flex gap-2">
+          <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
             {(failCount > 0 || warningCount > 0) && (
               <>
                 <Button
                   variant="outline"
                   onClick={handleStartVerification}
                   disabled={isRunning}
+                  className="w-full sm:w-auto"
                 >
                   {isRunning ? (
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -410,13 +409,13 @@ export function Step4Verify({
                   )}
                   재검증 ({creditCost}C)
                 </Button>
-                <Button variant="outline" onClick={onSkip}>
+                <Button variant="outline" onClick={onSkip} className="w-full sm:w-auto">
                   <SkipForward className="h-4 w-4 mr-2" />
                   건너뛰기
                 </Button>
               </>
             )}
-            <Button onClick={onComplete}>
+            <Button onClick={onComplete} className="w-full sm:w-auto">
               <CheckCircle2 className="h-4 w-4 mr-2" />
               다음 단계로
             </Button>
