@@ -138,12 +138,12 @@ export function Navbar({ user, isAdmin = false }: NavbarProps) {
         <Link href="/home" className="flex items-center gap-2 shrink-0">
           <Image
             src="/Flow_icon.png"
-            alt="FlowCoder"
+            alt="FlowMate"
             width={32}
             height={32}
             className="rounded-lg"
           />
-          <span className="font-semibold">FlowCoder</span>
+          <span className="font-semibold">FlowMate</span>
         </Link>
 
         {/* Desktop Navigation - mobileOnly 항목 제외 */}
