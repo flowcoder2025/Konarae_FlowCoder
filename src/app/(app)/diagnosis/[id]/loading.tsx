@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 
 export default function DiagnosisDetailLoading() {
   return (
-    <div className="container mx-auto py-8 max-w-7xl">
+    <div className="container mx-auto py-8 max-w-6xl">
       {/* Page Header */}
       <div className="space-y-4 mb-6">
         <Skeleton className="h-5 w-32" />

@@ -60,7 +60,7 @@ export function CompanyDocumentsPageClient({
   }
 
   return (
-    <div className="p-8 max-w-7xl mx-auto">
+    <div className="p-8 max-w-6xl mx-auto">
       <div className="mb-8">
         <Link
           href={`/companies/${companyId}`}

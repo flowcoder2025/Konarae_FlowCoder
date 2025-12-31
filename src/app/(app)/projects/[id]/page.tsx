@@ -181,7 +181,7 @@ export default async function ProjectDetailPage({
       : "outline";
 
   return (
-    <div className="container mx-auto py-8 max-w-7xl">
+    <div className="container mx-auto py-8 max-w-6xl">
       <PageHeader
         title={project.name}
         description={`${project.organization} • ${project.region} • 조회 ${project.viewCount}`}

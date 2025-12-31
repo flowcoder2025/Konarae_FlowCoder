@@ -158,7 +158,7 @@ export default async function MyProjectsPage() {
   const completedProjects = projects.filter((p) => p.status === "submitted")
 
   return (
-    <div className="container mx-auto py-8 space-y-8 max-w-7xl">
+    <div className="container mx-auto py-8 space-y-8 max-w-6xl">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3">

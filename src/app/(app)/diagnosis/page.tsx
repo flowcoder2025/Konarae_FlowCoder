@@ -76,14 +76,14 @@ export default function DiagnosisListPage() {
 
   if (isLoading) {
     return (
-      <div className="container mx-auto py-8 max-w-7xl">
+      <div className="container mx-auto py-8 max-w-6xl">
         <p>로딩 중...</p>
       </div>
     )
   }
 
   return (
-    <div className="container mx-auto py-8 max-w-7xl">
+    <div className="container mx-auto py-8 max-w-6xl">
       <PageHeader
         title="부족항목 진단"
         description={`총 ${total}건의 진단 결과`}

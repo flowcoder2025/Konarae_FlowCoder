@@ -131,7 +131,7 @@ export default function CompanyEditPage({
 
   if (isLoading) {
     return (
-      <div className="container mx-auto py-8 max-w-7xl">
+      <div className="container mx-auto py-8 max-w-6xl">
         <div className="flex items-center justify-center h-64">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
@@ -140,7 +140,7 @@ export default function CompanyEditPage({
   }
 
   return (
-    <div className="container mx-auto py-8 max-w-7xl">
+    <div className="container mx-auto py-8 max-w-6xl">
       <div className="mb-8">
         <Link
           href={`/companies/${id}`}

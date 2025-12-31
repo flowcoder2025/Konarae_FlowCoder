@@ -129,7 +129,7 @@ export default async function CompanyProfilePage({ params }: ProfilePageProps) {
   ) || {}
 
   return (
-    <div className="container mx-auto py-8 max-w-7xl">
+    <div className="container mx-auto py-8 max-w-6xl">
       <PageHeader
         title="마스터 프로필"
         description={`${company.name}의 AI 분석 기반 프로필`}

@@ -38,7 +38,7 @@ export default async function ProjectDetailPage({ params }: Props) {
   ]
 
   return (
-    <div className="container mx-auto py-8 space-y-6 max-w-5xl">
+    <div className="container mx-auto py-8 space-y-6 max-w-6xl">
       {/* Back Navigation */}
       <div>
         <Button variant="ghost" size="sm" asChild>

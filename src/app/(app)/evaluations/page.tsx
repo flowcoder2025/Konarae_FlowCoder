@@ -38,7 +38,7 @@ export default async function EvaluationsPage() {
   });
 
   return (
-    <div className="container mx-auto py-8 max-w-7xl">
+    <div className="container mx-auto py-8 max-w-6xl">
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-3xl font-bold mb-2">사업계획서 평가</h1>

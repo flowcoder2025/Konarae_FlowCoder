@@ -10,7 +10,7 @@ import {
 
 export default function CompaniesLoading() {
   return (
-    <div className="container mx-auto space-y-6 py-8 max-w-7xl">
+    <div className="container mx-auto space-y-6 py-8 max-w-6xl">
       <PageHeaderSkeleton />
 
       {/* Company List */}

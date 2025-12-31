@@ -32,7 +32,7 @@
 ### 2.1 Layout 컴포넌트
 | 컴포넌트 | 용도 |
 |---------|------|
-| `Container` | 최대 너비 래퍼 (max-w-7xl) |
+| `Container` | 최대 너비 래퍼 (max-w-6xl) |
 | `Section` | 페이지 섹션 (py-16~24) |
 | `Stack` | Flex 레이아웃 (HStack/VStack) |
 | `Grid` | 그리드 레이아웃 |

@@ -10,7 +10,7 @@ export const metadata: Metadata = {
 export default function RefundPage() {
   return (
     <div className="min-h-screen bg-background">
-      <div className="container mx-auto max-w-4xl px-4 py-12">
+      <div className="container mx-auto max-w-6xl px-4 py-12">
         {/* Back Link */}
         <Link
           href="/"

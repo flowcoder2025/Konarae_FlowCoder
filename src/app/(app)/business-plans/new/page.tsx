@@ -486,7 +486,7 @@ function NewBusinessPlanForm() {
   );
 
   return (
-    <div className="container mx-auto py-8 max-w-4xl">
+    <div className="container mx-auto py-8 max-w-6xl">
       <PageHeader
         title="새 사업계획서 작성"
         description="기본 정보를 입력하고 AI가 사업계획서를 생성합니다"
@@ -1034,7 +1034,7 @@ export default function NewBusinessPlanPage() {
   return (
     <Suspense
       fallback={
-        <div className="container mx-auto py-8 max-w-4xl">
+        <div className="container mx-auto py-8 max-w-6xl">
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
           </div>

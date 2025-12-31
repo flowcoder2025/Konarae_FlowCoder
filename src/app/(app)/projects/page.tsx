@@ -144,7 +144,7 @@ export default async function ProjectsPage({
   const totalPages = Math.ceil(total / pageSize);
 
   return (
-    <div className="container mx-auto py-8 max-w-7xl">
+    <div className="container mx-auto py-8 max-w-6xl">
       {/* Header */}
       <div className="mb-8">
         <h1 className="text-3xl font-bold mb-2">지원사업 탐색</h1>

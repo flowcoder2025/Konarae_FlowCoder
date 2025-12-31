@@ -12,7 +12,7 @@ export default async function HomePage() {
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-gradient-to-b from-primary/10 to-background">
-      <div className="container flex max-w-4xl flex-col items-center gap-8 px-4 text-center">
+      <div className="container flex max-w-6xl flex-col items-center gap-8 px-4 text-center">
         <h1 className="text-4xl font-bold tracking-tight sm:text-6xl">
           FlowMate
         </h1>

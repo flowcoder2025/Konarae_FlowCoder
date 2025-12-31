@@ -254,7 +254,7 @@ export default async function HomePage() {
 
   if (error || !data) {
     return (
-      <div className="container mx-auto py-8 max-w-7xl">
+      <div className="container mx-auto py-8 max-w-6xl">
         <div className="p-4 bg-destructive/10 text-destructive rounded-lg">
           데이터를 불러오는 중 오류가 발생했습니다. 페이지를 새로고침해주세요.
         </div>
@@ -265,7 +265,7 @@ export default async function HomePage() {
   const showOnboarding = !data.user.hasCompany;
 
   return (
-    <div className="container mx-auto py-8 space-y-8 max-w-7xl">
+    <div className="container mx-auto py-8 space-y-8 max-w-6xl">
       {/* Header Row: Welcome + Credits */}
       <div className="flex items-start justify-between gap-4">
         {!showOnboarding && (

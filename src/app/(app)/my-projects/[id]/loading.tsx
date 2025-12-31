@@ -7,7 +7,7 @@ import { Skeleton, CardSkeleton } from "@/components/ui/skeleton";
 
 export default function ProjectDetailLoading() {
   return (
-    <div className="container mx-auto py-8 space-y-6 max-w-5xl">
+    <div className="container mx-auto py-8 space-y-6 max-w-6xl">
       {/* Back Navigation */}
       <Skeleton className="h-9 w-40" />
 

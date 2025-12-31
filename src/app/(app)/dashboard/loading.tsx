@@ -11,7 +11,7 @@ import {
 
 export default function DashboardLoading() {
   return (
-    <div className="container mx-auto space-y-8 py-8 max-w-7xl">
+    <div className="container mx-auto space-y-8 py-8 max-w-6xl">
       <PageHeaderSkeleton />
 
       {/* Stats Cards */}

@@ -68,7 +68,7 @@ export default function NotificationSettingsPage() {
   if (!settings) return null;
 
   return (
-    <div className="container mx-auto py-8 max-w-7xl">
+    <div className="container mx-auto py-8 max-w-6xl">
       <div className="mb-6">
         <h1 className="text-3xl font-bold mb-2">알림 설정</h1>
         <p className="text-muted-foreground">

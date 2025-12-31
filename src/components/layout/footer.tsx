@@ -31,7 +31,7 @@ export function Footer() {
 
   return (
     <footer className="border-t bg-muted/30">
-      <div className="container mx-auto px-4 md:px-6 lg:px-8 max-w-7xl py-6 sm:py-10">
+      <div className="container mx-auto px-4 md:px-6 lg:px-8 max-w-6xl py-6 sm:py-10">
         {/* 상단: 로고 + 링크 */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-6 sm:gap-8 mb-6">
           {/* 로고 & 설명 */}

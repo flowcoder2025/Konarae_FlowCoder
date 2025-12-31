@@ -56,7 +56,7 @@ export default async function PipelinePage() {
   })
 
   return (
-    <div className="container mx-auto py-8 space-y-6 max-w-7xl">
+    <div className="container mx-auto py-8 space-y-6 max-w-6xl">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>

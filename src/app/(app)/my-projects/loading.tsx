@@ -11,7 +11,7 @@ import {
 
 export default function MyProjectsLoading() {
   return (
-    <div className="container mx-auto py-8 space-y-8 max-w-7xl">
+    <div className="container mx-auto py-8 space-y-8 max-w-6xl">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>

@@ -3,7 +3,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 export default function CompanyMatchingLoading() {
   return (
-    <div className="container mx-auto py-8 max-w-7xl">
+    <div className="container mx-auto py-8 max-w-6xl">
       {/* Back Link */}
       <Skeleton className="h-5 w-48 mb-6" />
 

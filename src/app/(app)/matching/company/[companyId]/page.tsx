@@ -165,7 +165,7 @@ export default async function CompanyMatchingPage({
   const hasPreferences = company._count.matchingPreferences > 0;
 
   return (
-    <div className="container mx-auto py-8 max-w-7xl">
+    <div className="container mx-auto py-8 max-w-6xl">
       {/* Back Link */}
       <Link
         href="/matching"

@@ -172,7 +172,7 @@ export function SettingsCardSkeleton() {
  */
 export function SettingsPageSkeleton() {
   return (
-    <div className="container mx-auto py-8 max-w-7xl">
+    <div className="container mx-auto py-8 max-w-6xl">
       <div className="mb-6 space-y-2">
         <Skeleton className="h-9 w-40" />
         <Skeleton className="h-5 w-64" />

@@ -136,7 +136,7 @@ export default async function MatchResultDetailPage({
   };
 
   return (
-    <div className="container mx-auto py-8 max-w-7xl">
+    <div className="container mx-auto py-8 max-w-6xl">
       <PageHeader
         title={result.project.name}
         description={`${result.company.name} • ${result.project.organization}`}

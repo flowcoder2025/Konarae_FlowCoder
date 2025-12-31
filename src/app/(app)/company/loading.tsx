@@ -11,7 +11,7 @@ import {
 
 export default function CompanyLoading() {
   return (
-    <div className="container mx-auto py-8 space-y-8 max-w-4xl">
+    <div className="container mx-auto py-8 space-y-8 max-w-6xl">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>

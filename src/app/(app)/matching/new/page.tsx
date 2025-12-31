@@ -120,7 +120,7 @@ export default function MatchingNewPage() {
 
   if (!companyId) {
     return (
-      <div className="container mx-auto py-8 max-w-7xl">
+      <div className="container mx-auto py-8 max-w-6xl">
         <Card className="p-8 text-center">
           <AlertCircle className="h-12 w-12 mx-auto mb-4 text-destructive" />
           <h2 className="text-xl font-semibold mb-2">기업을 선택해주세요</h2>
@@ -139,7 +139,7 @@ export default function MatchingNewPage() {
   }
 
   return (
-    <div className="container mx-auto py-8 max-w-7xl">
+    <div className="container mx-auto py-8 max-w-6xl">
       {/* Header */}
       <div className="mb-8">
         <Link

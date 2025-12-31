@@ -11,7 +11,7 @@ import {
 
 export default function HomeLoading() {
   return (
-    <div className="container mx-auto py-8 space-y-8 max-w-7xl">
+    <div className="container mx-auto py-8 space-y-8 max-w-6xl">
       {/* Header Row: Welcome + Credits */}
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-2">

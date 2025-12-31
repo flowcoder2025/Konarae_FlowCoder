@@ -200,7 +200,7 @@ export default async function CompanyDetailPage({
   const expectedQuality = getExpectedQualityLevel(qualityScore);
 
   return (
-    <div className="container mx-auto py-8 max-w-7xl">
+    <div className="container mx-auto py-8 max-w-6xl">
       <PageHeader
         title={company.name}
         description={`사업자등록번호: ${company.businessNumber}`}
