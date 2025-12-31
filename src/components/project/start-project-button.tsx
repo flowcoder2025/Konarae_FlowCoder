@@ -52,9 +52,9 @@ export function StartProjectButton({
   // No company registered
   if (companies.length === 0) {
     return (
-      <Button asChild>
+      <Button size="sm" asChild>
         <Link href="/company">
-          <Building2 className="h-4 w-4 mr-2" />
+          <Building2 className="h-4 w-4 mr-1" />
           기업 등록 후 시작하기
         </Link>
       </Button>
@@ -65,9 +65,9 @@ export function StartProjectButton({
   if (existingProjects.length >= companies.length) {
     const project = existingProjects[0];
     return (
-      <Button variant="outline" asChild>
+      <Button size="sm" variant="outline" asChild>
         <Link href={`/my-projects/${project.id}`}>
-          <ArrowRight className="h-4 w-4 mr-2" />
+          <ArrowRight className="h-4 w-4 mr-1" />
           진행 중인 프로젝트 보기
         </Link>
       </Button>
@@ -110,11 +110,11 @@ export function StartProjectButton({
   // Single company - direct start
   if (companies.length === 1) {
     return (
-      <Button onClick={() => handleStart(companies[0].id)} disabled={isLoading}>
+      <Button size="sm" onClick={() => handleStart(companies[0].id)} disabled={isLoading}>
         {isLoading ? (
-          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+          <Loader2 className="h-4 w-4 mr-1 animate-spin" />
         ) : (
-          <Rocket className="h-4 w-4 mr-2" />
+          <Rocket className="h-4 w-4 mr-1" />
         )}
         {isLoading ? "시작 중..." : "지원 준비 시작"}
       </Button>
@@ -128,8 +128,8 @@ export function StartProjectButton({
 
   return (
     <>
-      <Button onClick={() => setShowDialog(true)} disabled={isLoading}>
-        <Rocket className="h-4 w-4 mr-2" />
+      <Button size="sm" onClick={() => setShowDialog(true)} disabled={isLoading}>
+        <Rocket className="h-4 w-4 mr-1" />
         지원 준비 시작
       </Button>
 
