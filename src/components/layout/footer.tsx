@@ -19,6 +19,7 @@ const footerLinks = {
   legal: [
     { label: "이용약관", href: "/terms" },
     { label: "개인정보처리방침", href: "/privacy" },
+    { label: "환불약관", href: "/refund" },
   ],
   support: [
     { label: "고객센터", href: "/support" },
