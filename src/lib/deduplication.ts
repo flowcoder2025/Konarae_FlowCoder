@@ -40,32 +40,52 @@ export interface DeduplicationResult {
 /**
  * 새 프로젝트와 유사한 기존 프로젝트 찾기
  * - 정규화된 이름으로 1차 필터링
+ * - 같은 지역 프로젝트만 비교 (지역이 다르면 중복 아님)
  * - 상세 유사도 계산으로 2차 필터링
  */
 export async function findDuplicateCandidates(
   projectName: string,
   deadline?: Date | null,
   amountMax?: bigint | null,
-  excludeId?: string
+  excludeId?: string,
+  region?: string | null
 ): Promise<DuplicateCandidate[]> {
   const normalized = normalizeProject(projectName);
 
+  // AND 조건 구성
+  const andConditions: Prisma.SupportProjectWhereInput[] = [];
+
+  // 지역 필터 조건 생성
+  // - 지역이 같거나
+  // - 둘 중 하나가 "전국"인 경우만 비교
+  // (region은 non-nullable 필드이므로 null 체크 불필요)
+  if (region && region !== "전국") {
+    andConditions.push({
+      OR: [
+        { region: region }, // 같은 지역
+        { region: "전국" }, // 전국 대상 사업은 모든 지역과 비교 가능
+      ],
+    });
+  }
+
+  // 연도 필터 (있는 경우)
+  if (normalized.projectYear) {
+    andConditions.push({
+      OR: [
+        { projectYear: normalized.projectYear },
+        { projectYear: { equals: null } }, // 연도 미기재 프로젝트도 포함
+      ],
+    });
+  }
+
   // 1차 필터: 정규화된 이름이 비슷한 프로젝트 조회
-  // Prisma에서 직접 유사도 계산이 어려우므로, 같은 연도 + 활성 상태 프로젝트 조회
+  // 같은 연도 + 같은 지역 + 활성 상태 프로젝트 조회
   const candidates = await prisma.supportProject.findMany({
     where: {
       status: "active",
       deletedAt: null,
       ...(excludeId ? { id: { not: excludeId } } : {}),
-      // 연도 필터 (있는 경우)
-      ...(normalized.projectYear
-        ? {
-            OR: [
-              { projectYear: normalized.projectYear },
-              { projectYear: null }, // 연도 미기재 프로젝트도 포함
-            ],
-          }
-        : {}),
+      ...(andConditions.length > 0 ? { AND: andConditions } : {}),
     },
     select: {
       id: true,
@@ -242,12 +262,13 @@ export async function processProjectDeduplication(
 ): Promise<DeduplicationResult> {
   const normalized = normalizeProject(project.name);
 
-  // 1. 유사 프로젝트 탐색
+  // 1. 유사 프로젝트 탐색 (같은 지역만)
   const candidates = await findDuplicateCandidates(
     project.name,
     project.deadline,
     project.amountMax,
-    project.id
+    project.id,
+    project.region
   );
 
   // 2. 중복 없음 -> 새 그룹 생성
