@@ -1,7 +1,8 @@
 import { auth, signIn } from "@/lib/auth";
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 
 export default async function LoginPage() {
   const session = await auth();
@@ -74,6 +75,24 @@ export default async function LoginPage() {
             </Button>
           </form>
         </CardContent>
+        <CardFooter className="flex flex-col gap-2">
+          <p className="text-xs text-muted-foreground text-center">
+            로그인 시{" "}
+            <Link href="/terms" className="text-primary hover:underline">
+              이용약관
+            </Link>
+            {" "}및{" "}
+            <Link href="/privacy" className="text-primary hover:underline">
+              개인정보처리방침
+            </Link>
+            에 동의하게 됩니다.
+          </p>
+          <p className="text-xs text-muted-foreground text-center">
+            <Link href="/refund" className="hover:underline">
+              환불약관
+            </Link>
+          </p>
+        </CardFooter>
       </Card>
     </div>
   );
