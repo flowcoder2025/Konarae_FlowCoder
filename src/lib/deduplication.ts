@@ -278,6 +278,7 @@ export async function processProjectDeduplication(
       data: {
         normalizedName: normalized.normalizedName,
         projectYear: normalized.projectYear,
+        region: project.region, // 지역 정보 추가
         canonicalProjectId: project.id,
         mergeConfidence: 1.0,
         reviewStatus: "auto",
@@ -392,11 +393,12 @@ export async function processProjectDeduplication(
       ? "auto"
       : "pending_review";
 
-  // 먼저 동일한 normalizedName + projectYear를 가진 기존 그룹이 있는지 확인
+  // 먼저 동일한 normalizedName + projectYear + region을 가진 기존 그룹이 있는지 확인
   const existingGroupByName = await prisma.projectGroup.findFirst({
     where: {
       normalizedName: normalized.normalizedName,
       projectYear: normalized.projectYear,
+      region: project.region, // 같은 지역만
     },
     include: {
       canonicalProject: true,
@@ -454,6 +456,7 @@ export async function processProjectDeduplication(
       data: {
         normalizedName: normalized.normalizedName,
         projectYear: normalized.projectYear,
+        region: project.region, // 지역 정보 추가
         canonicalProjectId: canonicalId,
         mergeConfidence: similarity,
         reviewStatus,
@@ -471,6 +474,7 @@ export async function processProjectDeduplication(
         where: {
           normalizedName: normalized.normalizedName,
           projectYear: normalized.projectYear,
+          region: project.region, // 같은 지역만
         },
       });
 

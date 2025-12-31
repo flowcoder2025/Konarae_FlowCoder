@@ -275,6 +275,7 @@ model ProjectGroup {
   id                 String @id @default(cuid())
   normalizedName     String // 정규화된 사업명 (연도 제외)
   projectYear        Int? // 사업 연도 (2024, 2025 등)
+  region             String @default("전국") // 지역 (같은 이름이라도 다른 지역은 별도 그룹)
   canonicalProjectId String @unique // 대표 프로젝트 ID
 
   // 그룹핑 메타데이터
@@ -291,9 +292,10 @@ model ProjectGroup {
   canonicalProject SupportProject   @relation("CanonicalProject", fields: [canonicalProjectId], references: [id], onDelete: Cascade)
   projects         SupportProject[] @relation("GroupedProjects")
 
-  @@unique([normalizedName, projectYear]) // 같은 이름+연도는 하나의 그룹
+  @@unique([normalizedName, projectYear, region]) // 같은 이름+연도+지역은 하나의 그룹
   @@index([normalizedName])
   @@index([projectYear])
+  @@index([region])
   @@index([reviewStatus])
   @@map("project_groups")
 }
