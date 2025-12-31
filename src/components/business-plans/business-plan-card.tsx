@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDateKST, formatOrganization } from "@/lib/utils";
@@ -45,6 +46,14 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 export function BusinessPlanCard({ businessPlan }: BusinessPlanCardProps) {
+  const router = useRouter();
+
+  const handleProjectClick = (e: React.MouseEvent, projectId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    router.push(`/projects/${projectId}`);
+  };
+
   return (
     <Link href={`/business-plans/${businessPlan.id}`}>
       <Card className="p-6 hover:shadow-md transition-shadow cursor-pointer">
@@ -65,13 +74,19 @@ export function BusinessPlanCard({ businessPlan }: BusinessPlanCardProps) {
         {businessPlan.project && (
           <div className="mb-3 text-sm">
             <span className="text-muted-foreground">지원사업: </span>
-            <Link
-              href={`/projects/${businessPlan.project.id}`}
-              className="font-medium hover:underline text-primary"
-              onClick={(e) => e.stopPropagation()}
+            <span
+              role="link"
+              tabIndex={0}
+              className="font-medium hover:underline text-primary cursor-pointer"
+              onClick={(e) => handleProjectClick(e, businessPlan.project!.id)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  handleProjectClick(e as unknown as React.MouseEvent, businessPlan.project!.id);
+                }
+              }}
             >
               {businessPlan.project.name}
-            </Link>
+            </span>
             <span className="text-muted-foreground">
               {" "}
               ({formatOrganization(businessPlan.project.organization, businessPlan.project.sourceUrl)})
