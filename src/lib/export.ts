@@ -1,11 +1,30 @@
 /**
  * Document Export Library (PRD Feature 2 - 내보내기)
  * - PDF 내보내기 (pdf-lib) - 서버리스 환경 완벽 지원
- * - DOCX 내보내기 (docx) - 서버 환경 지원
+ * - DOCX 내보내기 (docx + 마크다운 파싱) - 완전한 마크다운 지원
  * - HWP 내보내기 (외부 서비스)
  */
 
-import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType } from "docx";
+import {
+  Document,
+  Packer,
+  Paragraph,
+  TextRun,
+  HeadingLevel,
+  AlignmentType,
+  PageOrientation,
+  convertInchesToTwip,
+  Footer,
+  PageNumber,
+  NumberFormat,
+  Header,
+} from "docx";
+import {
+  markdownToDocxElements,
+  convertSectionsToDocx,
+  NUMBERING_CONFIG,
+  STYLES,
+} from "./markdown-to-docx";
 import { PDFDocument, rgb } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
 import { formatDateKST } from "@/lib/utils";
@@ -307,7 +326,10 @@ export async function exportToPDF(
 }
 
 /**
- * DOCX 내보내기 (docx 라이브러리 사용)
+ * DOCX 내보내기 (docx 라이브러리 + 마크다운 파싱)
+ * - 마크다운 문법 완전 지원 (제목, 볼드, 리스트, 테이블, 코드 등)
+ * - 전문적인 문서 스타일링
+ * - 한글 폰트 지원
  */
 export async function exportToDOCX(
   data: BusinessPlanExportData
@@ -320,19 +342,134 @@ export async function exportToDOCX(
 
     const sections = [...(data.sections || [])].sort((a, b) => a.order - b.order);
 
-    // 문서 생성
+    // 마크다운 섹션들을 docx 요소로 변환
+    const contentElements = convertSectionsToDocx(
+      sections.map((s) => ({
+        title: safeText(s.title),
+        content: safeText(s.content),
+        order: s.order,
+      }))
+    );
+
+    // 문서 생성 (마크다운 파싱 + 전문적 스타일링)
     const doc = new Document({
+      numbering: NUMBERING_CONFIG,
+      styles: {
+        default: {
+          document: {
+            run: {
+              font: STYLES.font.body,
+              size: STYLES.size.body,
+            },
+            paragraph: {
+              spacing: { after: 200 },
+            },
+          },
+          heading1: {
+            run: {
+              font: STYLES.font.heading,
+              size: STYLES.size.heading1,
+              bold: true,
+              color: STYLES.color.heading,
+            },
+            paragraph: {
+              spacing: { before: 240, after: 120 },
+            },
+          },
+          heading2: {
+            run: {
+              font: STYLES.font.heading,
+              size: STYLES.size.heading2,
+              bold: true,
+              color: STYLES.color.heading,
+            },
+            paragraph: {
+              spacing: { before: 200, after: 100 },
+            },
+          },
+          heading3: {
+            run: {
+              font: STYLES.font.heading,
+              size: STYLES.size.heading3,
+              bold: true,
+              color: STYLES.color.heading,
+            },
+            paragraph: {
+              spacing: { before: 160, after: 80 },
+            },
+          },
+        },
+      },
       sections: [
         {
-          properties: {},
+          properties: {
+            page: {
+              margin: {
+                top: convertInchesToTwip(1),
+                bottom: convertInchesToTwip(1),
+                left: convertInchesToTwip(1),
+                right: convertInchesToTwip(1),
+              },
+            },
+          },
+          headers: {
+            default: new Header({
+              children: [
+                new Paragraph({
+                  children: [
+                    new TextRun({
+                      text: safeText(data.title) || "사업계획서",
+                      size: 18,
+                      color: "999999",
+                    }),
+                  ],
+                  alignment: AlignmentType.RIGHT,
+                }),
+              ],
+            }),
+          },
+          footers: {
+            default: new Footer({
+              children: [
+                new Paragraph({
+                  children: [
+                    new TextRun({
+                      children: [PageNumber.CURRENT],
+                      size: 18,
+                      color: "999999",
+                    }),
+                    new TextRun({
+                      text: " / ",
+                      size: 18,
+                      color: "999999",
+                    }),
+                    new TextRun({
+                      children: [PageNumber.TOTAL_PAGES],
+                      size: 18,
+                      color: "999999",
+                    }),
+                  ],
+                  alignment: AlignmentType.CENTER,
+                }),
+              ],
+            }),
+          },
           children: [
+            // ===== 표지 섹션 =====
             // 제목
             new Paragraph({
-              text: safeText(data.title) || "사업계획서",
-              heading: HeadingLevel.TITLE,
+              children: [
+                new TextRun({
+                  text: safeText(data.title) || "사업계획서",
+                  bold: true,
+                  font: STYLES.font.heading,
+                  size: STYLES.size.title,
+                  color: STYLES.color.heading,
+                }),
+              ],
               alignment: AlignmentType.CENTER,
+              spacing: { before: 600, after: 400 },
             }),
-            new Paragraph({ text: "" }), // 빈 줄
 
             // 회사명
             ...(data.companyName
@@ -342,8 +479,13 @@ export async function exportToDOCX(
                       new TextRun({
                         text: `회사명: ${safeText(data.companyName)}`,
                         bold: true,
+                        font: STYLES.font.body,
+                        size: STYLES.size.body,
+                        color: STYLES.color.body,
                       }),
                     ],
+                    alignment: AlignmentType.CENTER,
+                    spacing: { after: 100 },
                   }),
                 ]
               : []),
@@ -355,53 +497,86 @@ export async function exportToDOCX(
                     children: [
                       new TextRun({
                         text: `지원사업: ${safeText(data.projectName)}`,
-                        bold: true,
+                        font: STYLES.font.body,
+                        size: STYLES.size.body,
+                        color: STYLES.color.blockquote,
                       }),
                     ],
+                    alignment: AlignmentType.CENTER,
+                    spacing: { after: 100 },
                   }),
-                  new Paragraph({ text: "" }),
                 ]
               : []),
 
-            // 섹션별 내용
-            ...sections.flatMap((section) => [
-              new Paragraph({
-                text: safeText(section.title),
-                heading: HeadingLevel.HEADING_1,
-              }),
-              new Paragraph({
-                text: safeText(section.content),
-              }),
-              new Paragraph({ text: "" }), // 빈 줄
-            ]),
+            // 생성일
+            new Paragraph({
+              children: [
+                new TextRun({
+                  text: `생성일: ${formatDateKST(data.createdAt)}`,
+                  font: STYLES.font.body,
+                  size: STYLES.size.small,
+                  color: STYLES.color.blockquote,
+                  italics: true,
+                }),
+              ],
+              alignment: AlignmentType.CENTER,
+              spacing: { after: 600 },
+            }),
 
-            // 메타데이터
+            // 구분선
+            new Paragraph({
+              children: [],
+              border: {
+                bottom: {
+                  color: "cccccc",
+                  style: "single" as const,
+                  size: 6,
+                  space: 1,
+                },
+              },
+              spacing: { after: 400 },
+            }),
+
+            // ===== 본문 섹션 (마크다운 파싱된 내용) =====
+            ...contentElements,
+
+            // ===== 메타데이터 섹션 =====
+            new Paragraph({ children: [] }), // 여백
+
             ...(data.metadata?.author
               ? [
-                  new Paragraph({ text: "" }),
                   new Paragraph({
                     children: [
                       new TextRun({
                         text: `작성자: ${safeText(data.metadata.author)}`,
                         italics: true,
-                        size: 20,
+                        font: STYLES.font.body,
+                        size: STYLES.size.small,
+                        color: STYLES.color.blockquote,
+                      }),
+                    ],
+                    alignment: AlignmentType.RIGHT,
+                    spacing: { before: 400 },
+                  }),
+                ]
+              : []),
+
+            ...(data.metadata?.tags && data.metadata.tags.length > 0
+              ? [
+                  new Paragraph({
+                    children: [
+                      new TextRun({
+                        text: `태그: ${data.metadata.tags.join(", ")}`,
+                        italics: true,
+                        font: STYLES.font.body,
+                        size: STYLES.size.small,
+                        color: STYLES.color.blockquote,
                       }),
                     ],
                     alignment: AlignmentType.RIGHT,
                   }),
                 ]
               : []),
-
-            new Paragraph({
-              children: [
-                new TextRun({
-                  text: `생성일: ${formatDateKST(data.createdAt)}`,
-                  italics: true,
-                  size: 20,
-                }),
-              ],
-              alignment: AlignmentType.RIGHT,
-            }),
           ],
         },
       ],
