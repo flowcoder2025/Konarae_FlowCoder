@@ -164,11 +164,33 @@ async function getHomeData(userId: string): Promise<HomeData> {
     });
   }
 
-  // Add deadline alerts as tasks
+  // Add tasks from active projects based on status
+  userProjects.forEach((up) => {
+    const statusTaskMap: Record<string, { type: "diagnosis" | "plan" | "verify"; description: string }> = {
+      exploring: { type: "diagnosis", description: "진단을 시작해주세요" },
+      preparing: { type: "plan", description: "사업계획서를 작성해주세요" },
+      writing: { type: "verify", description: "계획서 검증을 진행해주세요" },
+    };
+
+    const taskInfo = statusTaskMap[up.status];
+    if (taskInfo) {
+      pendingTasks.push({
+        type: taskInfo.type,
+        projectId: up.id,
+        projectName: up.project.name,
+        description: taskInfo.description,
+        urgency: "medium",
+        daysLeft: calculateDaysLeft(up.project.deadline) ?? undefined,
+      });
+    }
+  });
+
+  // Add deadline alerts as tasks (only if not already added as project task)
+  const existingProjectIds = new Set(pendingTasks.map(t => t.projectId).filter(Boolean));
   upcomingProjects
     .filter((p) => {
       const days = calculateDaysLeft(p.deadline);
-      return days !== null && days <= 7;
+      return days !== null && days <= 7 && !existingProjectIds.has(p.id);
     })
     .slice(0, 2)
     .forEach((p) => {

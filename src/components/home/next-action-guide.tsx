@@ -123,7 +123,7 @@ export function NextActionGuide({ tasks, hasCompany }: NextActionGuideProps) {
       <CardHeader className="pb-3">
         <div className="flex items-center gap-2">
           <AlertCircle className="h-5 w-5 text-primary" />
-          <CardTitle className="text-lg">다음 할 일</CardTitle>
+          <CardTitle className="text-lg">검토 해야 할 항목</CardTitle>
           <Badge variant="secondary">{tasks.length}</Badge>
         </div>
       </CardHeader>
