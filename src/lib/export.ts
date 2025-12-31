@@ -25,6 +25,7 @@ import {
   NUMBERING_CONFIG,
   STYLES,
 } from "./markdown-to-docx";
+import type { MermaidImage } from "./mermaid-to-image";
 import { PDFDocument, rgb } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
 import { formatDateKST } from "@/lib/utils";
@@ -59,6 +60,8 @@ export interface BusinessPlanExportData {
     author?: string;
     tags?: string[];
   };
+  /** Mermaid 다이어그램 이미지 배열 (클라이언트에서 캡처) */
+  mermaidImages?: MermaidImage[];
 }
 
 export interface ExportResult {
@@ -309,7 +312,7 @@ export async function exportToPDF(
     const arrayBuffer = new ArrayBuffer(pdfBytes.length);
     new Uint8Array(arrayBuffer).set(pdfBytes);
     const blob = new Blob([arrayBuffer], { type: "application/pdf" });
-    const filename = `${sanitizeFilename(data.title)}_${Date.now()}.pdf`;
+    const filename = generateExportFilename(data.title, data.companyName, "pdf");
 
     return {
       success: true,
@@ -342,13 +345,14 @@ export async function exportToDOCX(
 
     const sections = [...(data.sections || [])].sort((a, b) => a.order - b.order);
 
-    // 마크다운 섹션들을 docx 요소로 변환
+    // 마크다운 섹션들을 docx 요소로 변환 (Mermaid 이미지 포함)
     const contentElements = convertSectionsToDocx(
       sections.map((s) => ({
         title: safeText(s.title),
         content: safeText(s.content),
         order: s.order,
-      }))
+      })),
+      data.mermaidImages // Mermaid 이미지 전달
     );
 
     // 문서 생성 (마크다운 파싱 + 전문적 스타일링)
@@ -589,7 +593,7 @@ export async function exportToDOCX(
     const blob = new Blob([uint8Array], {
       type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     });
-    const filename = `${sanitizeFilename(data.title)}_${Date.now()}.docx`;
+    const filename = generateExportFilename(data.title, data.companyName, "docx");
 
     return {
       success: true,
@@ -661,13 +665,48 @@ export async function exportBusinessPlan(
 }
 
 /**
- * 파일명 sanitize (특수문자 제거)
+ * 파일명용 날짜 포맷 (YYYY-MM-DD)
+ */
+function formatDateForFilename(date: Date = new Date()): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+/**
+ * 파일명 sanitize (특수문자 제거, 공백 정리)
+ * - 영문, 숫자, 한글(AC00-D7AF), 언더스코어, 하이픈, 공백만 허용
  */
 function sanitizeFilename(filename: string): string {
   return filename
-    .replace(/[^a-zA-Z0-9가-힣_\-\s]/g, "")
-    .replace(/\s+/g, "_")
-    .substring(0, 100);
+    .replace(/[^a-zA-Z0-9\uAC00-\uD7AF_\-\s]/g, "") // 특수문자 제거 (한글 유니코드 범위 사용)
+    .replace(/\s+/g, "_") // 공백을 언더스코어로
+    .replace(/_+/g, "_") // 연속 언더스코어 정리
+    .replace(/^_|_$/g, "") // 시작/끝 언더스코어 제거
+    .substring(0, 50); // 각 부분 50자 제한
+}
+
+/**
+ * 내보내기 파일명 생성
+ * 형식: {회사명}_{제목}_{날짜}.{확장자} 또는 {제목}_{날짜}.{확장자}
+ */
+function generateExportFilename(
+  title: string,
+  companyName?: string,
+  extension: string = "docx"
+): string {
+  const safeTitle = sanitizeFilename(title) || "사업계획서";
+  const dateStr = formatDateForFilename();
+
+  if (companyName) {
+    const safeCompany = sanitizeFilename(companyName);
+    if (safeCompany) {
+      return `${safeCompany}_${safeTitle}_${dateStr}.${extension}`;
+    }
+  }
+
+  return `${safeTitle}_${dateStr}.${extension}`;
 }
 
 /**

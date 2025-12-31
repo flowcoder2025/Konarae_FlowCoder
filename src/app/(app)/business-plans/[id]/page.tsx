@@ -18,9 +18,10 @@ import {
 import { SectionEditor } from "@/components/business-plans/section-editor";
 import Link from "next/link";
 import { PageHeader } from "@/components/common";
-import { Loader2, Sparkles, AlertTriangle, FileDown, Plus, FileText } from "lucide-react";
+import { Loader2, Sparkles, AlertTriangle, FileDown, Plus, FileText, Image } from "lucide-react";
 import { createLogger } from "@/lib/logger";
 import { toast } from "sonner";
+import { captureMermaidDiagrams, countMermaidInSections, type MermaidImage } from "@/lib/mermaid-to-image";
 
 const logger = createLogger({ page: "business-plan-detail" });
 
@@ -42,6 +43,7 @@ export default function BusinessPlanDetailPage() {
     null
   );
   const [isExporting, setIsExporting] = useState(false);
+  const [exportMessage, setExportMessage] = useState<string>("");
   const [showHwpModal, setShowHwpModal] = useState(false);
   const [showAddSectionModal, setShowAddSectionModal] = useState(false);
   const [newSectionTitle, setNewSectionTitle] = useState("");
@@ -118,16 +120,51 @@ export default function BusinessPlanDetailPage() {
 
   const handleExport = async (format: "pdf" | "docx") => {
     setIsExporting(true);
+    setExportMessage("");
+
     try {
+      let mermaidImages: MermaidImage[] = [];
+
+      // DOCX 내보내기 시 Mermaid 다이어그램 캡처
+      if (format === "docx" && businessPlan?.sections) {
+        const mermaidCount = countMermaidInSections(businessPlan.sections);
+
+        if (mermaidCount > 0) {
+          setExportMessage(`다이어그램 캡처 중... (${mermaidCount}개)`);
+
+          // Mermaid 다이어그램 캡처
+          const captureResult = await captureMermaidDiagrams("body", {
+            scale: 2,
+            backgroundColor: "#ffffff",
+            maxWidth: 600,
+          });
+
+          if (captureResult.success && captureResult.images.length > 0) {
+            mermaidImages = captureResult.images;
+            setExportMessage(`다이어그램 ${mermaidImages.length}개 캡처 완료`);
+          }
+
+          // 잠시 대기 후 다음 단계로
+          await new Promise((resolve) => setTimeout(resolve, 300));
+        }
+      }
+
+      setExportMessage("문서 생성 중...");
+
       const res = await fetch(`/api/business-plans/${id}/export`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ format }),
+        body: JSON.stringify({
+          format,
+          mermaidImages: mermaidImages.length > 0 ? mermaidImages : undefined,
+        }),
       });
 
       if (!res.ok) {
         throw new Error("Failed to export business plan");
       }
+
+      setExportMessage("다운로드 준비 중...");
 
       // Content-Disposition 헤더에서 파일명 추출
       const contentDisposition = res.headers.get("Content-Disposition");
@@ -144,11 +181,16 @@ export default function BusinessPlanDetailPage() {
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
+
+      toast.success("내보내기 완료", {
+        description: `${filename} 다운로드됨`,
+      });
     } catch (error) {
       logger.error("Export business plan error", { error });
-      alert("내보내기에 실패했습니다.");
+      toast.error("내보내기에 실패했습니다.");
     } finally {
       setIsExporting(false);
+      setExportMessage("");
     }
   };
 
@@ -308,13 +350,19 @@ export default function BusinessPlanDetailPage() {
           onClick={() => handleExport("docx")}
           variant="outline"
           disabled={isExporting}
+          className="min-w-[140px]"
         >
           {isExporting ? (
-            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            <>
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              {exportMessage || "내보내기 중..."}
+            </>
           ) : (
-            <FileDown className="h-4 w-4 mr-2" />
+            <>
+              <FileDown className="h-4 w-4 mr-2" />
+              DOCX 내보내기
+            </>
           )}
-          DOCX 내보내기
         </Button>
         <Button
           onClick={() => setShowHwpModal(true)}

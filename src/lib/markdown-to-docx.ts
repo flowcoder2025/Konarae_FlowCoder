@@ -52,7 +52,9 @@ import {
   FileChild,
   TableOfContents,
   PageBreak,
+  ImageRun,
 } from "docx";
+import type { MermaidImage } from "./mermaid-to-image";
 
 // ============================================================================
 // 스타일 설정
@@ -202,6 +204,14 @@ interface InlineContext {
 interface ListContext {
   ordered: boolean;
   level: number;
+}
+
+/**
+ * Mermaid 이미지 컨텍스트 (변환 시 이미지 매핑용)
+ */
+interface MermaidContext {
+  images: MermaidImage[];
+  currentIndex: number;
 }
 
 // ============================================================================
@@ -734,32 +744,101 @@ function isMermaidBlock(node: Code): boolean {
 }
 
 /**
- * Mermaid 블록을 설명 텍스트로 변환
+ * Mermaid 다이어그램 타입 이름 매핑
  */
-function convertMermaidBlock(node: Code): Paragraph[] {
+const MERMAID_TYPE_NAMES: Record<string, string> = {
+  graph: "플로우차트",
+  flowchart: "플로우차트",
+  sequenceDiagram: "시퀀스 다이어그램",
+  classDiagram: "클래스 다이어그램",
+  stateDiagram: "상태 다이어그램",
+  erDiagram: "ER 다이어그램",
+  gantt: "간트 차트",
+  pie: "파이 차트",
+  mindmap: "마인드맵",
+  timeline: "타임라인",
+  diagram: "다이어그램",
+};
+
+/**
+ * Mermaid 블록을 이미지 또는 설명 텍스트로 변환
+ */
+function convertMermaidBlock(
+  node: Code,
+  mermaidCtx?: MermaidContext
+): Paragraph[] {
   // Mermaid 다이어그램 타입 추출
   const firstLine = node.value.split("\n")[0].trim();
-  const diagramType = firstLine.match(/^(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|mindmap|timeline)/)?.[1] || "diagram";
+  const diagramType =
+    firstLine.match(
+      /^(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|mindmap|timeline)/
+    )?.[1] || "diagram";
 
-  const typeNames: Record<string, string> = {
-    graph: "플로우차트",
-    flowchart: "플로우차트",
-    sequenceDiagram: "시퀀스 다이어그램",
-    classDiagram: "클래스 다이어그램",
-    stateDiagram: "상태 다이어그램",
-    erDiagram: "ER 다이어그램",
-    gantt: "간트 차트",
-    pie: "파이 차트",
-    mindmap: "마인드맵",
-    timeline: "타임라인",
-    diagram: "다이어그램",
-  };
+  // 이미지가 제공된 경우 ImageRun으로 변환
+  if (mermaidCtx && mermaidCtx.images.length > mermaidCtx.currentIndex) {
+    const image = mermaidCtx.images[mermaidCtx.currentIndex];
+    mermaidCtx.currentIndex++;
 
+    try {
+      // Base64 이미지 데이터를 Buffer로 변환
+      const imageBuffer = Buffer.from(image.imageData, "base64");
+
+      // DOCX 이미지 삽입 (EMU 단위: 1인치 = 914400 EMU, 픽셀 기준 72 DPI)
+      // 최대 너비 6인치 (페이지 여백 고려)
+      const maxWidthInches = 6;
+      const maxWidthEmu = maxWidthInches * 914400;
+
+      // 원본 비율 유지하며 최대 너비에 맞춤
+      let widthEmu = image.width * (914400 / 96); // 96 DPI 기준
+      let heightEmu = image.height * (914400 / 96);
+
+      if (widthEmu > maxWidthEmu) {
+        const scale = maxWidthEmu / widthEmu;
+        widthEmu = maxWidthEmu;
+        heightEmu = heightEmu * scale;
+      }
+
+      return [
+        new Paragraph({
+          children: [
+            new ImageRun({
+              data: imageBuffer,
+              transformation: {
+                width: Math.round(widthEmu / 914400 * 72), // 픽셀로 변환
+                height: Math.round(heightEmu / 914400 * 72),
+              },
+              type: "png",
+            }),
+          ],
+          alignment: AlignmentType.CENTER,
+          spacing: STYLES.spacing.paragraph,
+        }),
+        // 다이어그램 타입 캡션
+        new Paragraph({
+          children: [
+            new TextRun({
+              text: `[${MERMAID_TYPE_NAMES[diagramType] || "다이어그램"}]`,
+              italics: true,
+              color: STYLES.color.blockquote,
+              size: STYLES.size.small,
+            }),
+          ],
+          alignment: AlignmentType.CENTER,
+          spacing: { after: 200 },
+        }),
+      ];
+    } catch (error) {
+      console.error("Mermaid image insertion failed:", error);
+      // 이미지 삽입 실패 시 폴백
+    }
+  }
+
+  // 이미지가 없거나 실패한 경우 텍스트 플레이스홀더 표시
   return [
     new Paragraph({
       children: [
         new TextRun({
-          text: `📊 [${typeNames[diagramType] || "다이어그램"}]`,
+          text: `📊 [${MERMAID_TYPE_NAMES[diagramType] || "다이어그램"}]`,
           italics: true,
           color: STYLES.color.blockquote,
           size: STYLES.size.small,
@@ -783,7 +862,10 @@ function convertMermaidBlock(node: Code): Paragraph[] {
 /**
  * 단일 블록 노드를 docx 요소로 변환
  */
-function convertBlockNode(node: Content): FileChild[] {
+function convertBlockNode(
+  node: Content,
+  mermaidCtx?: MermaidContext
+): FileChild[] {
   switch (node.type) {
     case "heading":
       return [convertHeading(node)];
@@ -793,7 +875,7 @@ function convertBlockNode(node: Content): FileChild[] {
 
     case "code":
       if (isMermaidBlock(node)) {
-        return convertMermaidBlock(node);
+        return convertMermaidBlock(node, mermaidCtx);
       }
       return convertCodeBlock(node);
 
@@ -821,8 +903,14 @@ function convertBlockNode(node: Content): FileChild[] {
 
 /**
  * 마크다운 텍스트를 docx 요소 배열로 변환
+ *
+ * @param markdown - 마크다운 텍스트
+ * @param mermaidImages - Mermaid 다이어그램 이미지 배열 (선택적)
  */
-export function markdownToDocxElements(markdown: string): {
+export function markdownToDocxElements(
+  markdown: string,
+  mermaidImages?: MermaidImage[]
+): {
   elements: FileChild[];
   numbering: INumberingOptions;
 } {
@@ -838,6 +926,11 @@ export function markdownToDocxElements(markdown: string): {
     };
   }
 
+  // Mermaid 컨텍스트 초기화
+  const mermaidCtx: MermaidContext | undefined = mermaidImages
+    ? { images: mermaidImages, currentIndex: 0 }
+    : undefined;
+
   // AST로 파싱
   const ast = parseMarkdown(markdown);
 
@@ -845,7 +938,7 @@ export function markdownToDocxElements(markdown: string): {
   const elements: FileChild[] = [];
 
   for (const node of ast.children) {
-    elements.push(...convertBlockNode(node));
+    elements.push(...convertBlockNode(node, mermaidCtx));
   }
 
   // 빈 결과 방지
@@ -866,12 +959,19 @@ export function markdownToDocxElements(markdown: string): {
 
 /**
  * 마크다운 섹션들을 docx 요소로 일괄 변환
+ *
+ * @param sections - 섹션 배열
+ * @param mermaidImages - 전체 Mermaid 이미지 배열 (섹션 순서대로 매칭)
  */
 export function convertSectionsToDocx(
-  sections: Array<{ title: string; content: string; order: number }>
+  sections: Array<{ title: string; content: string; order: number }>,
+  mermaidImages?: MermaidImage[]
 ): FileChild[] {
   const sortedSections = [...sections].sort((a, b) => a.order - b.order);
   const elements: FileChild[] = [];
+
+  // Mermaid 이미지 인덱스 추적 (섹션 간 연속)
+  let mermaidIndex = 0;
 
   for (const section of sortedSections) {
     // 섹션 제목
@@ -891,8 +991,19 @@ export function convertSectionsToDocx(
       })
     );
 
-    // 섹션 내용 (마크다운 파싱)
-    const { elements: contentElements } = markdownToDocxElements(section.content);
+    // 이 섹션에서 사용할 Mermaid 이미지 슬라이스 계산
+    const mermaidCount = countMermaidBlocks(section.content);
+    const sectionImages = mermaidImages?.slice(
+      mermaidIndex,
+      mermaidIndex + mermaidCount
+    );
+    mermaidIndex += mermaidCount;
+
+    // 섹션 내용 (마크다운 파싱 + Mermaid 이미지)
+    const { elements: contentElements } = markdownToDocxElements(
+      section.content,
+      sectionImages
+    );
     elements.push(...contentElements);
 
     // 섹션 간 여백
@@ -900,6 +1011,14 @@ export function convertSectionsToDocx(
   }
 
   return elements;
+}
+
+/**
+ * 마크다운에서 Mermaid 코드 블록 개수 반환
+ */
+function countMermaidBlocks(markdown: string): number {
+  const mermaidRegex = /```mermaid/gi;
+  return (markdown.match(mermaidRegex) || []).length;
 }
 
 export { STYLES };

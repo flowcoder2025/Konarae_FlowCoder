@@ -13,8 +13,17 @@ import { createLogger } from "@/lib/logger";
 
 const logger = createLogger({ api: "business-plan-export" });
 
+// Mermaid 이미지 스키마
+const mermaidImageSchema = z.object({
+  code: z.string(),
+  imageData: z.string(), // Base64 PNG
+  width: z.number(),
+  height: z.number(),
+});
+
 const exportSchema = z.object({
   format: z.enum(["pdf", "docx", "hwp"]),
+  mermaidImages: z.array(mermaidImageSchema).optional(),
 });
 
 export async function POST(
@@ -77,6 +86,8 @@ export async function POST(
       metadata: {
         author: session.user.name || session.user.email || "Unknown",
       },
+      // 클라이언트에서 캡처한 Mermaid 이미지 전달
+      mermaidImages: validatedData.mermaidImages,
     };
 
     const result = await exportBusinessPlan(
