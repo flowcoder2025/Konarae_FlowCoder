@@ -160,20 +160,20 @@ export default async function MyProjectsPage() {
   return (
     <div className="container mx-auto py-8 space-y-8 max-w-7xl">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold flex items-center gap-2">
-            <FolderKanban className="h-8 w-8 text-primary" />
-            내 프로젝트
-          </h1>
-          <p className="mt-1 text-muted-foreground">
-            지원 준비 중인 프로젝트를 관리하세요
-          </p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <FolderKanban className="h-7 w-7 sm:h-8 sm:w-8 text-primary shrink-0" />
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold">내 프로젝트</h1>
+            <p className="text-sm text-muted-foreground">
+              지원 준비 중인 프로젝트를 관리하세요
+            </p>
+          </div>
         </div>
-        <Button asChild>
+        <Button asChild size="sm" className="w-full sm:w-auto">
           <Link href="/projects">
-            <Plus className="h-4 w-4 mr-2" />
-            새 프로젝트 시작
+            <Plus className="h-4 w-4 mr-1" />
+            새 프로젝트
           </Link>
         </Button>
       </div>

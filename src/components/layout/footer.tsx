@@ -31,35 +31,35 @@ export function Footer() {
 
   return (
     <footer className="border-t bg-muted/30">
-      <div className="container mx-auto px-4 md:px-6 lg:px-8 max-w-7xl py-12">
+      <div className="container mx-auto px-4 md:px-6 lg:px-8 max-w-7xl py-6 sm:py-10">
         {/* 상단: 로고 + 링크 */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-6 sm:gap-8 mb-6">
           {/* 로고 & 설명 */}
-          <div className="md:col-span-1">
-            <Link href="/home" className="flex items-center gap-2 mb-4">
+          <div className="col-span-2 sm:col-span-1">
+            <Link href="/home" className="flex items-center gap-2 mb-2">
               <Image
                 src="/Flow_icon.png"
                 alt="FlowMate"
-                width={32}
-                height={32}
+                width={28}
+                height={28}
                 className="rounded-lg"
               />
-              <span className="font-semibold text-lg">FlowMate</span>
+              <span className="font-semibold">FlowMate</span>
             </Link>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               정부 지원사업 매칭의 새로운 기준
             </p>
           </div>
 
           {/* 서비스 링크 */}
           <div>
-            <h3 className="font-medium mb-3 text-sm">서비스</h3>
-            <ul className="space-y-2">
+            <h3 className="font-medium mb-2 text-xs">서비스</h3>
+            <ul className="space-y-1">
               {footerLinks.service.map((link) => (
                 <li key={link.href}>
                   <Link
                     href={link.href}
-                    className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+                    className="text-xs text-muted-foreground hover:text-foreground transition-colors"
                   >
                     {link.label}
                   </Link>
@@ -70,13 +70,13 @@ export function Footer() {
 
           {/* 법적 링크 */}
           <div>
-            <h3 className="font-medium mb-3 text-sm">법적 고지</h3>
-            <ul className="space-y-2">
+            <h3 className="font-medium mb-2 text-xs">법적 고지</h3>
+            <ul className="space-y-1">
               {footerLinks.legal.map((link) => (
                 <li key={link.href}>
                   <Link
                     href={link.href}
-                    className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+                    className="text-xs text-muted-foreground hover:text-foreground transition-colors"
                   >
                     {link.label}
                   </Link>
@@ -87,13 +87,13 @@ export function Footer() {
 
           {/* 지원 링크 */}
           <div>
-            <h3 className="font-medium mb-3 text-sm">고객 지원</h3>
-            <ul className="space-y-2">
+            <h3 className="font-medium mb-2 text-xs">고객 지원</h3>
+            <ul className="space-y-1">
               {footerLinks.support.map((link) => (
                 <li key={link.href}>
                   <Link
                     href={link.href}
-                    className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+                    className="text-xs text-muted-foreground hover:text-foreground transition-colors"
                   >
                     {link.label}
                   </Link>
@@ -104,8 +104,8 @@ export function Footer() {
         </div>
 
         {/* 하단: 저작권 */}
-        <div className="border-t pt-8">
-          <p className="text-sm text-muted-foreground text-center">
+        <div className="border-t pt-4">
+          <p className="text-xs text-muted-foreground text-center">
             © {currentYear} FlowMate. All rights reserved.
           </p>
         </div>

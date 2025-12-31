@@ -202,12 +202,12 @@ export default async function CompanyPage({ searchParams }: Props) {
   return (
     <div className="container mx-auto py-8 space-y-6 max-w-5xl">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <div className="w-16 h-16 rounded-lg bg-primary/10 flex items-center justify-center">
-            <Building2 className="h-8 w-8 text-primary" />
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+            <Building2 className="h-6 w-6 sm:h-8 sm:w-8 text-primary" />
           </div>
-          <div>
+          <div className="min-w-0">
             {/* Company Selector for multiple companies */}
             {companies.length > 1 ? (
               <CompanySelector
@@ -215,41 +215,41 @@ export default async function CompanyPage({ searchParams }: Props) {
                 currentCompanyId={company.id}
               />
             ) : (
-              <h1 className="text-2xl font-bold">{company.name}</h1>
+              <h1 className="text-xl sm:text-2xl font-bold truncate">{company.name}</h1>
             )}
-            <p className="text-muted-foreground mt-1">
+            <p className="text-sm text-muted-foreground truncate">
               {company.registrationNumber || "사업자번호 미등록"}
             </p>
           </div>
         </div>
         {company.isOwner && (
-          <Button variant="outline" asChild>
+          <Button variant="outline" size="sm" asChild className="w-full sm:w-auto shrink-0">
             <Link href={`/companies/${company.id}/edit`}>
-              <Edit className="h-4 w-4 mr-2" />
-              정보 수정
+              <Edit className="h-4 w-4 mr-1" />
+              수정
             </Link>
           </Button>
         )}
       </div>
 
       {/* Tabs */}
-      <Tabs defaultValue="profile" className="space-y-6">
+      <Tabs defaultValue="profile" className="space-y-4 sm:space-y-6">
         <div className="overflow-x-auto scrollbar-hide touch-scroll -mx-1 px-1">
-          <TabsList className="inline-flex w-auto min-w-full sm:w-full">
-            <TabsTrigger value="profile" className="gap-2 shrink-0">
-              <Building2 className="h-4 w-4" />
+          <TabsList className="inline-flex w-auto min-w-full sm:w-full h-9 sm:h-10">
+            <TabsTrigger value="profile" className="gap-1.5 shrink-0 text-xs sm:text-sm px-2.5 sm:px-3">
+              <Building2 className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
               <span className="whitespace-nowrap">기업 정보</span>
             </TabsTrigger>
-            <TabsTrigger value="documents" className="gap-2 shrink-0">
-              <FileText className="h-4 w-4" />
-              <span className="whitespace-nowrap">증빙 보관함</span>
-              <span className="ml-1 text-xs bg-muted px-1.5 rounded">
+            <TabsTrigger value="documents" className="gap-1.5 shrink-0 text-xs sm:text-sm px-2.5 sm:px-3">
+              <FileText className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+              <span className="whitespace-nowrap">증빙</span>
+              <span className="text-[10px] sm:text-xs bg-muted px-1 sm:px-1.5 rounded">
                 {company.documentsCount}
               </span>
             </TabsTrigger>
-            <TabsTrigger value="master-profile" className="gap-2 shrink-0">
-              <Sparkles className="h-4 w-4" />
-              <span className="whitespace-nowrap">마스터 프로필</span>
+            <TabsTrigger value="master-profile" className="gap-1.5 shrink-0 text-xs sm:text-sm px-2.5 sm:px-3">
+              <Sparkles className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+              <span className="whitespace-nowrap">마스터</span>
             </TabsTrigger>
           </TabsList>
         </div>
