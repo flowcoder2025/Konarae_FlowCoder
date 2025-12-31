@@ -55,8 +55,8 @@ export function BusinessPlanCard({ businessPlan }: BusinessPlanCardProps) {
   };
 
   return (
-    <Link href={`/business-plans/${businessPlan.id}`}>
-      <Card className="p-6 hover:shadow-md transition-shadow cursor-pointer">
+    <Link href={`/business-plans/${businessPlan.id}`} className="h-full">
+      <Card className="p-6 hover:shadow-md transition-shadow cursor-pointer h-full flex flex-col">
         <div className="flex items-start justify-between mb-3">
           <div>
             <h3 className="text-lg font-semibold mb-1">
@@ -71,30 +71,34 @@ export function BusinessPlanCard({ businessPlan }: BusinessPlanCardProps) {
           </Badge>
         </div>
 
-        {businessPlan.project && (
-          <div className="mb-3 text-sm">
-            <span className="text-muted-foreground">지원사업: </span>
-            <span
-              role="link"
-              tabIndex={0}
-              className="font-medium hover:underline text-primary cursor-pointer"
-              onClick={(e) => handleProjectClick(e, businessPlan.project!.id)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  handleProjectClick(e as unknown as React.MouseEvent, businessPlan.project!.id);
-                }
-              }}
-            >
-              {businessPlan.project.name}
-            </span>
-            <span className="text-muted-foreground">
-              {" "}
-              ({formatOrganization(businessPlan.project.organization, businessPlan.project.sourceUrl)})
-            </span>
-          </div>
-        )}
+        {/* Flexible content area - ensures equal card heights */}
+        <div className="flex-1 mb-3">
+          {businessPlan.project && (
+            <div className="text-sm">
+              <span className="text-muted-foreground">지원사업: </span>
+              <span
+                role="link"
+                tabIndex={0}
+                className="font-medium hover:underline text-primary cursor-pointer"
+                onClick={(e) => handleProjectClick(e, businessPlan.project!.id)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    handleProjectClick(e as unknown as React.MouseEvent, businessPlan.project!.id);
+                  }
+                }}
+              >
+                {businessPlan.project.name}
+              </span>
+              <span className="text-muted-foreground">
+                {" "}
+                ({formatOrganization(businessPlan.project.organization, businessPlan.project.sourceUrl)})
+              </span>
+            </div>
+          )}
+        </div>
 
-        <div className="flex items-center justify-between text-xs text-muted-foreground">
+        {/* Footer - fixed at bottom */}
+        <div className="flex items-center justify-between text-xs text-muted-foreground mt-auto">
           <span>
             섹션: {businessPlan._count?.sections || 0}개
           </span>
