@@ -144,10 +144,157 @@ function wrapText(text: string, maxCharsPerLine: number): string[] {
   return lines;
 }
 
+// ============================================================================
+// PDF 마크다운 파싱 타입
+// ============================================================================
+
+interface PDFContentBlock {
+  type: "heading" | "paragraph" | "list" | "code" | "mermaid" | "table";
+  level?: number; // heading level (1-6)
+  content: string;
+  items?: string[]; // list items
+  ordered?: boolean; // ordered list
+  rows?: string[][]; // table rows
+}
+
+/**
+ * 마크다운 콘텐츠를 PDF용 블록으로 파싱
+ */
+function parseMarkdownForPDF(content: string): PDFContentBlock[] {
+  const blocks: PDFContentBlock[] = [];
+  const lines = content.split("\n");
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // 빈 줄 건너뛰기
+    if (line.trim() === "") {
+      i++;
+      continue;
+    }
+
+    // Mermaid 코드 블록
+    if (line.trim().startsWith("```mermaid")) {
+      let mermaidContent = "";
+      i++;
+      while (i < lines.length && !lines[i].trim().startsWith("```")) {
+        mermaidContent += lines[i] + "\n";
+        i++;
+      }
+      blocks.push({ type: "mermaid", content: mermaidContent.trim() });
+      i++; // 닫는 ``` 건너뛰기
+      continue;
+    }
+
+    // 일반 코드 블록
+    if (line.trim().startsWith("```")) {
+      let codeContent = "";
+      const lang = line.trim().slice(3);
+      i++;
+      while (i < lines.length && !lines[i].trim().startsWith("```")) {
+        codeContent += lines[i] + "\n";
+        i++;
+      }
+      blocks.push({ type: "code", content: codeContent.trimEnd(), level: lang ? 1 : 0 });
+      i++; // 닫는 ``` 건너뛰기
+      continue;
+    }
+
+    // 헤딩 (# ~ ######)
+    const headingMatch = line.match(/^(#{1,6})\s+(.+)$/);
+    if (headingMatch) {
+      blocks.push({
+        type: "heading",
+        level: headingMatch[1].length,
+        content: headingMatch[2],
+      });
+      i++;
+      continue;
+    }
+
+    // 순서 없는 리스트
+    if (line.match(/^[\s]*[-*+]\s+/)) {
+      const items: string[] = [];
+      while (i < lines.length && lines[i].match(/^[\s]*[-*+]\s+/)) {
+        items.push(lines[i].replace(/^[\s]*[-*+]\s+/, ""));
+        i++;
+      }
+      blocks.push({ type: "list", content: "", items, ordered: false });
+      continue;
+    }
+
+    // 순서 있는 리스트
+    if (line.match(/^[\s]*\d+\.\s+/)) {
+      const items: string[] = [];
+      while (i < lines.length && lines[i].match(/^[\s]*\d+\.\s+/)) {
+        items.push(lines[i].replace(/^[\s]*\d+\.\s+/, ""));
+        i++;
+      }
+      blocks.push({ type: "list", content: "", items, ordered: true });
+      continue;
+    }
+
+    // 테이블 (| 로 시작)
+    if (line.trim().startsWith("|")) {
+      const rows: string[][] = [];
+      while (i < lines.length && lines[i].trim().startsWith("|")) {
+        const row = lines[i]
+          .split("|")
+          .map((cell) => cell.trim())
+          .filter((cell) => cell && !cell.match(/^[-:]+$/));
+        if (row.length > 0) {
+          rows.push(row);
+        }
+        i++;
+      }
+      if (rows.length > 0) {
+        blocks.push({ type: "table", content: "", rows });
+      }
+      continue;
+    }
+
+    // 일반 문단 (여러 줄 수집)
+    let paragraphContent = line;
+    i++;
+    while (
+      i < lines.length &&
+      lines[i].trim() !== "" &&
+      !lines[i].match(/^#{1,6}\s/) &&
+      !lines[i].match(/^[\s]*[-*+]\s+/) &&
+      !lines[i].match(/^[\s]*\d+\.\s+/) &&
+      !lines[i].trim().startsWith("```") &&
+      !lines[i].trim().startsWith("|")
+    ) {
+      paragraphContent += " " + lines[i];
+      i++;
+    }
+    blocks.push({ type: "paragraph", content: paragraphContent });
+  }
+
+  return blocks;
+}
+
+/**
+ * 마크다운 인라인 스타일 제거 (볼드, 이탤릭 등)
+ * PDF에서는 단순 텍스트로 표시
+ */
+function stripInlineMarkdown(text: string): string {
+  return text
+    .replace(/\*\*([^*]+)\*\*/g, "$1") // 볼드
+    .replace(/\*([^*]+)\*/g, "$1") // 이탤릭
+    .replace(/__([^_]+)__/g, "$1") // 볼드
+    .replace(/_([^_]+)_/g, "$1") // 이탤릭
+    .replace(/`([^`]+)`/g, "$1") // 인라인 코드
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1"); // 링크
+}
+
 /**
  * PDF 내보내기 (pdf-lib 사용 - 서버리스 환경 완벽 지원)
  * - Vercel 서버리스 환경에서 안정적으로 동작
  * - 한글 폰트 임베딩 지원 (Noto Sans KR)
+ * - Mermaid 다이어그램 이미지 삽입 지원
+ * - 마크다운 스타일링 (헤딩, 리스트, 코드 블록, 테이블)
  */
 export async function exportToPDF(
   data: BusinessPlanExportData
@@ -187,7 +334,10 @@ export async function exportToPDF(
     const lineHeight = 16;
     const titleSize = 24;
     const headingSize = 16;
+    const subHeadingSize = 14;
     const bodySize = 11;
+    const codeSize = 10;
+    const listIndent = 20;
 
     // 텍스트 안전 처리 함수
     const safeText = (text: string | null | undefined): string => {
@@ -196,9 +346,13 @@ export async function exportToPDF(
 
     // 최대 문자 수 계산 (대략적)
     const maxCharsPerLine = Math.floor(contentWidth / (bodySize * 0.5));
+    const maxCodeCharsPerLine = Math.floor(contentWidth / (codeSize * 0.5));
 
     let currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
     let yPosition = pageHeight - margin;
+
+    // Mermaid 이미지 인덱스 (섹션 순서대로 매칭)
+    let mermaidImageIndex = 0;
 
     // 새 페이지 추가 함수
     const ensureSpace = (requiredSpace: number) => {
@@ -207,6 +361,198 @@ export async function exportToPDF(
         yPosition = pageHeight - margin;
       }
     };
+
+    // 텍스트 그리기 헬퍼
+    const drawTextLine = (
+      text: string,
+      x: number,
+      size: number,
+      color: { r: number; g: number; b: number } = { r: 0.2, g: 0.2, b: 0.2 }
+    ) => {
+      ensureSpace(lineHeight);
+      if (text.length > 0) {
+        currentPage.drawText(text, {
+          x,
+          y: yPosition,
+          size,
+          font,
+          color: rgb(color.r, color.g, color.b),
+        });
+      }
+      yPosition -= lineHeight;
+    };
+
+    // Mermaid 이미지 그리기
+    const drawMermaidImage = async () => {
+      if (!data.mermaidImages || mermaidImageIndex >= data.mermaidImages.length) {
+        // 이미지가 없으면 플레이스홀더 텍스트
+        drawTextLine("[Mermaid 다이어그램]", margin, bodySize, { r: 0.5, g: 0.5, b: 0.5 });
+        return;
+      }
+
+      const mermaidImage = data.mermaidImages[mermaidImageIndex];
+      mermaidImageIndex++;
+
+      try {
+        // Base64를 Uint8Array로 변환
+        const imageBytes = Uint8Array.from(atob(mermaidImage.imageData), (c) =>
+          c.charCodeAt(0)
+        );
+
+        // PNG 이미지 임베드
+        const pngImage = await pdfDoc.embedPng(imageBytes);
+
+        // 이미지 크기 계산 (contentWidth에 맞게 조정)
+        const aspectRatio = mermaidImage.width / mermaidImage.height;
+        let drawWidth = Math.min(mermaidImage.width, contentWidth);
+        let drawHeight = drawWidth / aspectRatio;
+
+        // 최대 높이 제한 (페이지의 60%)
+        const maxHeight = pageHeight * 0.6;
+        if (drawHeight > maxHeight) {
+          drawHeight = maxHeight;
+          drawWidth = drawHeight * aspectRatio;
+        }
+
+        // 페이지 공간 확보
+        ensureSpace(drawHeight + lineHeight);
+
+        // 이미지 그리기 (중앙 정렬)
+        const imageX = margin + (contentWidth - drawWidth) / 2;
+        currentPage.drawImage(pngImage, {
+          x: imageX,
+          y: yPosition - drawHeight,
+          width: drawWidth,
+          height: drawHeight,
+        });
+
+        yPosition -= drawHeight + lineHeight;
+      } catch (imgError) {
+        logger.warn("Failed to embed Mermaid image", { error: imgError });
+        drawTextLine("[이미지 로드 실패]", margin, bodySize, { r: 0.7, g: 0.3, b: 0.3 });
+      }
+    };
+
+    // 코드 블록 그리기
+    const drawCodeBlock = (content: string) => {
+      const codeLines = content.split("\n");
+      const blockHeight = (codeLines.length + 1) * lineHeight + 10;
+
+      ensureSpace(blockHeight);
+
+      // 배경 그리기
+      const bgY = yPosition - blockHeight + lineHeight;
+      currentPage.drawRectangle({
+        x: margin - 5,
+        y: bgY,
+        width: contentWidth + 10,
+        height: blockHeight,
+        color: rgb(0.95, 0.95, 0.95),
+        borderColor: rgb(0.85, 0.85, 0.85),
+        borderWidth: 1,
+      });
+
+      yPosition -= 5; // 상단 패딩
+
+      for (const codeLine of codeLines) {
+        const wrappedLines = wrapText(codeLine, maxCodeCharsPerLine);
+        for (const wrappedLine of wrappedLines) {
+          drawTextLine(wrappedLine, margin + 5, codeSize, { r: 0.3, g: 0.3, b: 0.3 });
+        }
+      }
+
+      yPosition -= 5; // 하단 패딩
+    };
+
+    // 테이블 그리기
+    const drawTable = (rows: string[][]) => {
+      if (rows.length === 0) return;
+
+      const colCount = Math.max(...rows.map((r) => r.length));
+      const colWidth = contentWidth / colCount;
+      const rowHeight = lineHeight * 1.5;
+      const tableHeight = rows.length * rowHeight;
+
+      ensureSpace(tableHeight + lineHeight);
+
+      // 테이블 그리기
+      for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
+        const row = rows[rowIdx];
+        const rowY = yPosition - rowHeight;
+        const isHeader = rowIdx === 0;
+
+        // 헤더 배경
+        if (isHeader) {
+          currentPage.drawRectangle({
+            x: margin,
+            y: rowY,
+            width: contentWidth,
+            height: rowHeight,
+            color: rgb(0.9, 0.9, 0.9),
+          });
+        }
+
+        // 셀 텍스트
+        for (let colIdx = 0; colIdx < row.length; colIdx++) {
+          const cellX = margin + colIdx * colWidth + 5;
+          const cellText = stripInlineMarkdown(row[colIdx]).substring(0, 30); // 30자 제한
+          currentPage.drawText(cellText, {
+            x: cellX,
+            y: rowY + rowHeight / 3,
+            size: bodySize,
+            font,
+            color: rgb(0.2, 0.2, 0.2),
+          });
+        }
+
+        // 행 테두리
+        currentPage.drawLine({
+          start: { x: margin, y: rowY },
+          end: { x: margin + contentWidth, y: rowY },
+          thickness: 0.5,
+          color: rgb(0.7, 0.7, 0.7),
+        });
+
+        yPosition = rowY;
+      }
+
+      yPosition -= lineHeight / 2;
+    };
+
+    // 리스트 그리기
+    const drawList = (items: string[], ordered: boolean) => {
+      for (let i = 0; i < items.length; i++) {
+        const bullet = ordered ? `${i + 1}.` : "•";
+        const itemText = stripInlineMarkdown(items[i]);
+        const wrappedLines = wrapText(itemText, maxCharsPerLine - 5);
+
+        for (let j = 0; j < wrappedLines.length; j++) {
+          ensureSpace(lineHeight);
+          if (j === 0) {
+            // 첫 줄에 불릿/번호 추가
+            currentPage.drawText(bullet, {
+              x: margin + listIndent - 15,
+              y: yPosition,
+              size: bodySize,
+              font,
+              color: rgb(0.3, 0.3, 0.3),
+            });
+          }
+          currentPage.drawText(wrappedLines[j], {
+            x: margin + listIndent,
+            y: yPosition,
+            size: bodySize,
+            font,
+            color: rgb(0.2, 0.2, 0.2),
+          });
+          yPosition -= lineHeight;
+        }
+      }
+    };
+
+    // =====================================================
+    // 문서 헤더 렌더링
+    // =====================================================
 
     // 제목
     ensureSpace(titleSize + lineHeight);
@@ -247,7 +593,9 @@ export async function exportToPDF(
 
     yPosition -= lineHeight; // 여백
 
-    // 섹션별 내용
+    // =====================================================
+    // 섹션별 내용 렌더링 (마크다운 파싱 적용)
+    // =====================================================
     const sortedSections = [...(data.sections || [])].sort((a, b) => a.order - b.order);
 
     for (const section of sortedSections) {
@@ -262,28 +610,76 @@ export async function exportToPDF(
       });
       yPosition -= headingSize + lineHeight * 0.5;
 
-      // 섹션 내용 (줄바꿈 처리)
-      const content = safeText(section.content);
-      const lines = wrapText(content, maxCharsPerLine);
+      // 섹션 내용 파싱
+      const blocks = parseMarkdownForPDF(safeText(section.content));
 
-      for (const line of lines) {
-        ensureSpace(lineHeight);
-        if (line.length > 0) {
-          currentPage.drawText(line, {
-            x: margin,
-            y: yPosition,
-            size: bodySize,
-            font,
-            color: rgb(0.2, 0.2, 0.2),
-          });
+      for (const block of blocks) {
+        switch (block.type) {
+          case "heading": {
+            const hSize =
+              block.level === 1
+                ? headingSize
+                : block.level === 2
+                  ? subHeadingSize
+                  : bodySize + 1;
+            ensureSpace(hSize + lineHeight);
+            yPosition -= lineHeight / 2;
+            currentPage.drawText(stripInlineMarkdown(block.content), {
+              x: margin,
+              y: yPosition,
+              size: hSize,
+              font,
+              color: rgb(0.15, 0.15, 0.15),
+            });
+            yPosition -= hSize + lineHeight / 2;
+            break;
+          }
+
+          case "paragraph": {
+            const paraText = stripInlineMarkdown(block.content);
+            const wrappedLines = wrapText(paraText, maxCharsPerLine);
+            for (const line of wrappedLines) {
+              drawTextLine(line, margin, bodySize);
+            }
+            yPosition -= lineHeight / 2;
+            break;
+          }
+
+          case "list": {
+            if (block.items && block.items.length > 0) {
+              drawList(block.items, block.ordered || false);
+            }
+            yPosition -= lineHeight / 2;
+            break;
+          }
+
+          case "code": {
+            drawCodeBlock(block.content);
+            yPosition -= lineHeight / 2;
+            break;
+          }
+
+          case "mermaid": {
+            await drawMermaidImage();
+            break;
+          }
+
+          case "table": {
+            if (block.rows && block.rows.length > 0) {
+              drawTable(block.rows);
+            }
+            yPosition -= lineHeight / 2;
+            break;
+          }
         }
-        yPosition -= lineHeight;
       }
 
       yPosition -= lineHeight; // 섹션 간 여백
     }
 
+    // =====================================================
     // 메타데이터 (작성자, 날짜)
+    // =====================================================
     ensureSpace(lineHeight * 3);
     yPosition -= lineHeight;
 
