@@ -9,13 +9,24 @@ const logger = createLogger({ component: "mermaid-renderer" });
 // Initialize mermaid once
 let mermaidInitialized = false;
 
+/**
+ * Mermaid 초기화
+ *
+ * Security: dangerouslySetInnerHTML을 사용하지만 안전함:
+ * 1. securityLevel: "strict" - Mermaid 내장 XSS 방지 모드
+ *    - HTML 태그 자동 인코딩
+ *    - onclick 등 이벤트 핸들러 비활성화
+ *    - JavaScript URL 차단
+ * 2. sanitizeMermaid() 함수가 입력값 추가 정제
+ * 3. mermaid.render()가 생성한 SVG만 렌더링 (사용자 직접 HTML 불가)
+ */
 function initializeMermaid() {
   if (mermaidInitialized) return;
 
   mermaid.initialize({
     startOnLoad: false,
     theme: "default",
-    securityLevel: "strict", // XSS 방지: HTML 태그 인코딩, 클릭 이벤트 비활성화
+    securityLevel: "strict", // XSS 방지: HTML 인코딩, 이벤트 비활성화, JS URL 차단
     fontFamily: "inherit",
   });
 

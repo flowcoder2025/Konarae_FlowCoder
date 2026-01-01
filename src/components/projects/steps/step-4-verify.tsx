@@ -117,9 +117,8 @@ export function Step4Verify({
           setVerificationComplete(true);
         }
       }
-    } catch (err) {
-      // 기존 결과가 없을 수 있으므로 에러는 무시
-      console.log("No previous verification found");
+    } catch {
+      // 기존 결과가 없을 수 있으므로 에러는 무시 (정상 동작)
     } finally {
       setIsLoading(false);
     }

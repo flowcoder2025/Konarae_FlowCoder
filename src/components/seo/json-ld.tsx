@@ -1,3 +1,12 @@
+/**
+ * JSON-LD Structured Data for SEO
+ *
+ * Security: dangerouslySetInnerHTML is safe here because:
+ * - All data comes from code constants, not user input
+ * - JSON.stringify() automatically escapes special characters
+ * - Schema.org structured data is a standard SEO pattern
+ */
+
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://mate.flow-coder.com";
 const SITE_NAME = "FlowMate";
 const SITE_DESCRIPTION =

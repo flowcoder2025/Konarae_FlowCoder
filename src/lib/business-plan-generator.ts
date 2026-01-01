@@ -228,8 +228,6 @@ export async function generateBusinessPlanSections(
 
       const content = await generateSection({
         sectionTitle: formSection.title,
-        company,
-        project,
         newBusinessDescription: input.newBusinessDescription,
         ragContext,
         evaluationCriteria,
@@ -559,8 +557,6 @@ async function extractEvaluationCriteria(projectId: string): Promise<string> {
  */
 async function generateSection(params: {
   sectionTitle: string;
-  company: any;
-  project: any;
   newBusinessDescription: string;
   ragContext: string;
   evaluationCriteria?: string;
@@ -715,8 +711,6 @@ export async function regenerateSection(
 
     const content = await generateSection({
       sectionTitle: section.title,
-      company: businessPlan.company,
-      project: businessPlan.project,
       newBusinessDescription: businessPlan.newBusinessDescription || "",
       ragContext,
       evaluationCriteria,

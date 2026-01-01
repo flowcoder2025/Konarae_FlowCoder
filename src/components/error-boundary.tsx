@@ -107,7 +107,7 @@ export class ErrorBoundary extends React.Component<
       console.error("[ErrorBoundary] Caught error:", error, errorInfo);
     }
 
-    // TODO: Send error to logging service (Sentry, LogRocket, etc.)
+    // 에러 추적 서비스로 로그 전송 (errorTracker 사용)
     this.logErrorToService(error, errorInfo);
 
     this.setState({

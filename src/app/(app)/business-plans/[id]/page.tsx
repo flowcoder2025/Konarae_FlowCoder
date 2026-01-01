@@ -25,6 +25,31 @@ import { captureMermaidDiagrams, countMermaidInSections, type MermaidImage } fro
 
 const logger = createLogger({ page: "business-plan-detail" });
 
+// 사업계획서 상세 페이지용 타입
+interface BusinessPlanSection {
+  id: string;
+  sectionIndex: number;
+  title: string;
+  content: string;
+  isAiGenerated: boolean;
+}
+
+interface BusinessPlanDetail {
+  id: string;
+  title: string;
+  status: string;
+  company: {
+    id: string;
+    name: string;
+  };
+  project?: {
+    id: string;
+    name: string;
+    organization: string | null;
+  } | null;
+  sections: BusinessPlanSection[];
+}
+
 const STATUS_LABELS: Record<string, string> = {
   draft: "초안",
   in_progress: "작성 중",
@@ -36,7 +61,7 @@ export default function BusinessPlanDetailPage() {
   const router = useRouter();
   const { id } = useParams<{ id: string }>();
 
-  const [businessPlan, setBusinessPlan] = useState<any>(null);
+  const [businessPlan, setBusinessPlan] = useState<BusinessPlanDetail | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationStartTime, setGenerationStartTime] = useState<number | null>(
@@ -139,8 +164,7 @@ export default function BusinessPlanDetailPage() {
             maxWidth: 600,
           });
 
-          // 디버그 로깅
-          console.log("[Export] Mermaid capture result:", {
+          logger.debug("Mermaid capture result", {
             success: captureResult.success,
             imageCount: captureResult.images.length,
             errors: captureResult.errors,
@@ -149,9 +173,9 @@ export default function BusinessPlanDetailPage() {
           if (captureResult.success && captureResult.images.length > 0) {
             mermaidImages = captureResult.images;
             setExportMessage(`다이어그램 ${mermaidImages.length}개 캡처 완료`);
-            console.log("[Export] Mermaid images captured:", mermaidImages.length);
+            logger.debug("Mermaid images captured", { count: mermaidImages.length });
           } else {
-            console.warn("[Export] Mermaid capture failed or empty:", captureResult.errors);
+            logger.warn("Mermaid capture failed or empty", { errors: captureResult.errors });
           }
 
           // 잠시 대기 후 다음 단계로
@@ -161,8 +185,7 @@ export default function BusinessPlanDetailPage() {
 
       setExportMessage("문서 생성 중...");
 
-      // 디버그 로깅
-      console.log("[Export] Sending request with mermaidImages:", mermaidImages.length);
+      logger.debug("Sending export request", { mermaidImageCount: mermaidImages.length });
 
       const res = await fetch(`/api/business-plans/${id}/export`, {
         method: "POST",
@@ -469,7 +492,7 @@ export default function BusinessPlanDetailPage() {
       {/* Sections */}
       {businessPlan.sections && businessPlan.sections.length > 0 ? (
         <div className="space-y-6">
-          {businessPlan.sections.map((section: any) => (
+          {businessPlan.sections.map((section) => (
             <SectionEditor
               key={section.id}
               section={section}

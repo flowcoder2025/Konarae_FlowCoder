@@ -120,8 +120,9 @@ class Logger {
   }
 
   private sendToErrorTracking(_entry: LogEntry) {
-    // TODO: Integrate with error tracking service (Sentry, LogRocket, etc.)
-    // Example: Sentry.captureException(_entry.error);
+    // 에러 추적 서비스 통합 예정 (Sentry, LogRocket 등)
+    // 서비스 선택 후 구현: Sentry.captureException(_entry.error);
+    // 현재는 console 로그만 사용 (production에서 자동 로깅)
   }
 }
 

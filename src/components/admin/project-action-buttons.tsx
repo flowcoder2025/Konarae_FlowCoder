@@ -38,7 +38,7 @@ export function ProjectActionButtons({ projectId, projectName }: Props) {
   };
 
   const handleEdit = () => {
-    // TODO: Navigate to edit page or open edit dialog
+    // 편집 기능은 Phase 2에서 구현 예정 (admin/projects/[id]/edit 라우트)
     toast.info("편집 기능은 준비 중입니다");
   };
 

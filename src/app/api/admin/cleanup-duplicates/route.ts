@@ -121,29 +121,30 @@ export async function GET(req: NextRequest) {
   try {
     await requireAdmin();
 
-    // Find duplicate counts using raw query for efficiency
-    const duplicates = await prisma.$queryRaw<
-      Array<{ projectId: string; sourceUrl: string; count: bigint }>
-    >`
-      SELECT "projectId", "sourceUrl", COUNT(*) as count
-      FROM "ProjectAttachment"
-      GROUP BY "projectId", "sourceUrl"
-      HAVING COUNT(*) > 1
-      ORDER BY COUNT(*) DESC
-    `;
+    // Find duplicate counts using Prisma groupBy (FDP compliant)
+    const duplicates = await prisma.projectAttachment.groupBy({
+      by: ["projectId", "sourceUrl"],
+      _count: { id: true },
+      having: {
+        id: { _count: { gt: 1 } },
+      },
+      orderBy: {
+        _count: { id: "desc" },
+      },
+    });
 
     const totalDuplicates = duplicates.reduce(
-      (sum, d) => sum + (Number(d.count) - 1), // Subtract 1 because we keep one
+      (sum, d) => sum + (d._count.id - 1), // Subtract 1 because we keep one
       0
     );
 
     return NextResponse.json({
       duplicateGroups: duplicates.length,
       totalDuplicatesToRemove: totalDuplicates,
-      details: duplicates.slice(0, 20).map(d => ({
+      details: duplicates.slice(0, 20).map((d) => ({
         projectId: d.projectId,
         sourceUrl: d.sourceUrl,
-        count: Number(d.count),
+        count: d._count.id,
       })),
     });
   } catch (error) {

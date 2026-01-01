@@ -6,6 +6,14 @@
  */
 
 // ============================================================================
+// 디버그 로깅 (개발 환경에서만)
+// ============================================================================
+const DEBUG = process.env.NODE_ENV === "development";
+const debugLog = (...args: unknown[]) => DEBUG && console.log("[Mermaid]", ...args);
+const debugWarn = (...args: unknown[]) => DEBUG && console.warn("[Mermaid]", ...args);
+const debugError = (...args: unknown[]) => console.error("[Mermaid]", ...args); // 에러는 항상 출력
+
+// ============================================================================
 // 타입 정의
 // ============================================================================
 
@@ -205,7 +213,7 @@ async function svgToImage(
       };
       img.onerror = (e) => {
         clearTimeout(timeout);
-        console.error("SVG image load error:", e);
+        debugError("SVG image load error:", e);
         reject(new Error(`Image load failed`));
       };
       img.src = dataUrl;
@@ -246,7 +254,7 @@ async function svgToImage(
       height: Math.round(outputHeight),
     };
   } catch (error) {
-    console.error("SVG to image conversion failed:", error);
+    debugError("SVG to image conversion failed:", error);
     return null;
   }
 }
@@ -304,7 +312,7 @@ async function captureElement(
     }
 
     // SVG가 없거나 변환 실패 시 html2canvas 폴백
-    console.warn("SVG direct conversion failed, trying html2canvas fallback...");
+    debugWarn("SVG direct conversion failed, trying html2canvas fallback...");
 
     const { default: html2canvas } = await import("html2canvas");
 
@@ -347,7 +355,7 @@ async function captureElement(
       height: Math.round(height),
     };
   } catch (error) {
-    console.error("Mermaid element capture failed:", error);
+    debugError("Mermaid element capture failed:", error);
     return null;
   }
 }
@@ -393,7 +401,7 @@ export async function captureMermaidDiagrams(
       ...Array.from(mermaidSvgContainers),
     ]);
 
-    console.log(`[Mermaid Capture] Found ${allElements.size} elements to capture`);
+    debugLog(`Found ${allElements.size} elements to capture`);
 
     if (allElements.size === 0) {
       return {
@@ -420,7 +428,7 @@ export async function captureMermaidDiagrams(
           svgElement.getAttribute("data-mermaid") ||
           `mermaid-diagram-${index}`;
 
-        console.log(`[Mermaid Capture] Capturing element ${index}...`);
+        debugLog(`Capturing element ${index}...`);
 
         // SVG 직접 변환 시도
         const result = await svgToImage(svgElement as SVGElement, options);
@@ -432,7 +440,7 @@ export async function captureMermaidDiagrams(
             width: result.width,
             height: result.height,
           });
-          console.log(`[Mermaid Capture] Element ${index} captured successfully`);
+          debugLog(`Element ${index} captured successfully`);
         } else {
           // 폴백: captureElement 사용
           const fallbackResult = await captureElement(element as HTMLElement, options);
@@ -443,20 +451,20 @@ export async function captureMermaidDiagrams(
               width: fallbackResult.width,
               height: fallbackResult.height,
             });
-            console.log(`[Mermaid Capture] Element ${index} captured via fallback`);
+            debugLog(`Element ${index} captured via fallback`);
           } else {
             errors.push(`Failed to capture element ${index}`);
           }
         }
       } catch (err) {
         errors.push(`Error capturing element ${index}: ${err}`);
-        console.error(`[Mermaid Capture] Error on element ${index}:`, err);
+        debugError(`Error on element ${index}:`, err);
       }
 
       index++;
     }
 
-    console.log(`[Mermaid Capture] Complete: ${images.length} images, ${errors.length} errors`);
+    debugLog(`Complete: ${images.length} images, ${errors.length} errors`);
 
     return {
       success: true,
@@ -464,7 +472,7 @@ export async function captureMermaidDiagrams(
       errors,
     };
   } catch (error) {
-    console.error("[Mermaid Capture] Fatal error:", error);
+    debugError("Fatal error:", error);
     return {
       success: false,
       images: [],
