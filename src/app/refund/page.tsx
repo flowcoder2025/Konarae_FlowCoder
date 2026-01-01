@@ -7,6 +7,9 @@ export const metadata: Metadata = {
   description: "FlowMate 환불약관",
 };
 
+// 정적 페이지 - 빌드 타임에 생성
+export const dynamic = "force-static";
+
 export default function RefundPage() {
   return (
     <div className="min-h-screen bg-background">

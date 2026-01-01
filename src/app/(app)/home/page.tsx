@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { redirect } from "next/navigation";
+import { unstable_cache } from "next/cache";
 import { getOrCreateCredit } from "@/lib/credits";
 import { createLogger } from "@/lib/logger";
 import { Badge } from "@/components/ui/badge";
@@ -14,6 +15,26 @@ import {
 } from "@/components/home";
 
 const logger = createLogger({ page: "home" });
+
+// 마감 임박 프로젝트 캐싱 (5분 TTL) - 모든 사용자에게 동일
+const getUpcomingProjects = unstable_cache(
+  async () => {
+    return prisma.supportProject.findMany({
+      where: {
+        deadline: {
+          gte: new Date(),
+          lte: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        },
+        status: "active",
+        isCanonical: true,
+      },
+      orderBy: { deadline: "asc" },
+      take: 6,
+    });
+  },
+  ["upcoming-projects"],
+  { revalidate: 300, tags: ["upcoming-projects"] } // 5분 캐시
+);
 
 interface HomeData {
   user: {
@@ -53,6 +74,7 @@ interface HomeData {
 
 async function getHomeData(userId: string): Promise<HomeData> {
   // Parallel data fetching - all queries run concurrently
+  // upcomingProjects는 캐시된 함수 사용 (5분 TTL)
   const [user, userCompanies, userProjects, matchingResults, upcomingProjects, creditData] = await Promise.all([
     prisma.user.findUnique({
       where: { id: userId },
@@ -106,18 +128,7 @@ async function getHomeData(userId: string): Promise<HomeData> {
       orderBy: { totalScore: "desc" },
       take: 6,
     }),
-    prisma.supportProject.findMany({
-      where: {
-        deadline: {
-          gte: new Date(),
-          lte: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-        },
-        status: "active",
-        isCanonical: true,
-      },
-      orderBy: { deadline: "asc" },
-      take: 6,
-    }),
+    getUpcomingProjects(), // 5분 캐시된 마감 임박 프로젝트
     getOrCreateCredit(userId),
   ]);
 

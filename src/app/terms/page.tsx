@@ -7,6 +7,9 @@ export const metadata: Metadata = {
   description: "FlowMate 서비스 이용약관",
 };
 
+// 정적 페이지 - 빌드 타임에 생성
+export const dynamic = "force-static";
+
 export default function TermsPage() {
   return (
     <div className="min-h-screen bg-background">

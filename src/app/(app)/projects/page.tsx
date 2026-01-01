@@ -1,10 +1,34 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { redirect } from "next/navigation";
+import { unstable_cache } from "next/cache";
 import { ProjectCard } from "@/components/projects/project-card";
 import { ProjectFilters } from "@/components/projects/project-filters";
 import { ProjectPagination } from "@/components/projects/project-pagination";
 import { ProjectListClient } from "@/components/projects/project-list-client";
+
+// 필터 옵션 캐싱 (30분 TTL) - 카테고리/지역은 자주 변경되지 않음
+const getProjectFilters = unstable_cache(
+  async () => {
+    const [categories, regions] = await Promise.all([
+      prisma.supportProject.groupBy({
+        by: ["category"],
+        where: { deletedAt: null, status: "active", isCanonical: true },
+        _count: true,
+        orderBy: { _count: { category: "desc" } },
+      }),
+      prisma.supportProject.groupBy({
+        by: ["region"],
+        where: { deletedAt: null, status: "active", isCanonical: true },
+        _count: true,
+        orderBy: { _count: { region: "desc" } },
+      }),
+    ]);
+    return { categories, regions };
+  },
+  ["project-filters"],
+  { revalidate: 1800, tags: ["project-filters"] } // 30분 캐시
+);
 
 interface ProjectsPageProps {
   searchParams: Promise<{
@@ -101,8 +125,8 @@ export default async function ProjectsPage({
       break;
   }
 
-  // Get categories and regions for filters
-  const [projects, total, categories, regions] = await Promise.all([
+  // 캐시된 필터 옵션 + 동적 프로젝트 목록 병렬 조회
+  const [projects, total, filters] = await Promise.all([
     prisma.supportProject.findMany({
       where,
       skip,
@@ -127,19 +151,10 @@ export default async function ProjectsPage({
       },
     }),
     prisma.supportProject.count({ where }),
-    prisma.supportProject.groupBy({
-      by: ["category"],
-      where: { deletedAt: null, status: "active", isCanonical: true },
-      _count: true,
-      orderBy: { _count: { category: "desc" } },
-    }),
-    prisma.supportProject.groupBy({
-      by: ["region"],
-      where: { deletedAt: null, status: "active", isCanonical: true },
-      _count: true,
-      orderBy: { _count: { region: "desc" } },
-    }),
+    getProjectFilters(), // 30분 캐시된 필터 옵션
   ]);
+
+  const { categories, regions } = filters;
 
   const totalPages = Math.ceil(total / pageSize);
 

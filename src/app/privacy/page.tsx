@@ -7,6 +7,9 @@ export const metadata: Metadata = {
   description: "FlowMate 개인정보처리방침",
 };
 
+// 정적 페이지 - 빌드 타임에 생성
+export const dynamic = "force-static";
+
 export default function PrivacyPage() {
   return (
     <div className="min-h-screen bg-background">
