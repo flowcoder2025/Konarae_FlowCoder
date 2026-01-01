@@ -116,61 +116,57 @@ export default async function CompanyDetailPage({
 
   const { id } = await params;
 
-  // Check permission
-  const hasPermission = await checkCompanyPermission(session.user.id, id, "viewer");
+  // 권한 체크 병렬화 (viewer + admin 동시 체크)
+  const [hasPermission, canEdit] = await Promise.all([
+    checkCompanyPermission(session.user.id, id, "viewer"),
+    checkCompanyPermission(session.user.id, id, "admin"),
+  ]);
+
   if (!hasPermission) {
     redirect("/companies");
   }
 
-  // Check edit permission
-  const canEdit = await checkCompanyPermission(session.user.id, id, "admin");
-
-  const company = await prisma.company.findUnique({
-    where: { id, deletedAt: null },
-    include: {
-      members: {
-        include: {
-          user: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              image: true,
+  // 기업 정보 + 마스터 프로필 정보 병렬 조회
+  const [company, masterProfile, analyzedDocuments, creditInfo] = await Promise.all([
+    prisma.company.findUnique({
+      where: { id, deletedAt: null },
+      include: {
+        members: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+              },
             },
           },
         },
-      },
-      financials: {
-        orderBy: {
-          fiscalYear: "desc",
+        financials: {
+          orderBy: {
+            fiscalYear: "desc",
+          },
+          take: 3,
         },
-        take: 3,
-      },
-      certifications: {
-        where: {
-          isActive: true,
+        certifications: {
+          where: {
+            isActive: true,
+          },
+          orderBy: {
+            issueDate: "desc",
+          },
+          take: 5,
         },
-        orderBy: {
-          issueDate: "desc",
-        },
-        take: 5,
-      },
-      _count: {
-        select: {
-          businessPlans: true,
-          matchingResults: true,
-          documents: true,
+        _count: {
+          select: {
+            businessPlans: true,
+            matchingResults: true,
+            documents: true,
+          },
         },
       },
-    },
-  });
-
-  if (!company) {
-    notFound();
-  }
-
-  // 마스터 프로필 정보 조회
-  const [masterProfile, analyzedDocuments, creditInfo] = await Promise.all([
+    }),
     prisma.companyMasterProfile.findUnique({
       where: { companyId: id },
       select: { id: true, status: true, isFreeGeneration: true },
@@ -181,6 +177,10 @@ export default async function CompanyDetailPage({
     }),
     getOrCreateCredit(session.user.id),
   ]);
+
+  if (!company) {
+    notFound();
+  }
 
   // 마스터 프로필 생성 관련 계산
   const documentTypes = analyzedDocuments.map((d) => d.documentType);
