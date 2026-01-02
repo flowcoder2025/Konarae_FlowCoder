@@ -14,7 +14,7 @@ const logger = createLogger({ lib: "document-parser" });
 
 // Text Parser 서비스 URL (단일 통합 서비스)
 // Repository: https://github.com/Jerome87hyunil/text_parser
-const TEXT_PARSER_URL = process.env.TEXT_PARSER_URL || "https://hwp-api.onrender.com";
+const TEXT_PARSER_URL = process.env.TEXT_PARSER_URL || "https://textparser-production.up.railway.app";
 
 export type ParserType = "hwp" | "hwpx" | "pdf";
 export type ExtractMode = "full" | "text" | "metadata" | "tables";

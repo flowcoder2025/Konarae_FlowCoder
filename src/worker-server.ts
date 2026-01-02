@@ -181,7 +181,7 @@ app.post('/crawl/batch', async (req, res) => {
  */
 app.get('/test-parser', async (req, res) => {
   const startTime = Date.now();
-  const parserUrl = process.env.TEXT_PARSER_URL || 'https://hwp-api.onrender.com';
+  const parserUrl = process.env.TEXT_PARSER_URL || 'https://textparser-production.up.railway.app';
 
   try {
     const authHeader = req.headers.authorization;
