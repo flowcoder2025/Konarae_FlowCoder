@@ -7,7 +7,10 @@ builder = "NIXPACKS"
 nixpacksConfigPath = "nixpacks.toml"
 
 [deploy]
-startCommand = "pnpm run worker"
+# WORKER_TYPE 환경변수로 워커 타입 선택:
+# - crawler (기본값): Crawler Worker
+# - embedding: Embedding Worker
+startCommand = "if [ \"$WORKER_TYPE\" = \"embedding\" ]; then pnpm run worker:embedding; else pnpm run worker:crawler; fi"
 healthcheckPath = "/health"
 healthcheckTimeout = 30
 restartPolicyType = "ON_FAILURE"
