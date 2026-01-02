@@ -3,20 +3,40 @@
  * 프로젝트 첨부파일 저장 및 관리
  */
 
-import { createClient } from "@supabase/supabase-js";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { createLogger } from "@/lib/logger";
 
 const logger = createLogger({ lib: "supabase-storage" });
 
-// Supabase 클라이언트 초기화
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY!;
+// Lazy initialization - 환경변수 없을 때 에러 방지
+let _supabase: SupabaseClient | null = null;
 
-// 서비스 키를 사용하여 스토리지 접근 (서버 사이드 전용)
-const supabase = createClient(supabaseUrl, supabaseServiceKey, {
-  auth: {
-    autoRefreshToken: false,
-    persistSession: false,
+function getSupabaseClient(): SupabaseClient {
+  if (_supabase) return _supabase;
+
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY;
+
+  if (!supabaseUrl || !supabaseServiceKey) {
+    throw new Error(
+      "Supabase configuration missing: NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_KEY are required"
+    );
+  }
+
+  _supabase = createClient(supabaseUrl, supabaseServiceKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  });
+
+  return _supabase;
+}
+
+// 하위 호환성을 위한 getter
+const supabase = new Proxy({} as SupabaseClient, {
+  get(_, prop) {
+    return (getSupabaseClient() as Record<string, unknown>)[prop as string];
   },
 });
 

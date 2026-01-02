@@ -19,9 +19,21 @@ NODE_ENV = "production"
 
 # Railway가 자동으로 PORT 환경변수 제공
 # 추가 환경변수는 Railway Dashboard에서 설정:
-# - DATABASE_URL
-# - DIRECT_URL
-# - GOOGLE_GENERATIVE_AI_API_KEY
-# - WORKER_API_KEY
-# - SUPABASE_URL
-# - SUPABASE_ANON_KEY
+#
+# [필수 - 데이터베이스]
+# - DATABASE_URL (Prisma 연결, pgbouncer 포함)
+# - DIRECT_URL (마이그레이션용 직접 연결)
+#
+# [필수 - Supabase Storage]
+# - NEXT_PUBLIC_SUPABASE_URL (예: https://xxx.supabase.co)
+# - SUPABASE_SERVICE_KEY (Service Role Key, 서버 전용)
+#
+# [필수 - AI/API]
+# - GOOGLE_GENERATIVE_AI_API_KEY (Gemini Vision)
+# - OPENAI_API_KEY (임베딩 생성)
+#
+# [필수 - 보안]
+# - WORKER_API_KEY (워커 인증)
+#
+# [선택 - Text Parser]
+# - TEXT_PARSER_URL (기본값: https://hwp-api.onrender.com)
