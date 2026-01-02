@@ -3,6 +3,7 @@ import { redirect, notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { checkCompanyPermission } from "@/lib/rebac";
 import { getOrCreateCredit } from "@/lib/credits";
+import { createLogger } from "@/lib/logger";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -27,6 +28,7 @@ interface CompanyDetailPageProps {
 }
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://mate.flow-coder.com";
+const logger = createLogger({ page: "companies/[id]" });
 
 export async function generateMetadata({
   params,
@@ -126,8 +128,9 @@ export default async function CompanyDetailPage({
     redirect("/companies");
   }
 
-  // 기업 정보 + 마스터 프로필 정보 병렬 조회
-  const [company, masterProfile, analyzedDocuments, creditInfo] = await Promise.all([
+  // 기업 정보 + 마스터 프로필 정보 병렬 조회 (개별 실패 허용)
+  const queryNames = ["company", "masterProfile", "analyzedDocuments", "creditInfo"];
+  const results = await Promise.allSettled([
     prisma.company.findUnique({
       where: { id, deletedAt: null },
       include: {
@@ -177,6 +180,25 @@ export default async function CompanyDetailPage({
     }),
     getOrCreateCredit(session.user.id),
   ]);
+
+  // 실패한 쿼리 로깅
+  results.forEach((result, index) => {
+    if (result.status === "rejected") {
+      logger.error(`Query ${queryNames[index]} failed`, {
+        error: result.reason,
+        companyId: id,
+        userId: session.user.id,
+      });
+    }
+  });
+
+  // 각 결과 추출 (실패 시 기본값 사용)
+  const company = results[0].status === "fulfilled" ? results[0].value : null;
+  const masterProfile = results[1].status === "fulfilled" ? results[1].value : null;
+  const analyzedDocuments = results[2].status === "fulfilled" ? results[2].value : [];
+  const creditInfo = results[3].status === "fulfilled"
+    ? results[3].value
+    : { balance: 0, totalPurchased: 0, totalUsed: 0 };
 
   if (!company) {
     notFound();
