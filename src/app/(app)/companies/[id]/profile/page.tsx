@@ -49,7 +49,7 @@ export default async function CompanyProfilePage({ params }: ProfilePageProps) {
   // 권한 체크
   const hasPermission = await checkCompanyPermission(session.user.id, companyId, "viewer")
   if (!hasPermission) {
-    redirect("/companies")
+    redirect("/company")
   }
 
   const canEdit = await checkCompanyPermission(session.user.id, companyId, "admin")

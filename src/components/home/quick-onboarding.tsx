@@ -307,7 +307,7 @@ export function QuickOnboarding({ onComplete }: QuickOnboardingProps) {
           <div className="text-center">
             <button
               className="text-sm text-muted-foreground hover:text-primary underline-offset-4 hover:underline"
-              onClick={() => router.push("/companies/new")}
+              onClick={() => router.push("/company/new")}
             >
               상세 정보 입력하기
             </button>

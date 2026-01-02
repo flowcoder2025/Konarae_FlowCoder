@@ -527,7 +527,7 @@ function NewBusinessPlanForm() {
                 <div className="flex items-center gap-2 text-amber-600">
                   <AlertCircle className="h-4 w-4" />
                   <span>등록된 기업이 없습니다.</span>
-                  <Link href="/companies/new" className="underline">
+                  <Link href="/company/new" className="underline">
                     기업 등록하기
                   </Link>
                 </div>

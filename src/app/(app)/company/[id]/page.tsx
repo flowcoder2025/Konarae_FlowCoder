@@ -33,6 +33,15 @@ export async function generateMetadata({
 }: CompanyDetailPageProps): Promise<Metadata> {
   const { id } = await params;
 
+  // Handle "new" as special case - skip DB query, will redirect in page component
+  if (id === "new") {
+    return {
+      title: "새 기업 등록",
+      description: "새로운 기업을 등록합니다.",
+      robots: { index: false, follow: false },
+    };
+  }
+
   const company = await prisma.company.findUnique({
     where: { id, deletedAt: null },
     select: {
@@ -118,13 +127,13 @@ export default async function CompanyDetailPage({
 
   // Handle "new" as special case - redirect to companies/new
   if (id === "new") {
-    redirect("/companies/new");
+    redirect("/company/new");
   }
 
   // Check permission
   const hasPermission = await checkCompanyPermission(session.user.id, id, "viewer");
   if (!hasPermission) {
-    redirect("/companies");
+    redirect("/company");
   }
 
   // Check edit permission

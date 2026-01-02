@@ -81,7 +81,7 @@ export function CompanySelector({
         ))}
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild>
-          <Link href="/companies/new" className="flex items-center gap-2">
+          <Link href="/company/new" className="flex items-center gap-2">
             <Plus className="h-4 w-4" />
             새 기업 추가
           </Link>

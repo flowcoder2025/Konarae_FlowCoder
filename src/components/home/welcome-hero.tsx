@@ -68,7 +68,7 @@ export function WelcomeHero({ userName, hasCompany }: WelcomeHeroProps) {
               <Sparkles className="h-4 w-4 ml-2" />
             </Button>
             <Button size="lg" variant="outline" asChild>
-              <Link href="/companies/new">
+              <Link href="/company/new">
                 상세 정보 입력
                 <ArrowRight className="h-4 w-4 ml-2" />
               </Link>

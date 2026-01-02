@@ -125,7 +125,7 @@ export default async function CompanyDetailPage({
   ]);
 
   if (!hasPermission) {
-    redirect("/companies");
+    redirect("/company");
   }
 
   // 기업 정보 + 마스터 프로필 정보 병렬 조회 (개별 실패 허용)

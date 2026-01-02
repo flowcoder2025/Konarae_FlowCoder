@@ -120,7 +120,7 @@ export default async function MatchingPage() {
               등록된 기업이 없습니다
             </p>
             <Link
-              href="/companies/new"
+              href="/company/new"
               className="text-primary hover:underline"
             >
               기업 등록하기

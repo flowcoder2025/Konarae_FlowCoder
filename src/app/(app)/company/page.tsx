@@ -165,7 +165,7 @@ export default async function CompanyPage({ searchParams }: Props) {
               증빙 서류를 한 곳에서 관리할 수 있어요
             </p>
             <Button size="lg" asChild>
-              <Link href="/companies/new">
+              <Link href="/company/new">
                 <Plus className="h-4 w-4 mr-2" />
                 기업 등록하기
               </Link>
@@ -229,7 +229,7 @@ export default async function CompanyPage({ searchParams }: Props) {
             </Button>
           )}
           <Button variant="outline" asChild className="w-full sm:w-auto shrink-0">
-            <Link href="/companies/new">
+            <Link href="/company/new">
               <Plus className="h-4 w-4 mr-2" />
               새 기업 추가
             </Link>
