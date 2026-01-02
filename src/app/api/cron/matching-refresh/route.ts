@@ -64,11 +64,12 @@ async function delegateToRailway(
   source: string,
   companyCount: number
 ): Promise<NextResponse> {
-  let RAILWAY_URL = process.env.RAILWAY_CRAWLER_URL;
+  // 임베딩/매칭 전용 워커 사용
+  let RAILWAY_URL = process.env.RAILWAY_WORKER_URL;
   const WORKER_API_KEY = process.env.WORKER_API_KEY;
 
   if (!RAILWAY_URL || !WORKER_API_KEY) {
-    logger.warn("Railway not configured, falling back to direct processing");
+    logger.warn("Railway worker not configured (RAILWAY_WORKER_URL), falling back to direct processing");
     return executeMatchingRefreshDirect(source);
   }
 
@@ -260,7 +261,7 @@ async function executeMatchingRefresh(source: string): Promise<NextResponse> {
     // Decide: Railway for large batches (>20), direct for small
     const useRailway =
       companyCount > 20 &&
-      process.env.RAILWAY_CRAWLER_URL &&
+      process.env.RAILWAY_WORKER_URL &&
       process.env.WORKER_API_KEY;
 
     if (useRailway) {

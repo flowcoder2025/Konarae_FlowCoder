@@ -74,12 +74,12 @@ async function executeEmbeddingGeneration(source: string): Promise<NextResponse>
 
     logger.info(`Found ${projectCount} project(s) needing embeddings`);
 
-    // Delegate to Railway worker (no time limit)
-    let RAILWAY_URL = process.env.RAILWAY_CRAWLER_URL;
+    // Delegate to Railway embedding worker (분리된 임베딩 전용 워커)
+    let RAILWAY_URL = process.env.RAILWAY_WORKER_URL;
     const WORKER_API_KEY = process.env.WORKER_API_KEY;
 
     if (!RAILWAY_URL || !WORKER_API_KEY) {
-      logger.error("Railway configuration missing");
+      logger.error("Railway configuration missing (RAILWAY_WORKER_URL or WORKER_API_KEY)");
       return NextResponse.json(
         {
           error: "Server configuration error",

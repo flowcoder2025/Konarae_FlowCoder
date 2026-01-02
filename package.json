@@ -18,6 +18,8 @@
     "db:seed": "tsx prisma/seed.ts",
     "worker": "tsx --tsconfig tsconfig.worker.json src/worker-server.ts",
     "worker:dev": "tsx watch --tsconfig tsconfig.worker.json src/worker-server.ts",
+    "worker:crawler": "tsx --tsconfig tsconfig.worker.json src/worker-server.ts",
+    "worker:embedding": "tsx --tsconfig tsconfig.worker.json src/embedding-server.ts",
     "postinstall": "prisma generate"
   },
   "dependencies": {
