@@ -36,7 +36,7 @@ function getSupabaseClient(): SupabaseClient {
 // 하위 호환성을 위한 getter
 const supabase = new Proxy({} as SupabaseClient, {
   get(_, prop) {
-    return (getSupabaseClient() as Record<string, unknown>)[prop as string];
+    return (getSupabaseClient() as unknown as Record<string, unknown>)[prop as string];
   },
 });
 
