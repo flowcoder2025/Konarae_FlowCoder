@@ -382,3 +382,42 @@ export async function getStorageFileAsBase64(
     return null;
   }
 }
+
+/**
+ * Supabase Storage Public URL에서 filePath 추출
+ * URL 형식: https://xxx.supabase.co/storage/v1/object/public/company-documents/{filePath}
+ */
+export function extractFilePathFromUrl(fileUrl: string): string | null {
+  try {
+    const marker = "/storage/v1/object/public/company-documents/";
+    const markerIndex = fileUrl.indexOf(marker);
+
+    if (markerIndex === -1) {
+      logger.warn("Invalid Supabase storage URL format", { fileUrl });
+      return null;
+    }
+
+    const filePath = fileUrl.substring(markerIndex + marker.length);
+    return decodeURIComponent(filePath);
+  } catch (error) {
+    logger.error("extractFilePathFromUrl error", { error, fileUrl });
+    return null;
+  }
+}
+
+/**
+ * Supabase Storage Public URL → Base64 변환
+ * URL에서 filePath를 추출하여 Storage에서 다운로드 후 Base64 변환
+ */
+export async function getStorageFileAsBase64FromUrl(
+  fileUrl: string
+): Promise<string | null> {
+  const filePath = extractFilePathFromUrl(fileUrl);
+
+  if (!filePath) {
+    logger.error("Failed to extract filePath from URL", { fileUrl });
+    return null;
+  }
+
+  return getStorageFileAsBase64(filePath);
+}

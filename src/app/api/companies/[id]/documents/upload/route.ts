@@ -13,9 +13,49 @@ import { checkCompanyPermission } from "@/lib/rebac";
 import { uploadToStorage, getStorageFileAsBase64 } from "@/lib/documents/upload";
 import { analyzeDocument } from "@/lib/documents/analyze";
 import { processDocumentEmbeddings } from "@/lib/documents/embedding";
-import { DocumentType } from "@/lib/documents/types";
+import { DocumentType, CertificationData } from "@/lib/documents/types";
 import { isQStashConfigured, queueDocumentAnalysis } from "@/lib/qstash";
 import { createLogger } from "@/lib/logger";
+
+// 인증서 타입과 회사 플래그 매핑
+const CERTIFICATION_FLAG_MAP: Record<string, keyof typeof CERTIFICATION_FLAGS> = {
+  // 벤처기업
+  "벤처기업": "isVenture",
+  "벤처기업확인서": "isVenture",
+  "벤처": "isVenture",
+  "venture": "isVenture",
+  // 이노비즈
+  "이노비즈": "isInnoBiz",
+  "이노비즈기업": "isInnoBiz",
+  "innobiz": "isInnoBiz",
+  "기술혁신형 중소기업": "isInnoBiz",
+  // 메인비즈
+  "메인비즈": "isMainBiz",
+  "메인비즈기업": "isMainBiz",
+  "mainbiz": "isMainBiz",
+  "경영혁신형 중소기업": "isMainBiz",
+  // 사회적기업
+  "사회적기업": "isSocial",
+  "사회적 기업": "isSocial",
+  "social enterprise": "isSocial",
+  // 여성기업
+  "여성기업": "isWomen",
+  "여성기업확인서": "isWomen",
+  "여성 기업": "isWomen",
+  // 장애인기업
+  "장애인기업": "isDisabled",
+  "장애인기업확인서": "isDisabled",
+  "장애인 기업": "isDisabled",
+};
+
+const CERTIFICATION_FLAGS = {
+  isVenture: true,
+  isInnoBiz: true,
+  isMainBiz: true,
+  isSocial: true,
+  isWomen: true,
+  isDisabled: true,
+} as const;
 
 const logger = createLogger({ api: "company-documents-upload" });
 
@@ -232,6 +272,11 @@ async function processDocumentAnalysis(
       ])
     );
 
+    // 4.5 인증서인 경우 회사 플래그 자동 적용
+    if (documentType === "certification" && analysisResult.extractedData) {
+      await applyCertificationFlag(documentId, analysisResult.extractedData as CertificationData);
+    }
+
     // 5. 임베딩 생성 및 저장 (분석 완료 후 별도 처리)
     const fullText = `${analysisResult.summary}\n\n${analysisResult.keyInsights?.join("\n")}`;
 
@@ -265,5 +310,73 @@ async function processDocumentAnalysis(
       // 실패 상태 업데이트도 실패하면 로그만 남김
       logger.error("Failed to update error status", { error: updateError });
     }
+  }
+}
+
+// ============================================
+// 인증서 플래그 자동 적용
+// ============================================
+
+/**
+ * 인증서 분석 결과에서 인증 유형을 감지하고 회사 플래그를 자동 적용합니다.
+ */
+async function applyCertificationFlag(
+  documentId: string,
+  certificationData: CertificationData
+) {
+  try {
+    // 1. 문서에서 companyId 조회
+    const document = await prisma.companyDocument.findUnique({
+      where: { id: documentId },
+      select: { companyId: true },
+    });
+
+    if (!document) {
+      logger.warn("Document not found for certification flag", { documentId });
+      return;
+    }
+
+    // 2. 인증 타입 감지
+    const certType = certificationData.certificationType?.toLowerCase() || "";
+    const certName = certificationData.certificationName?.toLowerCase() || "";
+    const combinedText = `${certType} ${certName}`;
+
+    let flagToUpdate: keyof typeof CERTIFICATION_FLAGS | null = null;
+
+    // 매핑된 키워드와 매칭
+    for (const [keyword, flag] of Object.entries(CERTIFICATION_FLAG_MAP)) {
+      if (combinedText.includes(keyword.toLowerCase())) {
+        flagToUpdate = flag;
+        break;
+      }
+    }
+
+    if (!flagToUpdate) {
+      logger.info("No matching certification flag found", {
+        documentId,
+        certificationType: certificationData.certificationType,
+        certificationName: certificationData.certificationName,
+      });
+      return;
+    }
+
+    // 3. 회사 플래그 업데이트
+    await prisma.company.update({
+      where: { id: document.companyId },
+      data: { [flagToUpdate]: true },
+    });
+
+    logger.info("Certification flag auto-applied", {
+      documentId,
+      companyId: document.companyId,
+      flag: flagToUpdate,
+      certificationName: certificationData.certificationName,
+    });
+  } catch (error) {
+    // 플래그 적용 실패는 치명적이지 않음 - 로그만 남김
+    logger.warn("Failed to apply certification flag (non-fatal)", {
+      error,
+      documentId,
+    });
   }
 }

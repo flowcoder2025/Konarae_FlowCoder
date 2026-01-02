@@ -9,6 +9,8 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { DocumentListCard } from "@/components/documents/document-list-card";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import {
   DOCUMENT_TYPES,
   DOCUMENT_METADATA,
@@ -53,8 +55,45 @@ export function CompanyDocumentsPageClient({
 
   if (loading) {
     return (
-      <div className="p-8">
-        <p>로딩 중...</p>
+      <div className="p-8 max-w-6xl mx-auto">
+        {/* Header Skeleton */}
+        <div className="mb-8">
+          <Skeleton className="h-4 w-40 mb-4" />
+          <Skeleton className="h-9 w-48 mb-2" />
+          <Skeleton className="h-5 w-full max-w-[450px]" />
+        </div>
+
+        {/* Document Grid Skeleton */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {Array.from({ length: 10 }).map((_, i) => (
+            <Card key={i}>
+              <CardHeader className="pb-2">
+                <div className="flex items-center gap-2">
+                  <Skeleton className="h-5 w-5" />
+                  <Skeleton className="h-5 w-24" />
+                </div>
+                <Skeleton className="h-4 w-full mt-1" />
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="space-y-2">
+                  {[1, 2].map((j) => (
+                    <div
+                      key={j}
+                      className="flex items-center justify-between p-2 rounded bg-muted/50"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Skeleton className="h-4 w-4" />
+                        <Skeleton className="h-4 w-32" />
+                      </div>
+                      <Skeleton className="h-5 w-16 rounded-full" />
+                    </div>
+                  ))}
+                </div>
+                <Skeleton className="h-9 w-full" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
       </div>
     );
   }

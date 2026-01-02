@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -9,7 +9,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Building2, ChevronDown, Plus, Check } from "lucide-react";
+import { Building2, ChevronDown, Plus, Check, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
@@ -31,15 +31,25 @@ export function CompanySelector({
   onSelect,
 }: CompanySelectorProps) {
   const router = useRouter();
+  const [isPending, startTransition] = useTransition();
+  const [isOpen, setIsOpen] = useState(false);
   const currentCompany = companies.find((c) => c.id === currentCompanyId);
 
   const handleSelect = (companyId: string) => {
+    if (companyId === currentCompanyId) {
+      setIsOpen(false);
+      return;
+    }
+
     if (onSelect) {
       onSelect(companyId);
     } else {
       // Default behavior: navigate with query param
-      router.push(`/company?id=${companyId}`);
+      startTransition(() => {
+        router.push(`/company?id=${companyId}`);
+      });
     }
+    setIsOpen(false);
   };
 
   if (companies.length <= 1) {
@@ -53,12 +63,16 @@ export function CompanySelector({
   }
 
   return (
-    <DropdownMenu>
+    <DropdownMenu open={isOpen} onOpenChange={setIsOpen}>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" className="gap-2">
-          <Building2 className="h-4 w-4" />
+        <Button variant="outline" className="gap-2" disabled={isPending}>
+          {isPending ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Building2 className="h-4 w-4" />
+          )}
           <span className="max-w-[200px] truncate">
-            {currentCompany?.name || "기업 선택"}
+            {isPending ? "변경 중..." : (currentCompany?.name || "기업 선택")}
           </span>
           <ChevronDown className="h-4 w-4 opacity-50" />
         </Button>
@@ -69,6 +83,7 @@ export function CompanySelector({
             key={company.id}
             onClick={() => handleSelect(company.id)}
             className="flex items-center justify-between"
+            disabled={isPending}
           >
             <div className="flex items-center gap-2 min-w-0">
               <Building2 className="h-4 w-4 shrink-0" />
@@ -80,7 +95,7 @@ export function CompanySelector({
           </DropdownMenuItem>
         ))}
         <DropdownMenuSeparator />
-        <DropdownMenuItem asChild>
+        <DropdownMenuItem asChild disabled={isPending}>
           <Link href="/company/new" className="flex items-center gap-2">
             <Plus className="h-4 w-4" />
             새 기업 추가
