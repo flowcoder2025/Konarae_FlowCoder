@@ -16,6 +16,23 @@ import {
 
 const logger = createLogger({ page: "home" });
 
+// Date 또는 문자열을 안전하게 ISO 문자열로 변환
+// unstable_cache에서 Date가 문자열로 직렬화되는 문제 해결
+function toISOStringOrNull(date: Date | string | null | undefined): string | null {
+  if (!date) return null;
+  if (typeof date === "string") return date;
+  if (date instanceof Date) return date.toISOString();
+  return null;
+}
+
+// Date 또는 문자열을 Date 객체로 변환 (calculateDaysLeft용)
+function toDateOrNull(date: Date | string | null | undefined): Date | null {
+  if (!date) return null;
+  if (date instanceof Date) return date;
+  if (typeof date === "string") return new Date(date);
+  return null;
+}
+
 // 마감 임박 프로젝트 캐싱 (5분 TTL) - 모든 사용자에게 동일
 const getUpcomingProjects = unstable_cache(
   async () => {
@@ -181,8 +198,8 @@ async function getHomeData(userId: string): Promise<HomeData> {
         id: m.project.id,
         title: m.project.name,
         agency: formatOrganization(m.project.organization, m.project.sourceUrl),
-        deadline: m.project.deadline?.toISOString() || null,
-        daysLeft: calculateDaysLeft(m.project.deadline),
+        deadline: toISOStringOrNull(m.project.deadline),
+        daysLeft: calculateDaysLeft(toDateOrNull(m.project.deadline)),
         budget: m.project.amountMax ? Number(m.project.amountMax) : null,
         matchScore: m.totalScore,
         companyId: m.companyId,
@@ -192,8 +209,8 @@ async function getHomeData(userId: string): Promise<HomeData> {
         id: p.id,
         title: p.name,
         agency: formatOrganization(p.organization, p.sourceUrl),
-        deadline: p.deadline?.toISOString() || null,
-        daysLeft: calculateDaysLeft(p.deadline),
+        deadline: toISOStringOrNull(p.deadline),
+        daysLeft: calculateDaysLeft(toDateOrNull(p.deadline)),
         budget: p.amountMax ? Number(p.amountMax) : null,
       }));
 
@@ -223,7 +240,7 @@ async function getHomeData(userId: string): Promise<HomeData> {
         projectName: up.project.name,
         description: taskInfo.description,
         urgency: "medium",
-        daysLeft: calculateDaysLeft(up.project.deadline) ?? undefined,
+        daysLeft: calculateDaysLeft(toDateOrNull(up.project.deadline)) ?? undefined,
       });
     }
   });
@@ -232,12 +249,12 @@ async function getHomeData(userId: string): Promise<HomeData> {
   const existingProjectIds = new Set(pendingTasks.map(t => t.projectId).filter(Boolean));
   upcomingProjects
     .filter((p) => {
-      const days = calculateDaysLeft(p.deadline);
+      const days = calculateDaysLeft(toDateOrNull(p.deadline));
       return days !== null && days <= 7 && !existingProjectIds.has(p.id);
     })
     .slice(0, 2)
     .forEach((p) => {
-      const days = calculateDaysLeft(p.deadline)!;
+      const days = calculateDaysLeft(toDateOrNull(p.deadline))!;
       pendingTasks.push({
         type: "deadline",
         projectId: p.id,
@@ -271,8 +288,8 @@ async function getHomeData(userId: string): Promise<HomeData> {
       companyName: up.company.name,
       currentStep: statusToStep[up.status] || 1,
       status: up.status.toUpperCase(), // 컴포넌트 호환성 위해 대문자로
-      deadline: up.project.deadline?.toISOString() || null,
-      daysLeft: calculateDaysLeft(up.project.deadline),
+      deadline: toISOStringOrNull(up.project.deadline),
+      daysLeft: calculateDaysLeft(toDateOrNull(up.project.deadline)),
     })),
     pendingTasks,
   };
