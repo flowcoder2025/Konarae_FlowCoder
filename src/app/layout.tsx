@@ -60,7 +60,7 @@ export const metadata: Metadata = {
     description: SITE_DESCRIPTION,
     images: [
       {
-        url: "/og-image.png",
+        url: "/opengraph-image.png",
         width: 1200,
         height: 630,
         alt: `${SITE_NAME} - 정부 지원사업 매칭 플랫폼`,
@@ -71,7 +71,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: `${SITE_NAME} - 정부 지원사업 매칭 플랫폼`,
     description: SITE_DESCRIPTION,
-    images: ["/og-image.png"],
+    images: ["/twitter-image.png"],
   },
   alternates: {
     canonical: SITE_URL,
