@@ -93,6 +93,62 @@ export function extractRegionFromAddress(address: string | null | undefined): Re
 }
 
 /**
+ * 주소 문자열에서 시·군·구 추출
+ *
+ * @param address - 주소 문자열 (예: "경기도 남양주시 화도읍")
+ * @returns 시·군·구 이름 또는 null
+ *
+ * @example
+ * extractSubRegionFromAddress("경기도 남양주시 화도읍") // "남양주시"
+ * extractSubRegionFromAddress("서울특별시 강남구 역삼동") // "강남구"
+ * extractSubRegionFromAddress("충청남도 천안시 동남구") // "천안시"
+ */
+export function extractSubRegionFromAddress(address: string | null | undefined): string | null {
+  if (!address || address.trim().length < 2) {
+    return null
+  }
+
+  const normalizedAddress = address.trim()
+
+  // 시·군·구 패턴 매칭 (순서 중요: 시 > 군 > 구)
+  // 광역시의 구는 제외하고 도의 시·군만 추출
+  const patterns = [
+    // 도의 시 (예: 남양주시, 성남시, 수원시)
+    /(?:도|특별자치도)\s+([가-힣]+시)/,
+    // 도의 군 (예: 양평군, 가평군)
+    /(?:도|특별자치도)\s+([가-힣]+군)/,
+    // 광역시의 구 (예: 강남구, 북구)
+    /(?:특별시|광역시|특별자치시)\s+([가-힣]+구)/,
+    // 도의 시 내 구 (예: 천안시 동남구 → 천안시)
+    /(?:도|특별자치도)\s+([가-힣]+시)\s+[가-힣]+구/,
+  ]
+
+  for (const pattern of patterns) {
+    const match = normalizedAddress.match(pattern)
+    if (match && match[1]) {
+      return match[1]
+    }
+  }
+
+  // 공백으로 분리하여 시/군/구 찾기 (fallback)
+  const parts = normalizedAddress.split(/\s+/)
+  for (const part of parts) {
+    // 광역시·도 이름은 제외
+    const isRegion = REGION_PATTERNS.some(({ patterns }) =>
+      patterns.some((p) => part.includes(p) || p.includes(part))
+    )
+    if (isRegion) continue
+
+    // 시·군·구로 끝나는 부분 찾기
+    if (part.endsWith("시") || part.endsWith("군") || part.endsWith("구")) {
+      return part
+    }
+  }
+
+  return null
+}
+
+/**
  * 프로젝트 지역과 기업 지역의 매칭 여부 확인
  *
  * @param companyRegion - 기업 지역 코드 (null이면 모든 지역 매칭)

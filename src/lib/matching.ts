@@ -18,7 +18,12 @@ import { hybridSearch } from "./rag";
 import { prisma } from "./prisma";
 import { createLogger } from "./logger";
 import { Prisma } from "@prisma/client";
-import { extractRegionFromAddress, isRegionMatch, type RegionCode } from "./region";
+import {
+  extractRegionFromAddress,
+  extractSubRegionFromAddress,
+  isRegionMatch,
+  type RegionCode,
+} from "./region";
 
 const logger = createLogger({ module: "matching" });
 
@@ -67,7 +72,8 @@ export interface MatchingInput {
     categories?: string[];
     minAmount?: bigint;
     maxAmount?: bigint;
-    regions?: string[];
+    regions?: string[]; // 광역시·도 (17개)
+    subRegions?: string[]; // 시·군·구
     excludeKeywords?: string[];
   };
 }
@@ -605,11 +611,14 @@ export async function executeMatching(
 
     // 기업 주소에서 지역 코드 추출 (v3: 자동 지역 필터링)
     const companyRegion = extractRegionFromAddress(company.address);
+    // v4: 시·군·구 추출 (세부 지역 필터링)
+    const companySubRegion = extractSubRegionFromAddress(company.address);
 
     logger.debug("Enhanced profile built", {
       companyName: company.name,
       companyAddress: company.address,
       companyRegion,
+      companySubRegion,
       documentCount: company.documents.length,
       certificationCount: company.certifications.length,
     });
@@ -629,6 +638,11 @@ export async function executeMatching(
       // v3: 명시적 regions 설정이 있으면 사용, 없으면 기업 주소 기반 필터링
       if (input.preferences.regions?.length) {
         whereClause.region = { in: input.preferences.regions };
+      }
+
+      // v4: subRegions 필터링 (시·군·구)
+      if (input.preferences.subRegions?.length) {
+        whereClause.subRegion = { in: input.preferences.subRegions };
       }
 
       // Exclude keywords
@@ -653,6 +667,7 @@ export async function executeMatching(
         category: true,
         subCategory: true,
         region: true, // v3: 지역 필터링용
+        subRegion: true, // v4: 시·군·구 필터링용
         target: true,
         eligibility: true,
         amountMin: true,
@@ -667,15 +682,28 @@ export async function executeMatching(
     // v3: 지역 필터링 적용 (preferences.regions가 없을 때 자동 필터링)
     // - "전국" 사업은 항상 포함
     // - 기업 지역과 일치하는 지역 사업만 포함
-    const filteredProjects = !input.preferences?.regions?.length && companyRegion
+    let filteredProjects = !input.preferences?.regions?.length && companyRegion
       ? projects.filter((p) => isRegionMatch(companyRegion, p.region))
       : projects;
+
+    // v4: subRegion 자동 필터링 (preferences.subRegions가 없을 때)
+    // - 기업 시·군·구와 일치하거나 subRegion이 null인 사업 포함 (전체 지역 대상)
+    if (!input.preferences?.subRegions?.length && companySubRegion) {
+      filteredProjects = filteredProjects.filter((p) => {
+        // subRegion이 없으면 전체 지역 대상으로 간주 → 포함
+        if (!p.subRegion) return true;
+        // 기업 subRegion과 일치하면 포함
+        return p.subRegion.includes(companySubRegion);
+      });
+    }
 
     logger.debug("Region filtering applied", {
       originalCount: projects.length,
       filteredCount: filteredProjects.length,
       companyRegion,
+      companySubRegion,
       hasExplicitRegionPreference: !!input.preferences?.regions?.length,
+      hasExplicitSubRegionPreference: !!input.preferences?.subRegions?.length,
     });
 
     // Calculate scores for each project

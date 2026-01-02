@@ -18,7 +18,8 @@ const preferencesSchema = z.object({
   categories: z.array(z.string()).optional(),
   minAmount: z.string().optional(), // BigInt as string
   maxAmount: z.string().optional(),
-  regions: z.array(z.string()).optional(),
+  regions: z.array(z.string()).optional(), // 광역시·도 (17개)
+  subRegions: z.array(z.string()).optional(), // 시·군·구
   excludeKeywords: z.array(z.string()).optional(),
 });
 
@@ -118,6 +119,7 @@ export async function POST(req: NextRequest) {
         minAmount,
         maxAmount,
         regions: validatedData.regions || [],
+        subRegions: validatedData.subRegions || [],
         excludeKeywords: validatedData.excludeKeywords || [],
       },
       create: {
@@ -127,6 +129,7 @@ export async function POST(req: NextRequest) {
         minAmount,
         maxAmount,
         regions: validatedData.regions || [],
+        subRegions: validatedData.subRegions || [],
         excludeKeywords: validatedData.excludeKeywords || [],
       },
     });

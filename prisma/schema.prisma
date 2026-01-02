@@ -490,7 +490,8 @@ model MatchingPreference {
   categories      String[]
   minAmount       BigInt?
   maxAmount       BigInt?
-  regions         String[]
+  regions         String[]   // 광역시·도 (17개)
+  subRegions      String[]   // 시·군·구 (세부 지역)
   excludeKeywords String[]
 
   createdAt DateTime @default(now())
