@@ -176,61 +176,77 @@ export const getUserProject = cache(async (id: string) => {
   })
 })
 
+export interface GetUserProjectsByStatusParams {
+  companyId?: string
+  includeHidden?: boolean
+}
+
 /**
  * 상태별 프로젝트 그룹 조회 (파이프라인용)
  */
-export const getUserProjectsByStatus = cache(async (companyId?: string) => {
-  const session = await auth()
-  if (!session?.user?.id) return null
+export const getUserProjectsByStatus = cache(
+  async (params: GetUserProjectsByStatusParams = {}) => {
+    const session = await auth()
+    if (!session?.user?.id) return null
 
-  const where = {
-    userId: session.user.id,
-    deletedAt: null,
-    ...(companyId && { companyId }),
+    const { companyId, includeHidden = false } = params
+
+    const where = {
+      userId: session.user.id,
+      deletedAt: null,
+      ...(companyId && { companyId }),
+      ...(!includeHidden && { isHidden: false }),
+    }
+
+    const projects = await prisma.userProject.findMany({
+      where,
+      select: {
+        id: true,
+        status: true,
+        isHidden: true,
+        currentStep: true,
+        createdAt: true,
+        updatedAt: true,
+        company: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        project: {
+          select: {
+            id: true,
+            name: true,
+            organization: true,
+            category: true,
+            deadline: true,
+            status: true,
+          },
+        },
+        matchingResult: {
+          select: {
+            id: true,
+            totalScore: true,
+            confidence: true,
+          },
+        },
+      },
+      orderBy: { updatedAt: "desc" },
+    })
+
+    // 상태별 그룹화
+    const grouped = {
+      exploring: projects.filter((p) => p.status === "exploring"),
+      preparing: projects.filter((p) => p.status === "preparing"),
+      writing: projects.filter((p) => p.status === "writing"),
+      verifying: projects.filter((p) => p.status === "verifying"),
+      submitted: projects.filter((p) => p.status === "submitted"),
+      closed: projects.filter((p) => p.status === "closed"),
+    }
+
+    return grouped
   }
-
-  const projects = await prisma.userProject.findMany({
-    where,
-    include: {
-      company: {
-        select: {
-          id: true,
-          name: true,
-        },
-      },
-      project: {
-        select: {
-          id: true,
-          name: true,
-          organization: true,
-          category: true,
-          deadline: true,
-          status: true,
-        },
-      },
-      matchingResult: {
-        select: {
-          id: true,
-          totalScore: true,
-          confidence: true,
-        },
-      },
-    },
-    orderBy: { updatedAt: "desc" },
-  })
-
-  // 상태별 그룹화
-  const grouped = {
-    exploring: projects.filter((p) => p.status === "exploring"),
-    preparing: projects.filter((p) => p.status === "preparing"),
-    writing: projects.filter((p) => p.status === "writing"),
-    verifying: projects.filter((p) => p.status === "verifying"),
-    submitted: projects.filter((p) => p.status === "submitted"),
-    closed: projects.filter((p) => p.status === "closed"),
-  }
-
-  return grouped
-})
+)
 
 /**
  * 프로젝트 통계 조회 (대시보드용)

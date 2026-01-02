@@ -1,9 +1,8 @@
 import { redirect } from "next/navigation"
 import { getUserProjectsByStatus } from "@/lib/user-projects"
-import { Button } from "@/components/ui/button"
-import { Kanban, Plus } from "lucide-react"
-import Link from "next/link"
-import { PipelineBoard } from "@/components/pipeline"
+import { prisma } from "@/lib/prisma"
+import { auth } from "@/lib/auth"
+import { PipelineClient } from "./pipeline-client"
 import type { PipelineProject } from "@/components/pipeline"
 import { calculateDaysLeft } from "@/lib/utils"
 
@@ -17,12 +16,36 @@ const STATUS_MAP: Record<string, string> = {
   closed: "SUBMITTED", // Map closed to submitted column
 }
 
-export default async function PipelinePage() {
-  const projectsByStatus = await getUserProjectsByStatus()
+interface PipelinePageProps {
+  searchParams: Promise<{
+    showHidden?: string
+  }>
+}
+
+export default async function PipelinePage({ searchParams }: PipelinePageProps) {
+  const session = await auth()
+  if (!session?.user?.id) {
+    redirect("/login")
+  }
+
+  const params = await searchParams
+  const showHidden = params.showHidden === "true"
+
+  // 프로젝트 조회 (숨긴 프로젝트 포함 여부에 따라)
+  const projectsByStatus = await getUserProjectsByStatus({ includeHidden: showHidden })
 
   if (!projectsByStatus) {
     redirect("/login")
   }
+
+  // 숨긴 프로젝트 수 조회
+  const hiddenCount = await prisma.userProject.count({
+    where: {
+      userId: session.user.id,
+      deletedAt: null,
+      isHidden: true,
+    },
+  })
 
   // Transform data for PipelineBoard
   const pipelineData: Record<string, PipelineProject[]> = {
@@ -47,6 +70,7 @@ export default async function PipelinePage() {
         deadline: project.project.deadline?.toISOString() || null,
         daysLeft: calculateDaysLeft(project.project.deadline),
         matchScore: project.matchingResult?.totalScore || 0,
+        isHidden: project.isHidden,
       }
 
       if (pipelineData[displayStatus]) {
@@ -56,28 +80,10 @@ export default async function PipelinePage() {
   })
 
   return (
-    <div className="container mx-auto py-8 space-y-6 max-w-6xl">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold flex items-center gap-2">
-            <Kanban className="h-8 w-8 text-primary" />
-            파이프라인
-          </h1>
-          <p className="mt-1 text-muted-foreground">
-            모든 프로젝트를 한눈에 관리하세요
-          </p>
-        </div>
-        <Button asChild>
-          <Link href="/projects">
-            <Plus className="h-4 w-4 mr-2" />
-            새 프로젝트
-          </Link>
-        </Button>
-      </div>
-
-      {/* Pipeline Board */}
-      <PipelineBoard data={pipelineData} />
-    </div>
+    <PipelineClient
+      data={pipelineData}
+      hiddenCount={hiddenCount}
+      showHidden={showHidden}
+    />
   )
 }
