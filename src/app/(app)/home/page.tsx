@@ -158,13 +158,23 @@ async function getHomeData(userId: string): Promise<HomeData> {
 
   // Build recommendations from matching results or upcoming projects
   // 중복 프로젝트 제거: 동일 project.id가 여러 번 매칭된 경우 점수가 가장 높은 것만 유지
-  const uniqueMatchingResults = matchingResults.reduce((acc, m) => {
+  // 방어적 코딩: null/undefined 필터링
+  const validMatchingResults = matchingResults.filter(
+    (m) => m && m.project && m.project.id
+  );
+
+  const uniqueMatchingResults = validMatchingResults.reduce((acc, m) => {
     const existing = acc.find((item) => item.project.id === m.project.id);
     if (!existing || m.totalScore > existing.totalScore) {
       return [...acc.filter((item) => item.project.id !== m.project.id), m];
     }
     return acc;
-  }, [] as typeof matchingResults);
+  }, [] as typeof validMatchingResults);
+
+  // upcomingProjects도 방어적 필터링
+  const validUpcomingProjects = upcomingProjects.filter(
+    (p) => p && p.id && p.name
+  );
 
   const recommendations = uniqueMatchingResults.length > 0
     ? uniqueMatchingResults.map((m) => ({
@@ -178,7 +188,7 @@ async function getHomeData(userId: string): Promise<HomeData> {
         companyId: m.companyId,
         matchingResultId: m.id,
       }))
-    : upcomingProjects.map((p) => ({
+    : validUpcomingProjects.map((p) => ({
         id: p.id,
         title: p.name,
         agency: formatOrganization(p.organization, p.sourceUrl),

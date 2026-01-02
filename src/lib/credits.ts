@@ -17,18 +17,17 @@ import {
 
 /**
  * 사용자 크래딧 잔액 조회 (없으면 자동 생성)
+ * - upsert 패턴으로 race condition 방지
  */
 export async function getOrCreateCredit(
   userId: string
 ): Promise<CreditBalanceResponse> {
-  let credit = await prisma.credit.findUnique({
-    where: { userId },
-  })
-
-  // 크래딧이 없으면 신규 생성 + 가입 보너스 지급
-  if (!credit) {
-    credit = await prisma.credit.create({
-      data: {
+  try {
+    // upsert로 race condition 방지
+    const credit = await prisma.credit.upsert({
+      where: { userId },
+      update: {}, // 이미 존재하면 아무것도 변경하지 않음
+      create: {
         userId,
         balance: INITIAL_CREDIT_BONUS,
         totalPurchased: 0,
@@ -36,22 +35,40 @@ export async function getOrCreateCredit(
       },
     })
 
-    // 가입 보너스 트랜잭션 기록
-    await prisma.creditTransaction.create({
-      data: {
+    // 신규 생성인 경우 가입 보너스 트랜잭션 기록
+    // (이미 있으면 중복 기록 방지)
+    const existingBonus = await prisma.creditTransaction.findFirst({
+      where: {
         creditId: credit.id,
         type: "signup_bonus",
-        amount: INITIAL_CREDIT_BONUS,
-        balanceAfter: INITIAL_CREDIT_BONUS,
-        description: "신규 가입 보너스",
       },
     })
-  }
 
-  return {
-    balance: credit.balance,
-    totalPurchased: credit.totalPurchased,
-    totalUsed: credit.totalUsed,
+    if (!existingBonus) {
+      await prisma.creditTransaction.create({
+        data: {
+          creditId: credit.id,
+          type: "signup_bonus",
+          amount: INITIAL_CREDIT_BONUS,
+          balanceAfter: INITIAL_CREDIT_BONUS,
+          description: "신규 가입 보너스",
+        },
+      })
+    }
+
+    return {
+      balance: credit.balance,
+      totalPurchased: credit.totalPurchased,
+      totalUsed: credit.totalUsed,
+    }
+  } catch (error) {
+    // 에러 발생 시 기본값 반환 (페이지 로드 실패 방지)
+    console.error("[getOrCreateCredit] Error:", error)
+    return {
+      balance: 0,
+      totalPurchased: 0,
+      totalUsed: 0,
+    }
   }
 }
 
