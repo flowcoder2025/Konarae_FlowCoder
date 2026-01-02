@@ -54,6 +54,7 @@ interface MatchingPreferences {
   minAmount: string | null;
   maxAmount: string | null;
   regions: string[];
+  subRegions: string[];
   excludeKeywords: string[];
   updatedAt?: string;
 }
@@ -77,6 +78,8 @@ export function MatchingPreferencesForm({
   // Form state
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [selectedRegions, setSelectedRegions] = useState<string[]>([]);
+  const [selectedSubRegions, setSelectedSubRegions] = useState<string[]>([]);
+  const [newSubRegion, setNewSubRegion] = useState("");
   const [minAmount, setMinAmount] = useState("");
   const [maxAmount, setMaxAmount] = useState("");
   const [excludeKeywords, setExcludeKeywords] = useState<string[]>([]);
@@ -98,6 +101,7 @@ export function MatchingPreferencesForm({
         setPreferences(data.preferences);
         setSelectedCategories(data.preferences.categories || []);
         setSelectedRegions(data.preferences.regions || []);
+        setSelectedSubRegions(data.preferences.subRegions || []);
         setMinAmount(data.preferences.minAmount || "");
         setMaxAmount(data.preferences.maxAmount || "");
         setExcludeKeywords(data.preferences.excludeKeywords || []);
@@ -127,6 +131,7 @@ export function MatchingPreferencesForm({
           minAmount: minAmount || undefined,
           maxAmount: maxAmount || undefined,
           regions: selectedRegions,
+          subRegions: selectedSubRegions,
           excludeKeywords,
         }),
       });
@@ -152,12 +157,14 @@ export function MatchingPreferencesForm({
     if (preferences) {
       setSelectedCategories(preferences.categories || []);
       setSelectedRegions(preferences.regions || []);
+      setSelectedSubRegions(preferences.subRegions || []);
       setMinAmount(preferences.minAmount || "");
       setMaxAmount(preferences.maxAmount || "");
       setExcludeKeywords(preferences.excludeKeywords || []);
     } else {
       setSelectedCategories([]);
       setSelectedRegions([]);
+      setSelectedSubRegions([]);
       setMinAmount("");
       setMaxAmount("");
       setExcludeKeywords([]);
@@ -187,6 +194,18 @@ export function MatchingPreferencesForm({
           : [...newRegions, region];
       });
     }
+  };
+
+  const addSubRegion = () => {
+    const trimmed = newSubRegion.trim();
+    if (trimmed && !selectedSubRegions.includes(trimmed)) {
+      setSelectedSubRegions([...selectedSubRegions, trimmed]);
+      setNewSubRegion("");
+    }
+  };
+
+  const removeSubRegion = (subRegion: string) => {
+    setSelectedSubRegions(selectedSubRegions.filter((s) => s !== subRegion));
   };
 
   const addKeyword = () => {
@@ -318,9 +337,9 @@ export function MatchingPreferencesForm({
               </p>
             </div>
 
-            {/* 지역 */}
+            {/* 지역 (광역시·도) */}
             <div>
-              <Label className="text-sm font-medium mb-3 block">지역</Label>
+              <Label className="text-sm font-medium mb-3 block">지역 (광역시·도)</Label>
               <div className="flex flex-wrap gap-2">
                 {REGIONS.map((region) => (
                   <Badge
@@ -342,6 +361,50 @@ export function MatchingPreferencesForm({
               </div>
               <p className="text-xs text-muted-foreground mt-1">
                 선택하지 않으면 전국으로 검색합니다
+              </p>
+            </div>
+
+            {/* 시·군·구 */}
+            <div>
+              <Label className="text-sm font-medium mb-3 block">시·군·구 (세부 지역)</Label>
+              <div className="flex flex-wrap gap-2 mb-2">
+                {selectedSubRegions.map((subRegion) => (
+                  <Badge key={subRegion} variant="secondary" className="gap-1">
+                    {subRegion}
+                    {isEditing && (
+                      <X
+                        className="h-3 w-3 cursor-pointer hover:text-destructive"
+                        onClick={() => removeSubRegion(subRegion)}
+                      />
+                    )}
+                  </Badge>
+                ))}
+                {selectedSubRegions.length === 0 && !isEditing && (
+                  <span className="text-sm text-muted-foreground">전체</span>
+                )}
+              </div>
+              {isEditing && (
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="시·군·구 입력 (예: 남양주시, 강남구)"
+                    value={newSubRegion}
+                    onChange={(e) => setNewSubRegion(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addSubRegion())}
+                    className="max-w-[250px]"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={addSubRegion}
+                    disabled={!newSubRegion.trim()}
+                  >
+                    <Plus className="h-4 w-4" />
+                  </Button>
+                </div>
+              )}
+              <p className="text-xs text-muted-foreground mt-1">
+                비워두면 선택한 광역시·도 전체를 검색합니다
               </p>
             </div>
 
