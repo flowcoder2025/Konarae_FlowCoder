@@ -220,9 +220,9 @@ export default async function CompanyPage({ searchParams }: Props) {
           </div>
         </div>
         {company.isOwner && (
-          <Button variant="outline" size="sm" asChild className="w-full sm:w-auto shrink-0">
+          <Button variant="outline" asChild className="w-full sm:w-auto shrink-0">
             <Link href={`/companies/${company.id}/edit`}>
-              <Edit className="h-4 w-4 mr-1" />
+              <Edit className="h-4 w-4 mr-2" />
               수정
             </Link>
           </Button>

@@ -8,7 +8,7 @@ import Link from "next/link";
 
 export function CTASection() {
   return (
-    <Section spacing="lg" background="primary" className="relative overflow-hidden">
+    <Section spacing="lg" className="relative overflow-hidden bg-primary">
       {/* Background decoration */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute -top-1/2 -left-1/4 w-96 h-96 bg-white/10 rounded-full blur-3xl" />

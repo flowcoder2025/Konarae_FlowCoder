@@ -92,7 +92,7 @@ async function checkTextParser(): Promise<ServiceStatus> {
   try {
     const info = await getParserServiceInfo();
     return {
-      name: "Text Parser (Render)",
+      name: "Text Parser (Railway)",
       status: info.available ? "healthy" : "down",
       latency: Date.now() - start,
       url: info.url,
@@ -101,7 +101,7 @@ async function checkTextParser(): Promise<ServiceStatus> {
     };
   } catch (error) {
     return {
-      name: "Text Parser (Render)",
+      name: "Text Parser (Railway)",
       status: "down",
       latency: Date.now() - start,
       message: error instanceof Error ? error.message : "Check failed",

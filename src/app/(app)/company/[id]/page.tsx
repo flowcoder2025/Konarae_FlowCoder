@@ -116,6 +116,11 @@ export default async function CompanyDetailPage({
 
   const { id } = await params;
 
+  // Handle "new" as special case - redirect to companies/new
+  if (id === "new") {
+    redirect("/companies/new");
+  }
+
   // Check permission
   const hasPermission = await checkCompanyPermission(session.user.id, id, "viewer");
   if (!hasPermission) {
