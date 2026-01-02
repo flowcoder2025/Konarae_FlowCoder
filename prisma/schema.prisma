@@ -874,7 +874,8 @@ model UserProject {
   step5Completed Boolean @default(false) // 패키징 & 제출 완료
 
   // 상태
-  status String @default("exploring") // exploring, preparing, writing, verifying, submitted, closed
+  status   String  @default("exploring") // exploring, preparing, writing, verifying, submitted, closed
+  isHidden Boolean @default(false) // 숨김 여부 (목록에서 숨기기)
 
   // 타임스탬프
   createdAt DateTime  @default(now())
@@ -904,6 +905,7 @@ model UserProject {
   @@index([userId])
   @@index([companyId])
   @@index([status])
+  @@index([isHidden])
   @@index([createdAt(sort: Desc)])
   @@map("user_projects")
 }

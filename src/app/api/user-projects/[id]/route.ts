@@ -216,6 +216,11 @@ export async function PATCH(request: NextRequest, { params }: Context) {
       updateData.status = body.status
     }
 
+    // 숨기기 업데이트
+    if (typeof body.isHidden === "boolean") {
+      updateData.isHidden = body.isHidden
+    }
+
     // 연결된 작업물 ID 업데이트 (Prisma relation 문법 사용)
     if (body.businessPlanId !== undefined) {
       updateData.businessPlan = body.businessPlanId

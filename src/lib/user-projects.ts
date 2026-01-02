@@ -9,6 +9,7 @@ import { cache } from "react"
 export interface UserProjectListParams {
   companyId?: string
   status?: string
+  includeHidden?: boolean // 숨긴 프로젝트 포함 여부 (기본: false)
   page?: number
   limit?: number
 }
@@ -31,7 +32,7 @@ export const getUserProjects = cache(
     const session = await auth()
     if (!session?.user?.id) return null
 
-    const { companyId, status, page = 1, limit = 20 } = params
+    const { companyId, status, includeHidden = false, page = 1, limit = 20 } = params
     const skip = (page - 1) * limit
 
     const where = {
@@ -39,6 +40,7 @@ export const getUserProjects = cache(
       deletedAt: null,
       ...(companyId && { companyId }),
       ...(status && { status }),
+      ...(!includeHidden && { isHidden: false }), // 숨긴 프로젝트 제외
     }
 
     const [data, total] = await Promise.all([
@@ -65,7 +67,13 @@ async function getUserProjectsRaw(
 ) {
   return prisma.userProject.findMany({
     where,
-    include: {
+    select: {
+      id: true,
+      status: true,
+      isHidden: true,
+      currentStep: true,
+      createdAt: true,
+      updatedAt: true,
       company: {
         select: {
           id: true,
