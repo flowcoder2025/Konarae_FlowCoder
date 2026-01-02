@@ -24,7 +24,7 @@ export function HeroSection() {
         <div className="absolute bottom-1/4 right-1/4 w-64 h-64 bg-primary/5 rounded-full blur-3xl" />
       </div>
 
-      <div className="container relative max-w-5xl px-4 py-20 text-center">
+      <div className="container relative mx-auto max-w-5xl px-4 py-20 text-center">
         {/* Badge */}
         <motion.div
           {...fadeInUp}

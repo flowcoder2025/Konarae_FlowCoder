@@ -15,7 +15,7 @@ export function CTASection() {
         <div className="absolute -bottom-1/2 -right-1/4 w-96 h-96 bg-white/10 rounded-full blur-3xl" />
       </div>
 
-      <div className="container relative max-w-4xl px-4 text-center">
+      <div className="container relative mx-auto max-w-4xl px-4 text-center">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
@@ -52,7 +52,7 @@ export function CTASection() {
           <Button
             size="lg"
             variant="outline"
-            className="w-full sm:w-auto border-white/30 text-primary-foreground hover:bg-white/10"
+            className="w-full sm:w-auto border-2 border-white text-white hover:bg-white/20"
             asChild
           >
             <Link href="/pricing">

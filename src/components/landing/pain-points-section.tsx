@@ -50,7 +50,7 @@ export function PainPointsSection() {
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,var(--primary)_1px,transparent_1px)] bg-[length:24px_24px] opacity-5" />
       </div>
 
-      <div className="container relative max-w-5xl px-4">
+      <div className="container relative mx-auto max-w-5xl px-4">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
