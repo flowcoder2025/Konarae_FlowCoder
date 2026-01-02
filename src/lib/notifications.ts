@@ -318,3 +318,272 @@ export async function sendEvaluationCompleteNotification(
     url: `${process.env.NEXTAUTH_URL}/evaluations/${evaluationId}`,
   });
 }
+
+/**
+ * Daily Digest Email Payload
+ */
+export interface DailyDigestPayload {
+  userId: string;
+  email: string;
+  userName: string;
+  matchingResults: Array<{
+    totalScore: number;
+    confidence: string;
+    matchReasons: string[];
+    project: {
+      id: string;
+      name: string;
+      organization: string;
+      category: string;
+      deadline: Date | null;
+      amountMin: bigint | null;
+      amountMax: bigint | null;
+    };
+    company: {
+      id: string;
+      name: string;
+    };
+  }>;
+  totalCount: number;
+}
+
+/**
+ * Send daily digest email with matching results summary
+ */
+export async function sendDailyDigestEmail(
+  payload: DailyDigestPayload
+): Promise<void> {
+  if (!resend) {
+    logger.warn("Resend not configured, skipping daily digest email");
+    return;
+  }
+
+  try {
+    await resend.emails.send({
+      from: "FlowMate <noreply@flow-coder.com>",
+      to: payload.email,
+      subject: `📊 오늘의 매칭 결과 요약 - ${payload.totalCount}건의 지원사업 발견`,
+      html: buildDailyDigestHtml(payload),
+    });
+
+    logger.info(`Daily digest email sent to ${payload.email}`, {
+      matchCount: payload.totalCount,
+    });
+  } catch (error) {
+    logger.error("Send daily digest email error", { error, email: payload.email });
+    throw error;
+  }
+}
+
+/**
+ * Format amount for display
+ */
+function formatAmount(min: bigint | null, max: bigint | null): string {
+  if (!min && !max) return "금액 미정";
+
+  const formatBigInt = (n: bigint) => {
+    const num = Number(n);
+    if (num >= 100000000) return `${(num / 100000000).toFixed(0)}억원`;
+    if (num >= 10000) return `${(num / 10000).toFixed(0)}만원`;
+    return `${num.toLocaleString()}원`;
+  };
+
+  if (min && max) {
+    return `${formatBigInt(min)} ~ ${formatBigInt(max)}`;
+  }
+  if (max) return `최대 ${formatBigInt(max)}`;
+  if (min) return `${formatBigInt(min)} 이상`;
+  return "금액 미정";
+}
+
+/**
+ * Build daily digest email HTML
+ * Design tokens: Primary Teal (#0d9488), matching project CSS
+ */
+function buildDailyDigestHtml(payload: DailyDigestPayload): string {
+  // Brand colors (from globals.css - Teal primary)
+  const colors = {
+    primary: "#0d9488",        // teal-600
+    primaryLight: "#5eead4",   // teal-300
+    primaryDark: "#0f766e",    // teal-700
+    background: "#ffffff",
+    foreground: "#111827",
+    muted: "#6b7280",
+    mutedBg: "#f3f4f6",
+    border: "#e5e7eb",
+    success: "#10b981",        // green-500
+    warning: "#f59e0b",        // amber-500
+    footerBg: "#111827",
+  };
+
+  // Text-based labels (email clients block SVG)
+  const labels = {
+    chart: "",
+    target: "✦ ",
+    calendar: "마감 ",
+    coins: "",
+    lightbulb: "TIP ",
+  };
+
+  const today = new Date().toLocaleDateString("ko-KR", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    weekday: "long",
+  });
+
+  const resultRows = payload.matchingResults
+    .map((result, index) => {
+      const deadline = result.project.deadline
+        ? new Date(result.project.deadline).toLocaleDateString("ko-KR", {
+            month: "long",
+            day: "numeric",
+          })
+        : "상시";
+
+      const confidenceColor =
+        result.confidence === "high"
+          ? colors.success
+          : result.confidence === "medium"
+          ? colors.warning
+          : colors.muted;
+
+      const confidenceText =
+        result.confidence === "high"
+          ? "높음"
+          : result.confidence === "medium"
+          ? "보통"
+          : "낮음";
+
+      return `
+        <tr style="border-bottom: 1px solid ${colors.border};">
+          <td style="padding: 16px; vertical-align: top;">
+            <div style="display: flex; align-items: flex-start; gap: 12px;">
+              <div style="background: ${colors.primary}; color: white; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; flex-shrink: 0;">
+                ${index + 1}
+              </div>
+              <div style="flex: 1;">
+                <a href="${process.env.NEXTAUTH_URL}/projects/${result.project.id}" style="color: ${colors.foreground}; font-weight: 600; text-decoration: none; font-size: 16px;">
+                  ${result.project.name}
+                </a>
+                <div style="color: ${colors.muted}; font-size: 14px; margin-top: 4px;">
+                  ${result.project.organization} · ${result.project.category}
+                </div>
+                <div style="margin-top: 8px; display: flex; gap: 16px; flex-wrap: wrap;">
+                  <span style="display: inline-flex; align-items: center; gap: 4px; font-size: 13px;">
+                    <span style="color: ${confidenceColor}; font-weight: 600;">●</span>
+                    <span style="color: #374151;">매칭 ${result.totalScore}점 (${confidenceText})</span>
+                  </span>
+                  <span style="color: ${colors.muted}; font-size: 13px;">
+                    ${labels.calendar}${deadline}
+                  </span>
+                  <span style="color: ${colors.muted}; font-size: 13px;">
+                    ${labels.coins}${formatAmount(result.project.amountMin, result.project.amountMax)}
+                  </span>
+                </div>
+                ${
+                  result.matchReasons.length > 0
+                    ? `<div style="margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap;">
+                        ${result.matchReasons
+                          .slice(0, 3)
+                          .map(
+                            (reason) =>
+                              `<span style="background: #ccfbf1; color: ${colors.primaryDark}; padding: 2px 8px; border-radius: 12px; font-size: 12px;">${reason}</span>`
+                          )
+                          .join("")}
+                      </div>`
+                    : ""
+                }
+              </div>
+            </div>
+          </td>
+        </tr>
+      `;
+    })
+    .join("");
+
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>오늘의 매칭 결과 요약</title>
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: ${colors.foreground}; margin: 0; padding: 0; background: #f9fafb;">
+  <div style="max-width: 640px; margin: 0 auto; padding: 20px;">
+    <!-- Header -->
+    <div style="background: linear-gradient(135deg, ${colors.primaryLight} 0%, ${colors.primaryDark} 100%); color: white; padding: 32px; border-radius: 16px 16px 0 0; text-align: center;">
+      <h1 style="margin: 0 0 8px 0; font-size: 24px; font-weight: 700;">
+        ${labels.chart}오늘의 매칭 결과
+      </h1>
+      <p style="margin: 0; opacity: 0.9; font-size: 14px;">
+        ${today}
+      </p>
+    </div>
+
+    <!-- Summary -->
+    <div style="background: ${colors.background}; padding: 24px; border-left: 1px solid ${colors.border}; border-right: 1px solid ${colors.border};">
+      <p style="margin: 0 0 16px 0; font-size: 16px;">
+        안녕하세요, <strong>${payload.userName}</strong>님!
+      </p>
+      <p style="margin: 0; font-size: 16px;">
+        <strong>${payload.matchingResults[0]?.company.name || "귀사"}</strong>에 맞는
+        <span style="color: ${colors.primary}; font-weight: 700; font-size: 20px;">${payload.totalCount}건</span>의
+        지원사업이 발견되었습니다.
+      </p>
+    </div>
+
+    <!-- Results Table -->
+    <div style="background: ${colors.background}; border-left: 1px solid ${colors.border}; border-right: 1px solid ${colors.border};">
+      <div style="padding: 16px 24px; border-bottom: 2px solid ${colors.border};">
+        <h2 style="margin: 0; font-size: 16px; font-weight: 600; color: #374151;">
+          ${labels.target}추천 지원사업 TOP ${payload.matchingResults.length}
+        </h2>
+      </div>
+      <table style="width: 100%; border-collapse: collapse;">
+        <tbody>
+          ${resultRows}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- CTA Button -->
+    <div style="background: ${colors.background}; padding: 24px; text-align: center; border-left: 1px solid ${colors.border}; border-right: 1px solid ${colors.border};">
+      <a href="${process.env.NEXTAUTH_URL}/matching/results"
+         style="display: inline-block; background: ${colors.primary}; color: white; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px;">
+        전체 매칭 결과 보기 →
+      </a>
+    </div>
+
+    <!-- Tips -->
+    <div style="background: #f0fdfa; padding: 20px 24px; border-left: 1px solid ${colors.border}; border-right: 1px solid ${colors.border};">
+      <h3 style="margin: 0 0 12px 0; font-size: 14px; font-weight: 600; color: ${colors.primaryDark};">
+        ${labels.lightbulb}더 나은 매칭을 위한 팁
+      </h3>
+      <ul style="margin: 0; padding-left: 20px; color: ${colors.muted}; font-size: 14px;">
+        <li style="margin-bottom: 4px;">기업 정보를 최신 상태로 유지하세요</li>
+        <li style="margin-bottom: 4px;">사업자등록증, 인증서 등 문서를 업로드하면 매칭 정확도가 높아집니다</li>
+        <li>매칭 선호도 설정에서 관심 분야를 지정하세요</li>
+      </ul>
+    </div>
+
+    <!-- Footer -->
+    <div style="background: ${colors.footerBg}; color: #9ca3af; padding: 24px; border-radius: 0 0 16px 16px; text-align: center;">
+      <p style="margin: 0 0 8px 0; font-size: 14px;">
+        이 이메일은 FlowMate 알림 설정에 따라 발송되었습니다.
+      </p>
+      <p style="margin: 0; font-size: 12px;">
+        <a href="${process.env.NEXTAUTH_URL}/settings/notifications" style="color: ${colors.primaryLight};">알림 설정 변경</a>
+        &nbsp;·&nbsp;
+        <a href="${process.env.NEXTAUTH_URL}" style="color: ${colors.primaryLight};">FlowMate 바로가기</a>
+      </p>
+      <p style="margin: 16px 0 0 0; font-size: 12px; opacity: 0.7;">
+        © ${new Date().getFullYear()} FlowMate. All rights reserved.
+      </p>
+    </div>
+  </div>
+</body>
+</html>
+  `.trim();
+}
