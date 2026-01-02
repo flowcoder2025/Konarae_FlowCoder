@@ -219,14 +219,22 @@ export default async function CompanyPage({ searchParams }: Props) {
             )}
           </div>
         </div>
-        {company.isOwner && (
+        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+          {company.isOwner && (
+            <Button variant="outline" asChild className="w-full sm:w-auto shrink-0">
+              <Link href={`/companies/${company.id}/edit`}>
+                <Edit className="h-4 w-4 mr-2" />
+                수정
+              </Link>
+            </Button>
+          )}
           <Button variant="outline" asChild className="w-full sm:w-auto shrink-0">
-            <Link href={`/companies/${company.id}/edit`}>
-              <Edit className="h-4 w-4 mr-2" />
-              수정
+            <Link href="/companies/new">
+              <Plus className="h-4 w-4 mr-2" />
+              새 기업 추가
             </Link>
           </Button>
-        )}
+        </div>
       </div>
 
       {/* Tabs */}
