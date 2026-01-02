@@ -51,8 +51,7 @@ export function CTASection() {
           </Button>
           <Button
             size="lg"
-            variant="outline"
-            className="w-full sm:w-auto border-2 border-white text-white hover:bg-white/20"
+            className="w-full sm:w-auto bg-white/10 border-2 border-white text-white hover:bg-white/20"
             asChild
           >
             <Link href="/pricing">
