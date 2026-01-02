@@ -623,6 +623,68 @@ app.get('/matching/stats', async (req, res) => {
 });
 
 /**
+ * GET /test-parser
+ *
+ * Test connection to text_parser service
+ */
+app.get('/test-parser', async (req, res) => {
+  const startTime = Date.now();
+  const parserUrl = process.env.TEXT_PARSER_URL || 'https://hwp-api.onrender.com';
+
+  try {
+    // Verify API key
+    const authHeader = req.headers.authorization;
+    if (!authHeader || authHeader !== `Bearer ${process.env.WORKER_API_KEY}`) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    logger.info(`Testing parser connection: ${parserUrl}`);
+
+    // Test health endpoint
+    const healthResponse = await fetch(`${parserUrl}/health`, {
+      method: 'GET',
+      signal: AbortSignal.timeout(10000),
+    });
+
+    const healthData = await healthResponse.json().catch(() => null);
+
+    // Test root endpoint for version info
+    const rootResponse = await fetch(`${parserUrl}/`, {
+      method: 'GET',
+      signal: AbortSignal.timeout(10000),
+    });
+
+    const rootData = await rootResponse.json().catch(() => null);
+
+    const duration = Date.now() - startTime;
+
+    return res.json({
+      success: true,
+      parserUrl,
+      healthCheck: {
+        status: healthResponse.ok ? 'ok' : 'failed',
+        statusCode: healthResponse.status,
+        data: healthData,
+      },
+      serviceInfo: rootData,
+      responseTime: `${duration}ms`,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    const duration = Date.now() - startTime;
+    logger.error('Parser test failed', { error, parserUrl });
+
+    return res.status(502).json({
+      success: false,
+      parserUrl,
+      error: error instanceof Error ? error.message : 'Connection failed',
+      responseTime: `${duration}ms`,
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
+/**
  * 404 핸들러
  */
 app.use((req, res) => {
