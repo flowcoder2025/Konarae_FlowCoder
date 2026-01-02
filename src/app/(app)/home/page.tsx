@@ -73,9 +73,11 @@ interface HomeData {
 }
 
 async function getHomeData(userId: string): Promise<HomeData> {
-  // Parallel data fetching - all queries run concurrently
-  // upcomingProjects는 캐시된 함수 사용 (5분 TTL)
-  const [user, userCompanies, userProjects, matchingResults, upcomingProjects, creditData] = await Promise.all([
+  // Parallel data fetching with individual error handling
+  // Promise.allSettled를 사용하여 개별 쿼리 실패 시에도 계속 진행
+  const queryNames = ["user", "companyMember", "userProject", "matchingResult", "upcomingProjects", "credit"];
+
+  const results = await Promise.allSettled([
     prisma.user.findUnique({
       where: { id: userId },
       select: { name: true },
@@ -131,6 +133,26 @@ async function getHomeData(userId: string): Promise<HomeData> {
     getUpcomingProjects(), // 5분 캐시된 마감 임박 프로젝트
     getOrCreateCredit(userId),
   ]);
+
+  // 실패한 쿼리 로깅
+  results.forEach((result, index) => {
+    if (result.status === "rejected") {
+      logger.error(`Query ${queryNames[index]} failed`, {
+        error: result.reason,
+        userId,
+      });
+    }
+  });
+
+  // 각 결과 추출 (실패 시 기본값 사용)
+  const user = results[0].status === "fulfilled" ? results[0].value : null;
+  const userCompanies = results[1].status === "fulfilled" ? results[1].value : [];
+  const userProjects = results[2].status === "fulfilled" ? results[2].value : [];
+  const matchingResults = results[3].status === "fulfilled" ? results[3].value : [];
+  const upcomingProjects = results[4].status === "fulfilled" ? results[4].value : [];
+  const creditData = results[5].status === "fulfilled"
+    ? results[5].value
+    : { balance: 0, totalPurchased: 0, totalUsed: 0 };
 
   const hasCompany = userCompanies.length > 0;
 
