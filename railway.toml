@@ -35,5 +35,5 @@ NODE_ENV = "production"
 # [필수 - 보안]
 # - WORKER_API_KEY (워커 인증)
 #
-# [선택 - Text Parser]
-# - TEXT_PARSER_URL (기본값: https://hwp-api.onrender.com)
+# [필수 - Text Parser (Railway 내부 네트워킹)]
+# - TEXT_PARSER_URL=http://text_parser.railway.internal
