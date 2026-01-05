@@ -9,41 +9,32 @@ import {
   Package,
   Download,
   CheckCircle2,
-  FileArchive,
-  File,
   FileText,
-  FileSpreadsheet,
   ExternalLink,
   Loader2,
+  AlertCircle,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { toast } from "sonner";
 
-interface PackageFile {
+interface BusinessPlanInfo {
   id: string;
-  name: string;
-  type: "pdf" | "xlsx" | "zip" | "other";
-  size: string;
-  included: boolean;
+  title: string;
+  sectionsCount: number;
+  status: string;
 }
 
 interface Step5PackageProps {
-  projectId: string;
+  projectId: string; // UserProject ID
   projectUrl: string | null;
   onComplete: () => void;
 }
-
-const FILE_ICONS = {
-  pdf: FileText,
-  xlsx: FileSpreadsheet,
-  zip: FileArchive,
-  other: File,
-};
 
 const SUBMISSION_CHECKLIST = [
   {
     id: "files",
     label: "제출 파일 확인",
-    description: "모든 파일이 올바른 형식으로 포함되어 있습니다",
+    description: "사업계획서가 올바르게 작성되어 있습니다",
   },
   {
     id: "naming",
@@ -67,50 +58,102 @@ export function Step5Package({
   projectUrl,
   onComplete,
 }: Step5PackageProps) {
-  const [isPackaging, setIsPackaging] = useState(false);
-  const [packageReady, setPackageReady] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [businessPlan, setBusinessPlan] = useState<BusinessPlanInfo | null>(null);
   const [checkedItems, setCheckedItems] = useState<Set<string>>(new Set());
+  const [error, setError] = useState<string | null>(null);
 
-  // Mock files - in real implementation, fetch from API
-  const [files] = useState<PackageFile[]>([
-    {
-      id: "1",
-      name: "사업계획서_주식회사코나래.pdf",
-      type: "pdf",
-      size: "2.4 MB",
-      included: true,
-    },
-    {
-      id: "2",
-      name: "사업자등록증_주식회사코나래.pdf",
-      type: "pdf",
-      size: "0.5 MB",
-      included: true,
-    },
-    {
-      id: "3",
-      name: "재무제표_2024.xlsx",
-      type: "xlsx",
-      size: "1.2 MB",
-      included: true,
-    },
-    {
-      id: "4",
-      name: "중소기업확인서.pdf",
-      type: "pdf",
-      size: "0.3 MB",
-      included: true,
-    },
-  ]);
+  // Fetch business plan info
+  const fetchBusinessPlan = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      setError(null);
 
-  const handleCreatePackage = async () => {
-    setIsPackaging(true);
+      // Get user project to find business plan ID
+      const userProjectRes = await fetch(`/api/user-projects/${projectId}`);
+      if (!userProjectRes.ok) {
+        throw new Error("프로젝트 정보를 불러오는데 실패했습니다");
+      }
 
-    // Simulate package creation
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+      const userProject = await userProjectRes.json();
 
-    setIsPackaging(false);
-    setPackageReady(true);
+      if (!userProject.businessPlanId) {
+        setError("사업계획서가 아직 작성되지 않았습니다. 3단계에서 계획서를 먼저 작성해주세요.");
+        return;
+      }
+
+      // Get business plan info
+      const planRes = await fetch(`/api/business-plans/${userProject.businessPlanId}`);
+      if (!planRes.ok) {
+        throw new Error("사업계획서를 불러오는데 실패했습니다");
+      }
+
+      const planData = await planRes.json();
+
+      setBusinessPlan({
+        id: planData.id,
+        title: planData.title,
+        sectionsCount: planData.sections?.length || 0,
+        status: planData.status,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "오류가 발생했습니다";
+      setError(message);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    fetchBusinessPlan();
+  }, [fetchBusinessPlan]);
+
+  const handleDownload = async () => {
+    if (!businessPlan) return;
+
+    setIsDownloading(true);
+    try {
+      const response = await fetch(`/api/business-plans/${businessPlan.id}/export`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ format: "pdf" }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "다운로드 실패");
+      }
+
+      // Get filename from Content-Disposition header
+      const contentDisposition = response.headers.get("Content-Disposition");
+      let filename = `${businessPlan.title}.pdf`;
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename\*=UTF-8''(.+)/);
+        if (filenameMatch) {
+          filename = decodeURIComponent(filenameMatch[1]);
+        }
+      }
+
+      // Download the file
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      toast.success("사업계획서가 다운로드되었습니다");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "다운로드에 실패했습니다";
+      toast.error(message);
+    } finally {
+      setIsDownloading(false);
+    }
   };
 
   const handleCheckChange = (itemId: string, checked: boolean) => {
@@ -123,8 +166,61 @@ export function Step5Package({
     setCheckedItems(newChecked);
   };
 
+  const handleSubmitComplete = async () => {
+    setIsSubmitting(true);
+    try {
+      // Update user project status to submitted
+      const response = await fetch(`/api/user-projects/${projectId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: "submitted",
+          step5Completed: true,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("상태 업데이트에 실패했습니다");
+      }
+
+      toast.success("제출이 완료되었습니다! 수고하셨습니다.");
+      onComplete();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "제출 완료 처리에 실패했습니다";
+      toast.error(message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const allChecked = checkedItems.size === SUBMISSION_CHECKLIST.length;
-  const includedFiles = files.filter((f) => f.included);
+  const canSubmit = allChecked && businessPlan && businessPlan.sectionsCount > 0;
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="space-y-6">
+        <Card className="border-destructive/50 bg-destructive/5">
+          <CardContent className="py-6">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="h-5 w-5 text-destructive mt-0.5" />
+              <div>
+                <p className="font-medium text-destructive">오류 발생</p>
+                <p className="text-sm text-muted-foreground mt-1">{error}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -135,67 +231,54 @@ export function Step5Package({
           <div>
             <p className="font-medium">패키징 & 제출 준비</p>
             <p className="text-sm text-muted-foreground mt-1">
-              제출할 파일들을 한번에 다운로드하고, 최종 체크리스트를 확인하세요.
+              사업계획서를 다운로드하고, 최종 체크리스트를 확인하세요.
             </p>
           </div>
         </div>
       </div>
 
-      {/* Files List */}
-      <Card>
-        <CardContent className="py-4">
-          <div className="flex items-center justify-between mb-4">
-            <h4 className="font-medium flex items-center gap-2">
-              <FileArchive className="h-4 w-4" />
-              제출 파일 목록
-              <Badge variant="secondary">{includedFiles.length}개</Badge>
-            </h4>
-            {!packageReady && (
-              <Button onClick={handleCreatePackage} disabled={isPackaging} size="sm">
-                {isPackaging ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    패키징 중...
-                  </>
-                ) : (
-                  <>
-                    <Package className="h-4 w-4 mr-2" />
-                    ZIP 패키지 생성
-                  </>
-                )}
-              </Button>
-            )}
-            {packageReady && (
-              <Button size="sm">
-                <Download className="h-4 w-4 mr-2" />
-                제출파일.zip 다운로드
-              </Button>
-            )}
-          </div>
-
-          <div className="space-y-2">
-            {files.map((file) => {
-              const FileIcon = FILE_ICONS[file.type];
-
-              return (
-                <div
-                  key={file.id}
-                  className="flex items-center gap-3 p-3 rounded-lg bg-muted/50"
-                >
-                  <FileIcon className="h-5 w-5 text-muted-foreground" />
-                  <span className="flex-1 text-sm font-medium truncate">
-                    {file.name}
-                  </span>
-                  <span className="text-xs text-muted-foreground">{file.size}</span>
-                  {file.included && (
-                    <CheckCircle2 className="h-4 w-4 text-green-600" />
-                  )}
+      {/* Business Plan Info */}
+      {businessPlan && (
+        <Card>
+          <CardContent className="py-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
+                  <FileText className="h-5 w-5 text-primary" />
                 </div>
-              );
-            })}
-          </div>
-        </CardContent>
-      </Card>
+                <div>
+                  <p className="font-medium">{businessPlan.title}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {businessPlan.sectionsCount}개 섹션 작성됨
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge variant="outline" className="bg-primary/10 text-primary border-0">
+                  {businessPlan.status === "completed" ? "완료" : "작성중"}
+                </Badge>
+                <Button
+                  onClick={handleDownload}
+                  disabled={isDownloading}
+                  size="sm"
+                >
+                  {isDownloading ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      다운로드 중...
+                    </>
+                  ) : (
+                    <>
+                      <Download className="h-4 w-4 mr-2" />
+                      PDF 다운로드
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Submission Checklist */}
       <div className="space-y-4">
@@ -266,12 +349,21 @@ export function Step5Package({
             : "체크리스트를 모두 확인해주세요"}
         </p>
         <Button
-          onClick={onComplete}
-          disabled={!allChecked || !packageReady}
+          onClick={handleSubmitComplete}
+          disabled={!canSubmit || isSubmitting}
           className="bg-green-600 hover:bg-green-700"
         >
-          <CheckCircle2 className="h-4 w-4 mr-2" />
-          제출 완료로 표시
+          {isSubmitting ? (
+            <>
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              처리 중...
+            </>
+          ) : (
+            <>
+              <CheckCircle2 className="h-4 w-4 mr-2" />
+              제출 완료로 표시
+            </>
+          )}
         </Button>
       </div>
     </div>
