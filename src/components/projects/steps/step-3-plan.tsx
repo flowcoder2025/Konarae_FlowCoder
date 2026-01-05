@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Progress } from "@/components/ui/progress";
 import {
   Dialog,
   DialogContent,
@@ -27,6 +28,7 @@ import {
   Calendar,
   Users,
   Loader2,
+  AlertCircle,
 } from "lucide-react";
 import Link from "next/link";
 import { toast } from "sonner";
@@ -98,6 +100,15 @@ export function Step3Plan({
     newBusinessDescription: "",
   });
 
+  // 섹션별 생성 진행 상태
+  const [generationProgress, setGenerationProgress] = useState({
+    currentSection: 0,
+    totalSections: 0,
+    currentSectionTitle: "",
+    completedSections: [] as string[],
+    failedSections: [] as string[],
+  });
+
   // Mock data - in real implementation, fetch from API
   const sections: BusinessPlanSection[] = PLAN_SECTIONS.map((section, idx) => ({
     ...section,
@@ -117,7 +128,7 @@ export function Step3Plan({
     router.push(`/business-plans/new?${params.toString()}`);
   };
 
-  // AI 초안 생성 - 모달에서 간단한 정보 입력 후 바로 생성
+  // AI 초안 생성 - 섹션별 개별 호출로 타임아웃 방지
   const handleAiGenerate = async () => {
     if (!aiFormData.title.trim() || !aiFormData.newBusinessDescription.trim()) {
       toast.error("제목과 사업 설명을 입력해주세요");
@@ -135,6 +146,14 @@ export function Step3Plan({
     }
 
     setIsGenerating(true);
+    setGenerationProgress({
+      currentSection: 0,
+      totalSections: 0,
+      currentSectionTitle: "준비 중...",
+      completedSections: [],
+      failedSections: [],
+    });
+
     try {
       // 1. 사업계획서 생성
       const createRes = await fetch("/api/business-plans", {
@@ -155,28 +174,104 @@ export function Step3Plan({
 
       const { businessPlan } = await createRes.json();
 
-      // 2. AI 생성 시작
-      const generateRes = await fetch(
-        `/api/business-plans/${businessPlan.id}/generate`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ mode: "all" }),
-        }
+      // 2. 섹션 구조 조회
+      setGenerationProgress((prev) => ({
+        ...prev,
+        currentSectionTitle: "섹션 구조 분석 중...",
+      }));
+
+      const structureRes = await fetch(
+        `/api/business-plans/${businessPlan.id}/sections/structure`
       );
 
-      if (!generateRes.ok) {
-        const errorData = await generateRes.json();
-        // 생성 실패해도 상세 페이지로 이동 (수동 생성 또는 빈 템플릿 사용 가능)
-        toast.error(
-          errorData.error ||
-          "AI 생성 시작 실패. 상세 페이지에서 빈 템플릿으로 시작하거나 다시 시도해주세요."
-        );
-      } else {
-        toast.success("AI가 사업계획서를 생성하고 있습니다");
+      if (!structureRes.ok) {
+        throw new Error("섹션 구조 조회 실패");
       }
 
-      // 3. UserProject의 step3 완료 및 다음 단계로 업데이트
+      const { sections: sectionStructure, totalCount } = await structureRes.json();
+
+      setGenerationProgress((prev) => ({
+        ...prev,
+        totalSections: totalCount,
+      }));
+
+      // 3. 섹션별 개별 생성 (타임아웃 방지)
+      const previousSectionsContent: string[] = [];
+      const completedSections: string[] = [];
+      const failedSections: string[] = [];
+
+      for (let i = 0; i < sectionStructure.length; i++) {
+        const section = sectionStructure[i];
+
+        setGenerationProgress((prev) => ({
+          ...prev,
+          currentSection: i + 1,
+          currentSectionTitle: section.title,
+        }));
+
+        try {
+          const generateRes = await fetch(
+            `/api/business-plans/${businessPlan.id}/sections/generate`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                sectionIndex: i + 1,
+                title: section.title,
+                promptHint: section.promptHint,
+                previousSectionsContent,
+              }),
+            }
+          );
+
+          if (generateRes.ok) {
+            const { content, title } = await generateRes.json();
+            previousSectionsContent.push(`### ${title}\n${content}`);
+            completedSections.push(section.title);
+
+            setGenerationProgress((prev) => ({
+              ...prev,
+              completedSections: [...completedSections],
+            }));
+
+            // 섹션을 DB에 저장
+            await fetch(`/api/business-plans/${businessPlan.id}/sections`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                sectionIndex: i + 1,
+                title: section.title,
+                content,
+                isAiGenerated: true,
+              }),
+            });
+          } else {
+            failedSections.push(section.title);
+            setGenerationProgress((prev) => ({
+              ...prev,
+              failedSections: [...failedSections],
+            }));
+          }
+        } catch (error) {
+          console.error(`Failed to generate section: ${section.title}`, error);
+          failedSections.push(section.title);
+          setGenerationProgress((prev) => ({
+            ...prev,
+            failedSections: [...failedSections],
+          }));
+        }
+      }
+
+      // 4. 생성 완료 메시지
+      if (failedSections.length === 0) {
+        toast.success(`${completedSections.length}개 섹션 생성 완료!`);
+      } else {
+        toast.warning(
+          `${completedSections.length}개 섹션 완료, ${failedSections.length}개 섹션 실패. 상세 페이지에서 재생성하세요.`
+        );
+      }
+
+      // 5. UserProject의 step3 완료 및 다음 단계로 업데이트
       if (userProjectId) {
         try {
           await fetch(`/api/user-projects/${userProjectId}`, {
@@ -193,7 +288,7 @@ export function Step3Plan({
         }
       }
 
-      // 4. 상세 페이지로 이동
+      // 6. 상세 페이지로 이동
       setShowAiModal(false);
       router.push(`/business-plans/${businessPlan.id}`);
     } catch (error) {
@@ -201,6 +296,13 @@ export function Step3Plan({
       toast.error(errorMessage);
     } finally {
       setIsGenerating(false);
+      setGenerationProgress({
+        currentSection: 0,
+        totalSections: 0,
+        currentSectionTitle: "",
+        completedSections: [],
+        failedSections: [],
+      });
     }
   };
 
@@ -245,7 +347,7 @@ export function Step3Plan({
         </Card>
 
         {/* AI 초안 생성 모달 */}
-        <Dialog open={showAiModal} onOpenChange={setShowAiModal}>
+        <Dialog open={showAiModal} onOpenChange={(open) => !isGenerating && setShowAiModal(open)}>
           <DialogContent className="sm:max-w-[500px]">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
@@ -253,68 +355,127 @@ export function Step3Plan({
                 AI 초안 생성
               </DialogTitle>
               <DialogDescription>
-                간단한 정보를 입력하면 AI가 사업계획서 초안을 작성합니다.
+                {isGenerating
+                  ? "AI가 사업계획서를 작성하고 있습니다. 잠시만 기다려주세요."
+                  : "간단한 정보를 입력하면 AI가 사업계획서 초안을 작성합니다."}
               </DialogDescription>
             </DialogHeader>
-            <div className="space-y-4 py-4">
-              <div className="space-y-2">
-                <Label htmlFor="ai-title">사업계획서 제목 *</Label>
-                <Input
-                  id="ai-title"
-                  value={aiFormData.title}
-                  onChange={(e) =>
-                    setAiFormData((prev) => ({ ...prev, title: e.target.value }))
-                  }
-                  placeholder="예: 2025년 AI 기반 고객 관리 시스템 개발"
-                  disabled={isGenerating}
-                />
+
+            {isGenerating ? (
+              <div className="space-y-4 py-6">
+                {/* 진행률 표시 */}
+                <div className="space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">
+                      {generationProgress.currentSectionTitle}
+                    </span>
+                    <span className="font-medium">
+                      {generationProgress.currentSection}/{generationProgress.totalSections}
+                    </span>
+                  </div>
+                  <Progress
+                    value={
+                      generationProgress.totalSections > 0
+                        ? (generationProgress.currentSection / generationProgress.totalSections) * 100
+                        : 0
+                    }
+                    className="h-2"
+                  />
+                </div>
+
+                {/* 완료된 섹션 목록 */}
+                {generationProgress.completedSections.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium text-muted-foreground">완료된 섹션</p>
+                    <div className="flex flex-wrap gap-2">
+                      {generationProgress.completedSections.map((title, idx) => (
+                        <Badge key={idx} variant="outline" className="bg-primary/10 text-primary border-0">
+                          <CheckCircle2 className="h-3 w-3 mr-1" />
+                          {title}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* 실패한 섹션 목록 */}
+                {generationProgress.failedSections.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium text-destructive">실패한 섹션</p>
+                    <div className="flex flex-wrap gap-2">
+                      {generationProgress.failedSections.map((title, idx) => (
+                        <Badge key={idx} variant="destructive">
+                          <AlertCircle className="h-3 w-3 mr-1" />
+                          {title}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* 로딩 인디케이터 */}
+                <div className="flex items-center justify-center py-4">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                </div>
+
+                <p className="text-xs text-center text-muted-foreground">
+                  각 섹션당 약 30-60초가 소요됩니다. 창을 닫지 마세요.
+                </p>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="ai-description">신규 사업 설명 *</Label>
-                <Textarea
-                  id="ai-description"
-                  value={aiFormData.newBusinessDescription}
-                  onChange={(e) =>
-                    setAiFormData((prev) => ({
-                      ...prev,
-                      newBusinessDescription: e.target.value,
-                    }))
-                  }
-                  placeholder="신규 사업의 목적, 내용, 기대 효과를 간략히 작성해주세요"
-                  className="min-h-[120px]"
-                  disabled={isGenerating}
-                />
-              </div>
-            </div>
-            <DialogFooter>
-              <Button
-                variant="outline"
-                onClick={() => setShowAiModal(false)}
-                disabled={isGenerating}
-              >
-                취소
-              </Button>
-              <Button
-                onClick={handleAiGenerate}
-                disabled={
-                  isGenerating ||
-                  !aiFormData.title.trim() ||
-                  !aiFormData.newBusinessDescription.trim()
-                }
-              >
-                {isGenerating ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    생성 중...
-                  </>
-                ) : (
-                  <>
+            ) : (
+              <>
+                <div className="space-y-4 py-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="ai-title">사업계획서 제목 *</Label>
+                    <Input
+                      id="ai-title"
+                      value={aiFormData.title}
+                      onChange={(e) =>
+                        setAiFormData((prev) => ({ ...prev, title: e.target.value }))
+                      }
+                      placeholder="예: 2025년 AI 기반 고객 관리 시스템 개발"
+                      disabled={isGenerating}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="ai-description">신규 사업 설명 *</Label>
+                    <Textarea
+                      id="ai-description"
+                      value={aiFormData.newBusinessDescription}
+                      onChange={(e) =>
+                        setAiFormData((prev) => ({
+                          ...prev,
+                          newBusinessDescription: e.target.value,
+                        }))
+                      }
+                      placeholder="신규 사업의 목적, 내용, 기대 효과를 간략히 작성해주세요"
+                      className="min-h-[120px]"
+                      disabled={isGenerating}
+                    />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button
+                    variant="outline"
+                    onClick={() => setShowAiModal(false)}
+                    disabled={isGenerating}
+                  >
+                    취소
+                  </Button>
+                  <Button
+                    onClick={handleAiGenerate}
+                    disabled={
+                      isGenerating ||
+                      !aiFormData.title.trim() ||
+                      !aiFormData.newBusinessDescription.trim()
+                    }
+                  >
                     <Sparkles className="h-4 w-4 mr-2" />
                     AI로 작성하기
-                  </>
-                )}
-              </Button>
-            </DialogFooter>
+                  </Button>
+                </DialogFooter>
+              </>
+            )}
           </DialogContent>
         </Dialog>
       </div>

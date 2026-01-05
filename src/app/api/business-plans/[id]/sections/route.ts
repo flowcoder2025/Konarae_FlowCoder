@@ -302,6 +302,7 @@ const addSectionSchema = z.object({
   title: z.string().min(1, "제목을 입력해주세요"),
   content: z.string().optional().default(""),
   sectionIndex: z.number().optional(), // 지정하지 않으면 마지막에 추가
+  isAiGenerated: z.boolean().optional().default(false),
 });
 
 const initializeTemplateSchema = z.object({
@@ -537,7 +538,7 @@ export async function POST(
         sectionIndex: targetIndex,
         title: validatedData.title,
         content: validatedData.content || "",
-        isAiGenerated: false,
+        isAiGenerated: validatedData.isAiGenerated ?? false,
       },
     });
 

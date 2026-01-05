@@ -726,6 +726,108 @@ export async function regenerateSection(
 }
 
 /**
+ * Input type for generateSingleSection
+ * API에서 호출할 때 필요한 데이터 구조
+ */
+export interface GenerateSingleSectionInput {
+  businessPlan: {
+    id: string
+    companyId: string
+    projectId: string | null
+    newBusinessDescription: string | null
+    company: {
+      name: string
+      businessCategory: string | null
+      mainBusiness: string | null
+      establishedDate: Date | null
+      companyType: string | null
+      employeeCount: number | null
+      capitalAmount: bigint | null
+      isVenture: boolean
+      isInnoBiz: boolean
+      isMainBiz: boolean
+      financials: Array<{
+        fiscalYear: number
+        revenue: bigint | null
+        operatingProfit: bigint | null
+      }>
+    }
+    project: {
+      id: string
+      name: string
+      organization: string | null
+      startDate: Date | null
+      endDate: Date | null
+    } | null
+  }
+  sectionIndex: number
+  title: string
+  promptHint: string
+  previousSectionsContent: string[] // 이전 섹션들의 내용
+}
+
+/**
+ * Generate a single section for business plan
+ * 타임아웃 방지를 위해 섹션별로 개별 호출
+ * 프론트엔드에서 섹션을 하나씩 생성할 때 사용
+ */
+export async function generateSingleSection(
+  input: GenerateSingleSectionInput
+): Promise<string> {
+  try {
+    const { businessPlan, sectionIndex, title, promptHint, previousSectionsContent } = input
+
+    // Build RAG context
+    const { context: ragContext, evaluationCriteria } = await buildRagContext({
+      projectId: businessPlan.projectId || "",
+      companyId: businessPlan.companyId,
+      newBusinessDescription: businessPlan.newBusinessDescription || "",
+      businessPlanId: businessPlan.id,
+    })
+
+    // Build company context
+    const companyContext = buildCompanyContext(businessPlan.company)
+
+    // Build previous sections context
+    const otherSectionsContext = previousSectionsContent.length > 0
+      ? previousSectionsContent.join("\n\n---\n\n")
+      : undefined
+
+    // Build prompt
+    const prompt = buildDynamicPrompt({
+      sectionTitle: title,
+      promptHint,
+      companyContext,
+      projectName: businessPlan.project?.name || "",
+      projectOrganization: businessPlan.project?.organization || null,
+      newBusinessDescription: businessPlan.newBusinessDescription || "",
+      projectDateRange: businessPlan.project?.startDate && businessPlan.project?.endDate
+        ? `${formatDateKST(businessPlan.project.startDate)} ~ ${formatDateKST(businessPlan.project.endDate)}`
+        : null,
+    })
+
+    logger.info(`Generating section ${sectionIndex}: ${title}`)
+
+    // Generate section content
+    const content = await generateSection({
+      sectionTitle: title,
+      newBusinessDescription: businessPlan.newBusinessDescription || "",
+      ragContext,
+      evaluationCriteria,
+      prompt,
+      otherSectionsContext,
+    })
+
+    logger.info(`Section ${sectionIndex} generated, length: ${content.length}`)
+
+    return content
+  } catch (error) {
+    logger.error(`Generate single section "${input.title}" error`, { error })
+    throw new Error(`Failed to generate section: ${input.title}`)
+  }
+}
+
+/**
  * Generate embeddings for a completed business plan (PRD 12.4)
  * This makes the business plan searchable for future reference
  */
