@@ -56,7 +56,7 @@ export function StepContent({
         return (
           <Step2Diagnosis
             companyId={companyId}
-            projectId={projectId}
+            projectId={supportProjectId}
             creditCost={currentStepConfig.creditCost || 50}
             onComplete={() => onStepComplete(2)}
             onSkip={handleSkip}
