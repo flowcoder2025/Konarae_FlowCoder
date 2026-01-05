@@ -141,28 +141,67 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // 이미 존재하는 프로젝트인지 확인
-    const existing = await prisma.userProject.findUnique({
+    // 1. 활성 레코드 확인 (삭제되지 않은 프로젝트)
+    const activeExisting = await prisma.userProject.findFirst({
       where: {
-        userId_companyId_projectId: {
-          userId: session.user.id,
-          companyId,
-          projectId,
-        },
+        userId: session.user.id,
+        companyId,
+        projectId,
+        deletedAt: null,
       },
     })
 
-    if (existing) {
+    if (activeExisting) {
       return NextResponse.json(
         {
           error: "이미 등록된 프로젝트입니다",
-          userProjectId: existing.id
+          userProjectId: activeExisting.id
         },
         { status: 409 }
       )
     }
 
-    // 새 프로젝트 생성
+    // 2. 삭제된 레코드 확인 → 복구
+    const deletedExisting = await prisma.userProject.findFirst({
+      where: {
+        userId: session.user.id,
+        companyId,
+        projectId,
+        deletedAt: { not: null },
+      },
+    })
+
+    if (deletedExisting) {
+      // 삭제된 프로젝트 복구 (재활성화)
+      const restoredProject = await prisma.userProject.update({
+        where: { id: deletedExisting.id },
+        data: {
+          deletedAt: null,
+          status: "exploring",
+          currentStep: 1,
+          matchingResultId: matchingResultId || deletedExisting.matchingResultId,
+          updatedAt: new Date(),
+        },
+        include: {
+          company: {
+            select: { id: true, name: true },
+          },
+          project: {
+            select: { id: true, name: true, organization: true },
+          },
+        },
+      })
+
+      logger.info("User project restored", {
+        userProjectId: restoredProject.id,
+        userId: session.user.id,
+        projectId,
+      })
+
+      return NextResponse.json(restoredProject, { status: 201 })
+    }
+
+    // 3. 새 프로젝트 생성
     const userProject = await prisma.userProject.create({
       data: {
         userId: session.user.id,
