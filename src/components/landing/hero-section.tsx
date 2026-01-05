@@ -41,9 +41,9 @@ export function HeroSection() {
           transition={{ duration: 0.6, delay: 0.2 }}
           className="text-4xl font-bold tracking-tight sm:text-5xl md:text-6xl lg:text-7xl"
         >
-          <span className="text-foreground">정부 지원사업,</span>
+          <span className="text-foreground">정부 지원사업</span>
           <br />
-          <span className="text-primary">AI가 찾아드립니다</span>
+          <span className="text-primary">지원은 더 자주, 제출은 더 정확하게</span>
         </motion.h1>
 
         {/* Subheadline */}
