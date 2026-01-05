@@ -72,6 +72,8 @@
     "node-hwp": "0.1.0-alpha",
     "pdf-lib": "^1.17.1",
     "pdf-parse": "^2.4.5",
+    "playwright": "^1.57.0",
+    "puppeteer": "^24.34.0",
     "puppeteer-core": "^24.34.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
