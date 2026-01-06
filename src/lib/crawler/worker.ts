@@ -1211,7 +1211,7 @@ async function downloadFile(url: string, cookies?: string): Promise<DownloadResu
       () => axios.get(normalizedUrl, {
         responseType: 'arraybuffer',
         timeout: CRAWLER_CONFIG.FILE_TIMEOUT,
-        maxContentLength: 20 * 1024 * 1024, // 20MB limit (증가)
+        maxContentLength: 50 * 1024 * 1024, // 50MB limit
         httpAgent,
         httpsAgent,
         headers: {
