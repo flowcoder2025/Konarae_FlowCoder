@@ -1126,6 +1126,70 @@ async function extractFileNameFromHeader(contentDisposition: string | undefined)
 export { repairCorruptedFileName, isCorruptedFileName, hasValidKorean };
 
 /**
+ * URL 정리 유틸리티
+ * 다운로드 실패의 주요 원인인 세션 ID 및 특수 URL 패턴 처리
+ */
+
+/**
+ * jsessionid 제거
+ * 예: /getFile.do;jsessionid=abc123?param=value → /getFile.do?param=value
+ */
+function removeJsessionId(url: string): string {
+  // URL path에 포함된 ;jsessionid=xxx 패턴 제거
+  return url.replace(/;jsessionid=[^?&]*/gi, '');
+}
+
+/**
+ * PDF 뷰어 URL에서 실제 파일 URL 추출
+ * 예: /viewer.html?file=/path/to/file.pdf → /path/to/file.pdf
+ */
+function extractPdfFromViewerUrl(url: string): string | null {
+  try {
+    const urlObj = new URL(url);
+
+    // PDF 뷰어 패턴 감지: viewer.html, pdfviewer, viewer 등
+    if (urlObj.pathname.includes('viewer')) {
+      const fileParam = urlObj.searchParams.get('file');
+      if (fileParam) {
+        // file 파라미터가 절대 경로인 경우
+        if (fileParam.startsWith('/')) {
+          return `${urlObj.protocol}//${urlObj.host}${fileParam.split('#')[0]}`;
+        }
+        // file 파라미터가 완전한 URL인 경우
+        if (fileParam.startsWith('http')) {
+          return fileParam.split('#')[0];
+        }
+      }
+    }
+  } catch {
+    // URL 파싱 실패
+  }
+  return null;
+}
+
+/**
+ * 다운로드 URL 정규화
+ * 1. jsessionid 제거
+ * 2. PDF 뷰어 URL 변환
+ */
+function normalizeDownloadUrl(url: string): string {
+  // 1. PDF 뷰어 URL 처리
+  const pdfUrl = extractPdfFromViewerUrl(url);
+  if (pdfUrl) {
+    logger.debug(`PDF viewer URL detected, extracted: ${pdfUrl}`);
+    return pdfUrl;
+  }
+
+  // 2. jsessionid 제거
+  const cleanedUrl = removeJsessionId(url);
+  if (cleanedUrl !== url) {
+    logger.debug(`Removed jsessionid from URL`);
+  }
+
+  return cleanedUrl;
+}
+
+/**
  * Step 3: Download file from URL
  * Returns buffer and actual filename from Content-Disposition header
  * Enhanced with retry logic and HTTP agents for Vercel compatibility
@@ -1134,14 +1198,17 @@ async function downloadFile(url: string, cookies?: string): Promise<DownloadResu
   try {
     const axios = (await import("axios")).default;
 
+    // URL 정규화 (jsessionid 제거, PDF 뷰어 URL 변환)
+    const normalizedUrl = normalizeDownloadUrl(url);
+
     // Extract referer from URL
-    const urlObj = new URL(url);
+    const urlObj = new URL(normalizedUrl);
     const referer = `${urlObj.protocol}//${urlObj.host}/`;
 
     logger.debug(`Downloading file from ${urlObj.host}...`);
 
     const response = await fetchWithRetry(
-      () => axios.get(url, {
+      () => axios.get(normalizedUrl, {
         responseType: 'arraybuffer',
         timeout: CRAWLER_CONFIG.FILE_TIMEOUT,
         maxContentLength: 20 * 1024 * 1024, // 20MB limit (증가)
@@ -1166,6 +1233,13 @@ async function downloadFile(url: string, cookies?: string): Promise<DownloadResu
       { retries: 3, initialDelayMs: 2000, maxDelayMs: 10000 } // 재시도 3회로 증가
     );
 
+    // Content-Type 검증 (HTML 응답 조기 감지)
+    const contentType = response.headers['content-type'] || '';
+    if (contentType.includes('text/html')) {
+      logger.warn(`Server returned HTML instead of file (Content-Type: ${contentType})`);
+      return null;
+    }
+
     const buffer = Buffer.from(response.data);
     const sizeInMB = (buffer.length / 1024 / 1024).toFixed(2);
 
@@ -1179,10 +1253,10 @@ async function downloadFile(url: string, cookies?: string): Promise<DownloadResu
       logger.debug(`Downloaded ${sizeInMB}MB`);
     }
 
-    // Debug: Check first 100 bytes to verify file type
+    // 바이너리 검증: HTML 응답 이중 체크 (일부 서버는 Content-Type 미설정)
     const preview = buffer.slice(0, 100).toString('utf8', 0, 100);
-    if (preview.includes('<!DOCTYPE') || preview.includes('<html')) {
-      logger.error("Downloaded HTML instead of file!", { preview: preview.substring(0, 200) });
+    if (preview.includes('<!DOCTYPE') || preview.includes('<html') || preview.includes('<HTML')) {
+      logger.warn("Downloaded HTML instead of file (binary check)");
       return null;
     }
 
