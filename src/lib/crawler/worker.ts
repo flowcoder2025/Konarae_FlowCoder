@@ -1134,24 +1134,36 @@ async function downloadFile(url: string, cookies?: string): Promise<DownloadResu
   try {
     const axios = (await import("axios")).default;
 
-    logger.debug("Downloading file...");
+    // Extract referer from URL
+    const urlObj = new URL(url);
+    const referer = `${urlObj.protocol}//${urlObj.host}/`;
+
+    logger.debug(`Downloading file from ${urlObj.host}...`);
 
     const response = await fetchWithRetry(
       () => axios.get(url, {
         responseType: 'arraybuffer',
         timeout: CRAWLER_CONFIG.FILE_TIMEOUT,
-        maxContentLength: 10 * 1024 * 1024, // 10MB limit
+        maxContentLength: 20 * 1024 * 1024, // 20MB limit (증가)
         httpAgent,
         httpsAgent,
         headers: {
           "User-Agent":
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          "Accept": "*/*",
+          "Accept": "application/octet-stream, application/pdf, application/x-hwp, */*",
+          "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+          "Accept-Encoding": "gzip, deflate, br",
           "Connection": "keep-alive",
+          "Referer": referer, // Referer 헤더 추가 (일부 사이트 필수)
+          "Sec-Fetch-Dest": "document",
+          "Sec-Fetch-Mode": "navigate",
+          "Sec-Fetch-Site": "same-origin",
           ...(cookies ? { "Cookie": cookies } : {}),
         },
+        // 리다이렉트 따라가기
+        maxRedirects: 5,
       }),
-      { retries: 2, initialDelayMs: 2000 }
+      { retries: 3, initialDelayMs: 2000, maxDelayMs: 10000 } // 재시도 3회로 증가
     );
 
     const buffer = Buffer.from(response.data);
@@ -1315,6 +1327,48 @@ async function parseHwpxLocal(buffer: Buffer): Promise<string | null> {
 }
 
 /**
+ * Parse PDF file using pdf-parse
+ * Local fallback when text_parser service fails
+ */
+async function parsePdfLocal(buffer: Buffer): Promise<string | null> {
+  try {
+    // pdf-parse v2 동적 임포트
+    const { PDFParse } = await import("pdf-parse");
+
+    // PDF 파싱 (v2 API: class-based)
+    // data 옵션: Buffer를 Uint8Array로 변환
+    const parser = new PDFParse({
+      data: new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength),
+    });
+
+    // 텍스트 추출 (getText가 load를 포함)
+    const result = await parser.getText();
+
+    // 파서 정리
+    await parser.destroy();
+
+    // result.text에서 텍스트 추출
+    const text = result?.text;
+
+    if (text && text.length > 0) {
+      // 텍스트 정리: 여러 줄 바꿈을 하나로
+      const cleanText = text
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+
+      logger.debug(`Local PDF parser extracted ${cleanText.length} characters`);
+      return cleanText;
+    }
+
+    logger.warn("PDF parsed but no text extracted (might be image-based)");
+    return null;
+  } catch (error: any) {
+    logger.warn(`PDF local parser failed: ${error.message}`);
+    return null;
+  }
+}
+
+/**
  * Step 3: Extract text from file buffer
  * Tries Railway parsers first, then falls back to local libraries
  * Supports PDF, HWP, and HWPX formats
@@ -1359,9 +1413,7 @@ async function extractFileText(buffer: Buffer): Promise<string | null> {
     } else if (fileType === 'hwpx') {
       extractedText = await parseHwpxLocal(buffer);
     } else if (fileType === 'pdf') {
-      // Keep PDF parsing as-is or add local fallback later
-      logger.warn("PDF local parsing not implemented yet");
-      return null;
+      extractedText = await parsePdfLocal(buffer);
     }
 
     if (extractedText && extractedText.length > 0) {
