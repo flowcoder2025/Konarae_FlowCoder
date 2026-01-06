@@ -517,13 +517,228 @@ function extractFileUrls(
 }
 
 /**
- * Fetch detail page and extract file URLs
+ * Detail page extracted information
+ * 상세 페이지 HTML에서 추출한 정보
+ */
+interface DetailPageInfo {
+  // 지원금액
+  amountMin?: number;
+  amountMax?: number;
+  fundingSummary?: string;
+  amountDescription?: string;
+  // 사업 내용
+  summary?: string;
+  description?: string;
+  eligibility?: string;
+  target?: string;
+  applicationProcess?: string;
+  evaluationCriteria?: string;
+  contactInfo?: string;
+  // 일정
+  deadline?: Date;
+  startDate?: Date;
+  endDate?: Date;
+}
+
+/**
+ * Extract project info from detail page HTML
+ * 상세 페이지에서 금액, 설명, 자격요건 등 추출
+ *
+ * 지원되는 사이트:
+ * - 기업마당 (bizinfo.go.kr): 테이블 기반 레이아웃
+ * - K-Startup (k-startup.go.kr): 테이블/리스트 기반
+ * - 테크노파크: 다양한 레이아웃
+ */
+function extractDetailPageInfo(
+  $: ReturnType<typeof import("cheerio")["load"]>,
+  detailUrl: string
+): DetailPageInfo {
+  const info: DetailPageInfo = {};
+
+  // 사이트 타입 감지
+  const isBizinfo = detailUrl.includes('bizinfo.go.kr');
+  const isKStartup = detailUrl.includes('k-startup.go.kr');
+
+  // ===== 공통: 테이블에서 정보 추출 =====
+  // 패턴: <th>라벨</th><td>값</td> 또는 <dt>라벨</dt><dd>값</dd>
+
+  const labelValuePairs: { label: string; value: string }[] = [];
+
+  // 테이블 행에서 추출
+  $('table tr').each((_, tr) => {
+    const $tr = $(tr);
+    const th = $tr.find('th').text().trim();
+    const td = $tr.find('td').text().trim();
+    if (th && td) {
+      labelValuePairs.push({ label: th, value: td });
+    }
+  });
+
+  // dl/dt/dd 구조에서 추출
+  $('dl').each((_, dl) => {
+    const $dl = $(dl);
+    $dl.find('dt').each((idx, dt) => {
+      const label = $(dt).text().trim();
+      const dd = $dl.find('dd').eq(idx);
+      const value = dd.text().trim();
+      if (label && value) {
+        labelValuePairs.push({ label, value });
+      }
+    });
+  });
+
+  // 라벨-값 쌍에서 정보 추출
+  for (const { label, value } of labelValuePairs) {
+    const labelLower = label.toLowerCase().replace(/\s/g, '');
+
+    // 지원금액
+    if (labelLower.includes('지원금액') || labelLower.includes('지원규모') ||
+        labelLower.includes('보조금') || labelLower.includes('지원한도') ||
+        labelLower.includes('사업비') || labelLower.includes('지원내용')) {
+      // 금액 정보가 있으면 파싱
+      const amountRange = extractAmountRange(value);
+      if (amountRange.amountMin || amountRange.amountMax) {
+        info.amountMin = amountRange.amountMin ?? undefined;
+        info.amountMax = amountRange.amountMax ?? undefined;
+        info.fundingSummary = value.substring(0, 50).trim();
+        info.amountDescription = value;
+      } else if (!info.amountDescription && value.length > 10) {
+        // 금액 파싱 실패해도 설명은 저장
+        info.amountDescription = value;
+      }
+    }
+
+    // 사업 개요/내용
+    if (labelLower.includes('사업개요') || labelLower.includes('사업내용') ||
+        labelLower.includes('사업목적') || labelLower.includes('지원내용')) {
+      if (!info.description && value.length > 20) {
+        info.description = value.substring(0, 2000);
+      }
+    }
+
+    // 지원 대상
+    if (labelLower.includes('지원대상') || labelLower.includes('모집대상') ||
+        labelLower.includes('신청대상') || labelLower.includes('참여대상')) {
+      if (!info.target) {
+        info.target = value.substring(0, 500);
+      }
+    }
+
+    // 신청 자격
+    if (labelLower.includes('신청자격') || labelLower.includes('지원자격') ||
+        labelLower.includes('참여자격') || labelLower.includes('자격요건')) {
+      if (!info.eligibility) {
+        info.eligibility = value.substring(0, 1000);
+      }
+    }
+
+    // 신청 방법/절차
+    if (labelLower.includes('신청방법') || labelLower.includes('신청절차') ||
+        labelLower.includes('접수방법') || labelLower.includes('지원절차')) {
+      if (!info.applicationProcess) {
+        info.applicationProcess = value.substring(0, 1000);
+      }
+    }
+
+    // 평가 기준
+    if (labelLower.includes('평가기준') || labelLower.includes('선정기준') ||
+        labelLower.includes('심사기준')) {
+      if (!info.evaluationCriteria) {
+        info.evaluationCriteria = value.substring(0, 1000);
+      }
+    }
+
+    // 문의처
+    if (labelLower.includes('문의') || labelLower.includes('담당자') ||
+        labelLower.includes('연락처')) {
+      if (!info.contactInfo) {
+        info.contactInfo = value.substring(0, 200);
+      }
+    }
+
+    // 접수 기간/마감일
+    if (labelLower.includes('접수기간') || labelLower.includes('신청기간') ||
+        labelLower.includes('모집기간')) {
+      const dateMatches = value.match(/(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})/g);
+      if (dateMatches && dateMatches.length >= 1) {
+        // 첫 번째 날짜는 시작일, 두 번째는 마감일
+        try {
+          if (dateMatches.length >= 2) {
+            info.startDate = new Date(dateMatches[0].replace(/[.\-/]/g, '-'));
+            info.deadline = new Date(dateMatches[1].replace(/[.\-/]/g, '-'));
+          } else {
+            info.deadline = new Date(dateMatches[0].replace(/[.\-/]/g, '-'));
+          }
+        } catch {
+          // 날짜 파싱 실패 무시
+        }
+      }
+    }
+  }
+
+  // ===== 기업마당 특화 파싱 =====
+  if (isBizinfo) {
+    // 본문 영역에서 추가 정보 추출
+    const contentArea = $('.view_cont, .bbs-view, .board-view').text();
+    if (contentArea && !info.description) {
+      // 본문이 충분히 길면 요약으로 사용
+      const cleanContent = contentArea.replace(/\s+/g, ' ').trim();
+      if (cleanContent.length > 100) {
+        info.description = cleanContent.substring(0, 2000);
+      }
+    }
+  }
+
+  // ===== K-Startup 특화 파싱 =====
+  if (isKStartup) {
+    // K-Startup 상세 페이지 구조 파싱
+    $('.cont_box, .view_cont').each((_, el) => {
+      const $el = $(el);
+      const text = $el.text().replace(/\s+/g, ' ').trim();
+
+      // 금액 패턴 찾기
+      if (!info.amountMax && (text.includes('지원금액') || text.includes('억원') || text.includes('만원'))) {
+        const amountRange = extractAmountRange(text);
+        if (amountRange.amountMax) {
+          info.amountMin = amountRange.amountMin ?? undefined;
+          info.amountMax = amountRange.amountMax ?? undefined;
+        }
+      }
+    });
+  }
+
+  // ===== summary 생성 =====
+  // 추출된 정보로 요약 생성
+  if (!info.summary) {
+    const parts: string[] = [];
+    if (info.target) {
+      parts.push(info.target.substring(0, 30));
+    }
+    if (info.fundingSummary) {
+      parts.push(info.fundingSummary);
+    } else if (info.amountMax) {
+      const formatted = info.amountMax >= 100000000
+        ? `${(info.amountMax / 100000000).toFixed(0)}억원`
+        : `${(info.amountMax / 10000).toFixed(0)}만원`;
+      parts.push(`최대 ${formatted}`);
+    }
+    if (parts.length > 0) {
+      info.summary = parts.join(' 대상 ');
+    }
+  }
+
+  return info;
+}
+
+/**
+ * Fetch detail page and extract file URLs + project info
  * Enhanced with retry logic and HTTP agents for Vercel compatibility
+ * NEW: 상세 페이지 HTML에서 금액, 설명 등 정보도 추출
  */
 async function fetchDetailPage(
   detailUrl: string,
   baseUrl: string
-): Promise<{ fileUrls: string[]; cookies?: string }> {
+): Promise<{ fileUrls: string[]; cookies?: string; detailInfo?: DetailPageInfo }> {
   try {
     const axios = (await import("axios")).default;
     const { load } = await import("cheerio");
@@ -548,6 +763,16 @@ async function fetchDetailPage(
 
     const $ = load(response.data);
     const fileUrls = extractFileUrls($, detailUrl);
+
+    // NEW: 상세 페이지에서 금액, 설명 등 정보 추출
+    const detailInfo = extractDetailPageInfo($, detailUrl);
+    if (detailInfo.amountMax || detailInfo.description || detailInfo.eligibility) {
+      logger.debug("Extracted detail info", {
+        hasAmount: !!detailInfo.amountMax,
+        hasDescription: !!detailInfo.description,
+        hasEligibility: !!detailInfo.eligibility,
+      });
+    }
 
     // Extract cookies from Set-Cookie header
     let cookies: string | undefined;
@@ -574,10 +799,10 @@ async function fetchDetailPage(
     });
 
     logger.debug(`Found ${absoluteUrls.length} file(s)`);
-    return { fileUrls: absoluteUrls, cookies };
+    return { fileUrls: absoluteUrls, cookies, detailInfo };
   } catch (error: any) {
     logger.error(`Failed to fetch detail page ${detailUrl}`, { errorCode: error.code || error.message });
-    return { fileUrls: [], cookies: undefined };
+    return { fileUrls: [], cookies: undefined, detailInfo: undefined };
   }
 }
 
@@ -1838,9 +2063,62 @@ async function crawlAndParse(
         logger.debug(`[${i + 1}/${projects.length}] ${project.name}`);
 
         try {
-          const { fileUrls: attachmentUrls, cookies } = await fetchDetailPage(project.detailUrl, url);
+          const { fileUrls: attachmentUrls, cookies, detailInfo } = await fetchDetailPage(project.detailUrl, url);
           projects[i].attachmentUrls = attachmentUrls;
           projects[i].cookies = cookies;
+
+          // Apply detail page info as fallback (file AI 분석보다 우선순위 낮음)
+          // 이 정보는 saveProjects에서 AI 분석 결과가 없을 때 사용됨
+          if (detailInfo) {
+            // 금액 정보 적용 (amountMax가 없는 경우에만)
+            if (!projects[i].amountMax && detailInfo.amountMax) {
+              projects[i].amountMax = BigInt(Math.round(detailInfo.amountMax));
+              if (detailInfo.amountMin) {
+                projects[i].amountMin = BigInt(Math.round(detailInfo.amountMin));
+              }
+              logger.debug(`Applied HTML amount: ${detailInfo.amountMax}`);
+            }
+            // 금액 설명 적용
+            if (!projects[i].amountDescription && detailInfo.amountDescription) {
+              projects[i].amountDescription = detailInfo.amountDescription;
+            }
+            // 설명 적용
+            if (!projects[i].description && detailInfo.description) {
+              projects[i].description = detailInfo.description;
+            }
+            // 자격요건 적용
+            if (!projects[i].eligibility && detailInfo.eligibility) {
+              projects[i].eligibility = detailInfo.eligibility;
+            }
+            // 지원대상 적용
+            if (!projects[i].target && detailInfo.target) {
+              projects[i].target = detailInfo.target;
+            }
+            // 신청절차 적용
+            if (!projects[i].applicationProcess && detailInfo.applicationProcess) {
+              projects[i].applicationProcess = detailInfo.applicationProcess;
+            }
+            // 평가기준 적용
+            if (!projects[i].evaluationCriteria && detailInfo.evaluationCriteria) {
+              projects[i].evaluationCriteria = detailInfo.evaluationCriteria;
+            }
+            // 문의처 적용
+            if (!projects[i].contactInfo && detailInfo.contactInfo) {
+              projects[i].contactInfo = detailInfo.contactInfo;
+            }
+            // 마감일 적용
+            if (!projects[i].deadline && detailInfo.deadline) {
+              projects[i].deadline = detailInfo.deadline;
+            }
+            // 시작일 적용
+            if (!projects[i].startDate && detailInfo.startDate) {
+              projects[i].startDate = detailInfo.startDate;
+            }
+            // 요약 적용 (summary가 기본값인 경우에만)
+            if (projects[i].summary === '정보 확인 필요' && detailInfo.summary) {
+              projects[i].summary = detailInfo.summary;
+            }
+          }
 
           if (attachmentUrls.length > 0) {
             const fileNames = attachmentUrls.map(fileUrl => fileUrl.split('/').pop() || fileUrl);
