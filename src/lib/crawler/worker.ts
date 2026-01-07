@@ -2672,7 +2672,7 @@ function parseTechnoparkHtml(
 
       // 제목 추출 (링크 텍스트에서 줄바꿈 제거 후 첫 줄만 사용)
       const titleLines = linkText.split(/\s+/).filter(t => t.length > 0);
-      let name = titleLines.slice(0, 10).join(" "); // 최대 10 토큰
+      const name = titleLines.slice(0, 10).join(" "); // 최대 10 토큰
 
       // 너무 짧은 제목 스킵
       if (name.length < 5) return;
