@@ -1059,3 +1059,66 @@ model ProfileBlock {
   @@index([isActive])
   @@map("profile_blocks")
 }
+
+// ============================================
+// Pipeline Management System (파이프라인 관리)
+// ============================================
+
+/// 파이프라인 작업 통합 로그 - 크롤링/파싱/임베딩 작업 기록
+model PipelineJob {
+  id String @id @default(cuid())
+
+  // 작업 유형
+  type String // crawl, parse, embed
+
+  // 상태
+  status String @default("pending") // pending, running, completed, failed
+
+  // 처리 통계
+  targetCount  Int @default(0) // 대상 항목 수
+  successCount Int @default(0) // 성공 수
+  failCount    Int @default(0) // 실패 수
+
+  // 상세 정보
+  params Json? // 작업 파라미터
+  result Json? // 작업 결과 상세
+  error  String? @db.Text // 에러 메시지
+
+  // 트리거 정보
+  triggeredBy String? // manual, cron, api
+
+  // 타임스탬프
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([type, status])
+  @@index([createdAt(sort: Desc)])
+  @@map("pipeline_jobs")
+}
+
+/// 파이프라인 자동화 설정
+model PipelineSetting {
+  id String @id @default(cuid())
+
+  // 파이프라인 유형
+  type String @unique // crawl, parse, embed
+
+  // 자동화 설정
+  enabled  Boolean @default(false) // 자동 실행 활성화
+  schedule String? // cron expression (예: "0 1 * * *" = 매일 01:00)
+
+  // 실행 설정
+  batchSize  Int @default(50) // 배치 크기
+  maxRetries Int @default(3) // 최대 재시도 횟수
+  timeout    Int @default(300000) // 타임아웃 (ms)
+
+  // 추가 옵션
+  options Json? // 파이프라인별 추가 설정
+
+  // 타임스탬프
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  @@map("pipeline_settings")
+}

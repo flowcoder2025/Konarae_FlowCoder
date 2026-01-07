@@ -14,6 +14,7 @@ import {
   Coins,
   Target,
   Copy,
+  GitBranch,
 } from "lucide-react";
 
 export default async function AdminLayout({
@@ -37,6 +38,11 @@ export default async function AdminLayout({
       name: "크롤러 관리",
       href: "/admin/crawler",
       icon: Database,
+    },
+    {
+      name: "파이프라인 관리",
+      href: "/admin/pipeline",
+      icon: GitBranch,
     },
     {
       name: "프로젝트 관리",
