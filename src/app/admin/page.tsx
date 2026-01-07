@@ -3,20 +3,32 @@
  * Overview statistics and quick access
  */
 
+import { unstable_cache } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { Card } from "@/components/ui/card";
 import { Users, FileText, Database, Activity, Coins } from "lucide-react";
 import Link from "next/link";
 
+// 어드민 대시보드 통계 캐싱 (60초)
+const getAdminStats = unstable_cache(
+  async () => {
+    const [userCount, projectCount, crawlJobCount, activeCompanyCount] =
+      await Promise.all([
+        prisma.user.count(),
+        prisma.supportProject.count(),
+        prisma.crawlJob.count(),
+        prisma.company.count({ where: { deletedAt: null } }),
+      ]);
+    return { userCount, projectCount, crawlJobCount, activeCompanyCount };
+  },
+  ["admin-dashboard-stats"],
+  { revalidate: 60, tags: ["admin-stats"] }
+);
+
 export default async function AdminDashboardPage() {
-  // Fetch statistics
-  const [userCount, projectCount, crawlJobCount, activeCompanyCount] =
-    await Promise.all([
-      prisma.user.count(),
-      prisma.supportProject.count(),
-      prisma.crawlJob.count(),
-      prisma.company.count({ where: { deletedAt: null } }),
-    ]);
+  // Fetch cached statistics
+  const { userCount, projectCount, crawlJobCount, activeCompanyCount } =
+    await getAdminStats();
 
   const stats = [
     {

@@ -366,7 +366,12 @@ export async function GET(_req: NextRequest) {
       },
     };
 
-    return NextResponse.json(response);
+    return NextResponse.json(response, {
+      headers: {
+        // 30초 서버 캐시, 60초 stale-while-revalidate
+        "Cache-Control": "public, s-maxage=30, stale-while-revalidate=60",
+      },
+    });
   } catch (error) {
     logger.error("System status error", { error });
     return NextResponse.json(

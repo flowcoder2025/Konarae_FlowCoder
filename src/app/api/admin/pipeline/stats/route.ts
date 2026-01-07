@@ -170,7 +170,12 @@ export async function GET(_req: NextRequest) {
       })),
     };
 
-    return NextResponse.json(response);
+    return NextResponse.json(response, {
+      headers: {
+        // 10초 서버 캐시, 30초 stale-while-revalidate
+        "Cache-Control": "public, s-maxage=10, stale-while-revalidate=30",
+      },
+    });
   } catch (error) {
     console.error("Pipeline stats error:", error);
     return NextResponse.json(

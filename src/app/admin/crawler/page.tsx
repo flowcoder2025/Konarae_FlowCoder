@@ -3,8 +3,8 @@
  * Manage crawl sources and jobs with live monitoring
  */
 
+import { unstable_cache } from "next/cache";
 import { prisma } from "@/lib/prisma";
-import { formatDateTimeKST } from "@/lib/utils";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle, XCircle, Clock, AlertCircle, Play, Calendar } from "lucide-react";
@@ -13,38 +13,57 @@ import { AddSourceDialog } from "@/components/admin/add-source-dialog";
 import { StartAllCrawlButton } from "@/components/admin/start-all-crawl-button";
 import { LiveMonitoringDashboard } from "@/components/admin/live-monitoring-dashboard";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { FormattedDate } from "@/components/common/formatted-date";
+
+// 크롤링 소스 캐싱 (30초)
+const getCrawlSources = unstable_cache(
+  async () => {
+    return prisma.crawlSource.findMany({
+      orderBy: { name: "asc" },
+      select: {
+        id: true,
+        name: true,
+        url: true,
+        type: true,
+        isActive: true,
+        lastCrawled: true,
+        schedule: true,
+      },
+    });
+  },
+  ["crawler-sources"],
+  { revalidate: 30, tags: ["crawler-sources"] }
+);
+
+// 최근 크롤링 작업 캐싱 (10초) - 더 자주 변경되는 데이터
+const getRecentCrawlJobs = unstable_cache(
+  async () => {
+    return prisma.crawlJob.findMany({
+      take: 10,
+      orderBy: { createdAt: "desc" },
+      include: {
+        source: {
+          select: {
+            name: true,
+          },
+        },
+      },
+    });
+  },
+  ["crawler-recent-jobs"],
+  { revalidate: 10, tags: ["crawler-jobs"] }
+);
 
 export default async function AdminCrawlerPage() {
-  // Fetch crawl sources with schedule
-  const sources = await prisma.crawlSource.findMany({
-    orderBy: { name: "asc" },
-    select: {
-      id: true,
-      name: true,
-      url: true,
-      type: true,
-      isActive: true,
-      lastCrawled: true,
-      schedule: true,
-    },
-  });
+  // Fetch cached data in parallel
+  const [sources, recentJobs] = await Promise.all([
+    getCrawlSources(),
+    getRecentCrawlJobs(),
+  ]);
 
   // Count active sources
   const activeSourceCount = sources.filter((s) => s.isActive).length;
   const scheduledSourceCount = sources.filter((s) => s.schedule).length;
-
-  // Fetch recent crawl jobs
-  const recentJobs = await prisma.crawlJob.findMany({
-    take: 10,
-    orderBy: { createdAt: "desc" },
-    include: {
-      source: {
-        select: {
-          name: true,
-        },
-      },
-    },
-  });
 
   // Count running jobs
   const runningJobCount = recentJobs.filter((j) => j.status === "running").length;
@@ -163,10 +182,10 @@ export default async function AdminCrawlerPage() {
                           </Badge>
                         </td>
                         <td className="p-4 text-sm text-muted-foreground">
-                          {formatDateTimeKST(job.startedAt)}
+                          <FormattedDate date={job.startedAt} />
                         </td>
                         <td className="p-4 text-sm text-muted-foreground">
-                          {formatDateTimeKST(job.completedAt)}
+                          <FormattedDate date={job.completedAt} />
                         </td>
                         <td className="p-4 text-right text-sm">
                           {job.projectsFound > 0 ? (
