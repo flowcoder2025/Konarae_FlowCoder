@@ -20,6 +20,11 @@ import { validateProject } from "@/lib/crawler/validators";
 import { createLogger } from "@/lib/logger";
 import { normalizeProject } from "@/lib/project-normalize";
 import { processProjectDeduplication } from "@/lib/deduplication";
+import {
+  fetchWithPlaywright,
+  isWafBlockedDomain,
+  closeBrowser,
+} from "@/lib/crawler/playwright-browser";
 
 const logger = createLogger({ lib: "crawler-worker" });
 
@@ -49,6 +54,63 @@ const httpsAgent = new https.Agent({
  */
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Get crawler headers to avoid bot detection
+ * Updated to Chrome 131 (2025.01) with realistic browser fingerprint
+ */
+function getCrawlerHeaders(
+  type: 'html' | 'json' | 'file' = 'html',
+  referer?: string,
+  cookies?: string
+): Record<string, string> {
+  // Chrome 131 User-Agent (2025.01 latest)
+  const userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
+  const baseHeaders: Record<string, string> = {
+    "User-Agent": userAgent,
+    "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Accept-Encoding": "gzip, deflate, br, zstd",
+    "Connection": "keep-alive",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
+    "Sec-Ch-Ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": '"Windows"',
+    "Upgrade-Insecure-Requests": "1",
+  };
+
+  switch (type) {
+    case 'json':
+      return {
+        ...baseHeaders,
+        "Accept": "application/json, text/plain, */*",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
+      };
+    case 'file':
+      return {
+        ...baseHeaders,
+        "Accept": "application/octet-stream, application/pdf, application/x-hwp, */*",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "same-origin",
+        ...(referer ? { "Referer": referer } : {}),
+        ...(cookies ? { "Cookie": cookies } : {}),
+      };
+    case 'html':
+    default:
+      return {
+        ...baseHeaders,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+      };
+  }
 }
 
 /**
@@ -295,9 +357,16 @@ export async function processCrawlJob(jobId: string) {
     };
 
     logger.info(`Crawl job ${jobId} completed successfully`, stats);
+
+    // Playwright 브라우저 정리
+    await closeBrowser();
+
     return stats;
   } catch (error) {
     logger.error(`Crawl job ${jobId} failed`, { error });
+
+    // Playwright 브라우저 정리 (에러 발생 시에도)
+    await closeBrowser().catch(() => {});
 
     // Update job status to failed
     await prisma.crawlJob.update({
@@ -745,23 +814,54 @@ async function fetchDetailPage(
 
     logger.debug(`Fetching detail page: ${detailUrl}`);
 
-    const response = await fetchWithRetry(
-      () => axios.get(detailUrl, {
-        timeout: CRAWLER_CONFIG.REQUEST_TIMEOUT,
-        httpAgent,
-        httpsAgent,
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-          "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
-          "Connection": "keep-alive",
-        },
-      }),
-      { retries: 2, initialDelayMs: 1000 }
-    );
+    let htmlContent: string;
+    let cookies: string | undefined;
 
-    const $ = load(response.data);
+    // WAF 차단 도메인은 Playwright 사용
+    if (isWafBlockedDomain(detailUrl)) {
+      const { html, cookies: playwrightCookies } = await fetchWithPlaywright(detailUrl, {
+        timeout: CRAWLER_CONFIG.REQUEST_TIMEOUT,
+      });
+      htmlContent = html;
+      cookies = playwrightCookies;
+    } else {
+      // 일반 도메인은 axios 사용, 실패 시 Playwright fallback
+      try {
+        const response = await fetchWithRetry(
+          () => axios.get(detailUrl, {
+            timeout: CRAWLER_CONFIG.REQUEST_TIMEOUT,
+            httpAgent,
+            httpsAgent,
+            headers: getCrawlerHeaders(),
+          }),
+          { retries: 2, initialDelayMs: 1000 }
+        );
+        htmlContent = response.data;
+
+        // Extract cookies from Set-Cookie header
+        const setCookieHeader = response.headers['set-cookie'];
+        if (setCookieHeader && Array.isArray(setCookieHeader)) {
+          cookies = setCookieHeader.map(cookie => cookie.split(';')[0]).join('; ');
+          logger.debug("Saved session cookies for file download");
+        }
+      } catch (axiosError: any) {
+        // ERR_BAD_REQUEST 또는 403/503 에러 시 Playwright fallback
+        const errorCode = axiosError.code || "";
+        const statusCode = axiosError.response?.status;
+        if (errorCode === "ERR_BAD_REQUEST" || statusCode === 403 || statusCode === 503) {
+          logger.debug(`[Playwright] Fallback for detail page: ${detailUrl}`);
+          const { html, cookies: playwrightCookies } = await fetchWithPlaywright(detailUrl, {
+            timeout: CRAWLER_CONFIG.REQUEST_TIMEOUT,
+          });
+          htmlContent = html;
+          cookies = playwrightCookies;
+        } else {
+          throw axiosError;
+        }
+      }
+    }
+
+    const $ = load(htmlContent);
     const fileUrls = extractFileUrls($, detailUrl);
 
     // NEW: 상세 페이지에서 금액, 설명 등 정보 추출
@@ -772,16 +872,6 @@ async function fetchDetailPage(
         hasDescription: !!detailInfo.description,
         hasEligibility: !!detailInfo.eligibility,
       });
-    }
-
-    // Extract cookies from Set-Cookie header
-    let cookies: string | undefined;
-    const setCookieHeader = response.headers['set-cookie'];
-    if (setCookieHeader && Array.isArray(setCookieHeader)) {
-      // Convert Set-Cookie array to Cookie header format
-      // Example: ['PHPSESSID=xxx; path=/; HttpOnly', 'other=yyy'] → 'PHPSESSID=xxx; other=yyy'
-      cookies = setCookieHeader.map(cookie => cookie.split(';')[0]).join('; ');
-      logger.debug("Saved session cookies for file download");
     }
 
     // Convert relative URLs to absolute
@@ -1214,19 +1304,7 @@ async function downloadFile(url: string, cookies?: string): Promise<DownloadResu
         maxContentLength: 50 * 1024 * 1024, // 50MB limit
         httpAgent,
         httpsAgent,
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          "Accept": "application/octet-stream, application/pdf, application/x-hwp, */*",
-          "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
-          "Accept-Encoding": "gzip, deflate, br",
-          "Connection": "keep-alive",
-          "Referer": referer, // Referer 헤더 추가 (일부 사이트 필수)
-          "Sec-Fetch-Dest": "document",
-          "Sec-Fetch-Mode": "navigate",
-          "Sec-Fetch-Site": "same-origin",
-          ...(cookies ? { "Cookie": cookies } : {}),
-        },
+        headers: getCrawlerHeaders('file', referer, cookies),
         // 리다이렉트 따라가기
         maxRedirects: 5,
       }),
@@ -1962,11 +2040,11 @@ async function processProjectFiles(
  * Crawler configuration
  * Railway 워커 환경 (타임아웃 제한 없음)
  *
- * 시간 기반 필터링: 7일(168시간) 이내 등록된 공고만 수집
+ * 시간 기반 필터링: 14일(336시간) 이내 등록된 공고만 수집
  * 페이지 제한 없음: 시간 필터에 의해 자연스럽게 종료
  *
- * NOTE: 24시간 필터가 너무 엄격해서 크롤러가 매일 정확히 실행되지 않으면
- * 공고를 놓치는 문제가 있었음. 7일로 변경하여 안정성 확보.
+ * NOTE: 7일 필터도 일부 사이트에서 공고를 놓치는 경우가 있어
+ * 14일로 변경하여 더 많은 공고를 수집함.
  */
 const CRAWLER_CONFIG = {
   // 페이지네이션 설정 (Railway: 무제한)
@@ -1975,7 +2053,7 @@ const CRAWLER_CONFIG = {
   // MAX_PROJECTS 제거: 시간 필터만으로 제어
 
   // 시간 필터 설정
-  HOURS_FILTER: 168,       // 7일(168시간) 이내 등록된 공고 수집 (기존: 24시간)
+  HOURS_FILTER: 720,       // 30일(720시간) 이내 등록된 공고 수집 (기존: 14일=336시간)
 
   // 요청 간격 (rate limiting - 증가시켜 안정성 향상)
   PAGE_DELAY_MS: 1000,     // 500 → 1000 (서버 부하 감소)
@@ -1989,12 +2067,38 @@ const CRAWLER_CONFIG = {
 
 /**
  * Check if upload date is within time filter
- * 기업마당 등록일 형식: "2025-12-05" (YYYY-MM-DD)
+ * 지원 형식:
+ * - "2025-12-05" (YYYY-MM-DD) - 기업마당
+ * - "2025.12.05" (YYYY.MM.DD) - 대전테크노파크 등
+ * - "25-12-05" (YY-MM-DD)
+ * - "25.12.05" (YY.MM.DD)
  */
 function isWithinTimeFilter(dateStr: string, hoursFilter: number): boolean {
   try {
-    // 날짜 파싱
-    const uploadDate = new Date(dateStr);
+    if (!dateStr || dateStr.trim() === '') {
+      return true; // 날짜 없으면 포함
+    }
+
+    // 날짜 문자열 정규화
+    let normalizedDate = dateStr.trim();
+
+    // YYYY.MM.DD → YYYY-MM-DD 변환
+    normalizedDate = normalizedDate.replace(/(\d{4})\.(\d{2})\.(\d{2})/, '$1-$2-$3');
+
+    // YY.MM.DD → 20YY-MM-DD 변환
+    normalizedDate = normalizedDate.replace(/^(\d{2})\.(\d{2})\.(\d{2})$/, '20$1-$2-$3');
+
+    // YY-MM-DD → 20YY-MM-DD 변환
+    normalizedDate = normalizedDate.replace(/^(\d{2})-(\d{2})-(\d{2})$/, '20$1-$2-$3');
+
+    // 날짜만 추출 (시간 부분 제거)
+    const dateMatch = normalizedDate.match(/\d{4}-\d{2}-\d{2}/);
+    if (!dateMatch) {
+      logger.debug(`Date pattern not found in: ${dateStr}, including anyway`);
+      return true;
+    }
+
+    const uploadDate = new Date(dateMatch[0]);
     if (isNaN(uploadDate.getTime())) {
       logger.warn(`Invalid date format: ${dateStr}, including anyway`);
       return true; // 파싱 실패시 포함
@@ -2087,12 +2191,7 @@ async function crawlAndParse(
           timeout: CRAWLER_CONFIG.REQUEST_TIMEOUT,
           httpAgent,
           httpsAgent,
-          headers: {
-            "User-Agent":
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "application/json,*/*",
-            "Connection": "keep-alive",
-          },
+          headers: getCrawlerHeaders('json'),
         }),
         { retries: 2 }
       );
@@ -2125,23 +2224,47 @@ async function crawlAndParse(
         logger.info(`[${siteType}][Page ${pageIndex}] Fetching: ${pageUrl}`);
 
         try {
-          const response = await fetchWithRetry(
-            () => axios.get(pageUrl, {
-              timeout: CRAWLER_CONFIG.REQUEST_TIMEOUT,
-              httpAgent,
-              httpsAgent,
-              headers: {
-                "User-Agent":
-                  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
-                "Connection": "keep-alive",
-              },
-            }),
-            { retries: 2, initialDelayMs: 1000 }
-          );
+          let htmlContent: string;
 
-          const $ = load(response.data);
+          // WAF 차단 도메인은 Playwright 사용
+          if (isWafBlockedDomain(pageUrl)) {
+            logger.info(`[Playwright] Using browser for WAF-blocked domain: ${pageUrl}`);
+            const { html } = await fetchWithPlaywright(pageUrl, {
+              timeout: CRAWLER_CONFIG.REQUEST_TIMEOUT,
+              waitForSelector: "table",
+            });
+            htmlContent = html;
+          } else {
+            // 일반 도메인은 axios 사용, 실패 시 Playwright fallback
+            try {
+              const response = await fetchWithRetry(
+                () => axios.get(pageUrl, {
+                  timeout: CRAWLER_CONFIG.REQUEST_TIMEOUT,
+                  httpAgent,
+                  httpsAgent,
+                  headers: getCrawlerHeaders(),
+                }),
+                { retries: 2, initialDelayMs: 1000 }
+              );
+              htmlContent = response.data;
+            } catch (axiosError: any) {
+              // ERR_BAD_REQUEST 또는 403/503 에러 시 Playwright fallback
+              const errorCode = axiosError.code || "";
+              const statusCode = axiosError.response?.status;
+              if (errorCode === "ERR_BAD_REQUEST" || statusCode === 403 || statusCode === 503) {
+                logger.info(`[Playwright] Fallback for ${pageUrl} (${errorCode || statusCode})`);
+                const { html } = await fetchWithPlaywright(pageUrl, {
+                  timeout: CRAWLER_CONFIG.REQUEST_TIMEOUT,
+                  waitForSelector: "table",
+                });
+                htmlContent = html;
+              } else {
+                throw axiosError;
+              }
+            }
+          }
+
+          const $ = load(htmlContent);
           const pageProjects = parseHtmlContentWithDateFilter($, url, CRAWLER_CONFIG.HOURS_FILTER);
 
           logger.debug(`Found ${pageProjects.length} projects (within ${CRAWLER_CONFIG.HOURS_FILTER}h filter)`);
@@ -2409,11 +2532,18 @@ function parseKStartupHtml(
 
 /**
  * Detect site type from URL
+ * 개별 테크노파크 도메인도 인식 (예: btp.or.kr, gtp.or.kr, seoultp.or.kr 등)
  */
 function detectSiteType(url: string): 'bizinfo' | 'kstartup' | 'technopark' | 'unknown' {
   if (url.includes('bizinfo.go.kr')) return 'bizinfo';
   if (url.includes('k-startup.go.kr')) return 'kstartup';
   if (url.includes('technopark.kr')) return 'technopark';
+
+  // 개별 테크노파크 도메인 인식 (tp.or.kr 패턴)
+  // 예: btp.or.kr, gtp.or.kr, seoultp.or.kr, itp.or.kr, gwtp.or.kr 등
+  const tpDomainPattern = /(?:^|[./])([a-z]+tp[i]?\.or\.kr)/i;
+  if (tpDomainPattern.test(url)) return 'technopark';
+
   return 'unknown';
 }
 
@@ -2500,8 +2630,13 @@ function regionToTechnoparkOrg(region: string): string {
 
 /**
  * Parse 테크노파크 HTML content
- * 테크노파크 테이블 구조 파서 (technopark.kr)
- * 테이블 구조: [번호, 지역, 제목, 작성자, 등록일, 조회]
+ * 테크노파크 테이블 구조 파서
+ *
+ * 지원 구조:
+ * 1. central - 한국테크노파크진흥원 (technopark.kr): [번호, 지역, 제목, 작성자, 등록일, 조회]
+ * 2. individual - 부산테크노파크 (btp.or.kr): [번호, 사업공고명, 접수기간, 상태, 작성자, 게시일, 조회]
+ * 3. simple - 강원테크노파크 등: [번호, 제목, 작성자, 등록일, 조회수, 첨부]
+ * 4. generic - 기타 사이트: 링크+날짜 패턴으로 자동 감지
  */
 function parseTechnoparkHtml(
   $: ReturnType<typeof import("cheerio")["load"]>,
@@ -2510,21 +2645,100 @@ function parseTechnoparkHtml(
 ): CrawledProject[] {
   const projects: CrawledProject[] = [];
 
-  // 테크노파크 테이블 셀렉터
+  // URL에서 지역 추출 (개별 테크노파크용)
+  const regionFromUrl = extractRegionFromTechnoparkUrl(sourceUrl);
+  logger.debug(`[Technopark] URL: ${sourceUrl}, Extracted region: ${regionFromUrl}`);
+
+  // 테이블 구조 감지
+  const tableType = detectTechnoparkTableType($);
+  logger.info(`[Technopark] Detected table type: ${tableType} for ${sourceUrl}`);
+
+  // ========================================
+  // 전북테크노파크: div 기반 구조 처리 (테이블 없음)
+  // 구조: .mb_s_list > .mb_li_box (a href="javascript:doAction('detail','ID','')")
+  // ========================================
+  const jbtpItems = $(".mb_s_list .mb_li_box");
+  if (jbtpItems.length > 0) {
+    logger.info(`[Technopark] 전북TP div structure detected: ${jbtpItems.length} items`);
+
+    jbtpItems.each((_idx, item) => {
+      const $item = $(item);
+      const $link = $item.find("a").first();
+
+      if (!$link.length) return;
+
+      const href = $link.attr("href") || "";
+      const linkText = $link.text().trim();
+
+      // 제목 추출 (링크 텍스트에서 줄바꿈 제거 후 첫 줄만 사용)
+      const titleLines = linkText.split(/\s+/).filter(t => t.length > 0);
+      let name = titleLines.slice(0, 10).join(" "); // 최대 10 토큰
+
+      // 너무 짧은 제목 스킵
+      if (name.length < 5) return;
+
+      // doAction('detail','202511002','') 패턴에서 ID 추출
+      const doActionMatch = href.match(/doAction\s*\(\s*['"]detail['"]\s*,\s*['"]([^'"]+)['"]/);
+      let detailUrl = "";
+      if (doActionMatch) {
+        const pblancNo = doActionMatch[1];
+        // 상세 URL 구성: baseUrl + view page + parameter
+        try {
+          const baseUrl = new URL(sourceUrl);
+          const basePath = baseUrl.pathname.replace(/_list_/, "_view_"); // list → view
+          detailUrl = `${baseUrl.origin}${basePath}?PBLANC_NO=${pblancNo}`;
+        } catch (e) {
+          // URL 파싱 실패 시 무시
+        }
+      }
+
+      // 날짜는 전북TP에서 직접 표시되지 않음 - 현재 날짜 사용
+      const today = new Date();
+      const uploadDate = today.toISOString().split("T")[0];
+
+      if (name && detailUrl) {
+        projects.push({
+          name: name.substring(0, 200),
+          organization: regionToTechnoparkOrg(regionFromUrl),
+          region: regionFromUrl || "전북",
+          category: "지원사업",
+          target: "중소기업", // 기본값
+          summary: name.substring(0, 200), // 기본값은 제목
+          sourceUrl,
+          detailUrl,
+        });
+      }
+    });
+
+    logger.info(`[Technopark] 전북TP parsed ${projects.length} projects`);
+    return projects;
+  }
+
+  // 테크노파크 테이블 셀렉터 - 더 많은 패턴 지원
   const selectors = [
+    "table.board-list tbody tr",
+    "table.list tbody tr",
     "table tbody tr",
     ".board-list tbody tr",
+    ".list-wrap tbody tr",
     "tbody tr",
-    "tr",
+    "table tr",
   ];
 
   for (const selector of selectors) {
     const rows = $(selector);
     if (rows.length > 0) {
+      logger.debug(`[Technopark] Selector "${selector}": ${rows.length} rows`);
+
       rows.each((_idx, element) => {
-        // Skip header row
+        // Skip header row (th만 있고 td가 없는 경우)
+        const thCount = $(element).find('th').length;
+        const tdCount = $(element).find('td').length;
+        if (thCount > 0 && tdCount === 0) {
+          return; // Pure header row
+        }
         const headerText = $(element).text().toLowerCase();
-        if (headerText.includes('번호') && headerText.includes('제목')) {
+        if (headerText.includes('번호') && (headerText.includes('제목') || headerText.includes('공고명'))) {
           return;
         }
 
@@ -2532,54 +2746,256 @@ function parseTechnoparkHtml(
         const cells = $row.find("td");
         if (cells.length < 3) return;
 
+        // Skip notice/pinned rows - 단, 실제 데이터가 있는 행은 파싱
+        // 강원테크노파크 등 모든 공고가 "공지"로 표시되는 경우가 있음
+        const firstCellText = $(cells[0]).text().trim();
+        const hasLink = $row.find('a[href]').length > 0;
+        const hasDate = $row.text().match(/\d{4}[.\-\/]\d{2}[.\-\/]\d{2}/);
+
+        // 공지/필독이지만 링크와 날짜가 없는 경우만 스킵 (순수 공지 헤더)
+        if ((firstCellText === '공지' || firstCellText === '필독' || firstCellText === 'notice' || firstCellText === 'Notice')
+            && !hasLink && !hasDate) {
+          return;
+        }
+
         let name = "";
-        let region = "";
+        let region = regionFromUrl; // URL에서 추출한 지역 기본값
         let detailUrl = "";
         let uploadDate = "";
 
-        // 테크노파크 테이블 구조: [번호, 지역, 제목, 작성자, 등록일, 조회]
-        cells.each((cellIdx, cell) => {
-          const text = $(cell).text().trim();
+        if (tableType === 'individual') {
+          // 부산테크노파크 구조: [번호, 사업공고명, 접수기간, 상태, 작성자, 게시일, 조회]
+          // 광주테크노파크 구조: [사업명, 접수기간, 담당자, 조회수, 접수상태] - 번호가 TH에 있음
+          cells.each((cellIdx, cell) => {
+            const text = $(cell).text().trim();
 
-          // Cell 1: 지역 (예: "울산", "TP진흥회", "경기")
-          if (cellIdx === 1 && text.length >= 2 && text.length < 20) {
-            region = text;
-          }
+            // Cell 0~2: 사업공고명 (링크 포함) - 첫 번째 링크 셀 사용
+            // 부산TP: cellIdx 1, 광주TP: cellIdx 0, 대구TP: cellIdx 2
+            if (cellIdx <= 2 && $(cell).find("a").length > 0 && !name) {
+              const $link = $(cell).find("a").first();
+              name = $link.text().trim();
+              // 중복된 텍스트 제거 (부산TP는 제목이 2번 반복됨)
+              if (name.length > 10) {
+                const half = Math.floor(name.length / 2);
+                const firstHalf = name.substring(0, half);
+                const secondHalf = name.substring(half);
+                if (firstHalf === secondHalf) {
+                  name = firstHalf;
+                }
+              }
 
-          // Cell 2: 제목 (링크 포함)
-          if (cellIdx === 2 && $(cell).find("a").length > 0) {
-            const $link = $(cell).find("a").first();
-            name = $link.text().trim();
-
-            const href = $link.attr("href");
-            if (href) {
-              if (href.startsWith("http")) {
-                detailUrl = href;
-              } else if (href.startsWith("/")) {
-                const baseUrl = new URL(sourceUrl);
-                detailUrl = `${baseUrl.protocol}//${baseUrl.host}${href}`;
+              const href = $link.attr("href");
+              // href가 유효한 경우 (# 또는 javascript:로 시작하지 않음)
+              if (href && !href.startsWith("#") && !href.startsWith("javascript:")) {
+                detailUrl = resolveTechnoparkUrl(sourceUrl, href);
               } else {
-                // 상대 경로
-                const baseUrl = new URL(sourceUrl);
-                detailUrl = `${baseUrl.protocol}//${baseUrl.host}/${href}`;
+                // 대구TP: onclick에서 fn_egov_inqire_notice 패턴 추출
+                // 패턴: fn_egov_inqire_notice('nttId', 'bbsId', 'frstRegisterId')
+                const onclick = $link.attr("onclick") || "";
+                const fnMatch = onclick.match(/fn_egov_inqire_notice\s*\(\s*'([^']+)'\s*,\s*'([^']+)'/);
+                if (fnMatch) {
+                  const [, nttId, bbsId] = fnMatch;
+                  try {
+                    const baseUrl = new URL(sourceUrl);
+                    detailUrl = `${baseUrl.origin}/bbs/BoardControllView.do?nttId=${nttId}&bbsId=${bbsId}`;
+                  } catch (e) { /* ignore */ }
+                }
+
+                // 울산TP: data-seq 속성에서 ID 추출
+                // 패턴: <a href="#divView" data-seq="433"> → {sourceUrl}&task=view&seq=433
+                if (!detailUrl) {
+                  const dataSeq = $link.attr("data-seq");
+                  if (dataSeq) {
+                    try {
+                      const baseUrl = new URL(sourceUrl);
+                      // 기존 쿼리 파라미터 유지하고 task=view&seq=XXX 추가
+                      baseUrl.searchParams.set("task", "view");
+                      baseUrl.searchParams.set("seq", dataSeq);
+                      detailUrl = baseUrl.toString();
+                    } catch (e) { /* ignore */ }
+                  }
+                }
               }
             }
-          }
 
-          // Cell 4: 등록일 (YYYY.MM.DD 또는 YYYY-MM-DD 형식)
-          if (cellIdx === 4) {
-            const dateMatch = text.match(/\d{4}[.\-]\d{2}[.\-]\d{2}/);
-            if (dateMatch) {
-              // YYYY.MM.DD → YYYY-MM-DD 형식으로 변환
-              uploadDate = dateMatch[0].replace(/\./g, '-');
+            // 날짜 찾기 - 게시일 또는 접수기간 (다양한 위치)
+            // 부산TP: cellIdx 5, 광주TP: cellIdx 1에 접수기간 있음
+            if (!uploadDate) {
+              const dateMatch = text.match(/\d{4}[.\-]\d{2}[.\-]\d{2}/);
+              if (dateMatch) {
+                uploadDate = dateMatch[0].replace(/\./g, '-');
+              }
             }
-          }
-        });
+          });
+        } else if (tableType === 'central') {
+          // central 타입: 지역 열이 있는 테이블
+          // 한국테크노파크진흥원: [번호, 지역, 제목, 작성자, 등록일, 조회]
+          // 경기테크노파크: [No, 공고 제목, 사업유형, 지역, 주최기관, 접수 기간]
+          cells.each((cellIdx, cell) => {
+            const text = $(cell).text().trim();
 
-        // 등록일 기반 필터링 - 날짜가 없거나 필터 밖이면 스킵
-        // NOTE: 이전 버그 - uploadDate가 빈 문자열이면 필터 체크가 스킵되어
-        // 모든 항목이 포함됨 (1000개 발견 원인)
-        if (!uploadDate || !isWithinTimeFilter(uploadDate, hoursFilter)) {
+            // 제목 찾기: 링크가 있는 셀 (다양한 위치 지원)
+            // cellIdx 1~3 범위에서 링크가 있는 셀을 제목으로 사용
+            if (cellIdx >= 1 && cellIdx <= 3 && $(cell).find("a").length > 0 && !name) {
+              const $link = $(cell).find("a").first();
+              name = $link.text().trim();
+
+              const href = $link.attr("href");
+              // href가 "#none", "#", "javascript:" 등이면 onclick에서 ID 추출
+              if (href && href !== "#none" && href !== "#" && !href.startsWith("javascript:")) {
+                detailUrl = resolveTechnoparkUrl(sourceUrl, href);
+              } else {
+                // onclick에서 ID 추출 시도 (예: fn_goView('172142'))
+                const onclick = $link.attr("onclick") || $(cell).attr("onclick");
+                if (onclick) {
+                  const idMatch = onclick.match(/['"](\d{5,})['"]|View\((\d+)\)|Detail\((\d+)\)|goView\((\d+)\)/i);
+                  if (idMatch) {
+                    const extractedId = idMatch[1] || idMatch[2] || idMatch[3] || idMatch[4];
+                    // 상세 URL 패턴 추측
+                    const baseUrl = new URL(sourceUrl);
+                    const viewPath = sourceUrl.replace(/List\.do|list\.do/, 'View.do');
+                    detailUrl = `${viewPath}?seq=${extractedId}`;
+                  }
+                }
+              }
+            }
+
+            // 지역 찾기: "지역" 헤더 아래 또는 짧은 지역명
+            // 한국TP: cellIdx 1, 경기TP: cellIdx 3
+            if (!region && text.length >= 2 && text.length < 20) {
+              // 지역 패턴 확인 (시/도 이름 또는 "전체" 포함)
+              if (text.includes('전체') || text.match(/^(서울|경기|인천|강원|충북|충남|대전|세종|전북|전남|광주|경북|경남|대구|부산|울산|제주|전국)/)) {
+                region = text;
+              }
+            }
+
+            // 날짜 찾기: 다양한 위치에서 날짜 패턴 검색
+            if (!uploadDate) {
+              const dateMatch = text.match(/\d{4}[.\-]\d{2}[.\-]\d{2}/);
+              if (dateMatch) {
+                uploadDate = dateMatch[0].replace(/\./g, '-');
+              }
+            }
+          });
+        } else if (tableType === 'simple') {
+          // 강원테크노파크 구조: [번호, 제목, 작성자, 등록일, 조회수, 첨부]
+          // 경기대진테크노파크: [번호, 제목, 작성일, 조회수]
+          // 인천테크노파크: [번호, 분야, 제목, 작성일, 진행상태, 조회수]
+          // 서울테크노파크: [번호, 제목, 작성자, 등록일, 조회수]
+          cells.each((cellIdx, cell) => {
+            const text = $(cell).text().trim();
+
+            // Cell 1-3: 제목 (링크 포함) - 다양한 위치 지원
+            if (cellIdx >= 1 && cellIdx <= 3 && $(cell).find("a").length > 0 && !name) {
+              const $link = $(cell).find("a").first();
+              const linkText = $link.text().trim();
+
+              // 제목은 최소 5글자 이상이고 숫자만 있는 게 아님
+              if (linkText.length >= 5 && !/^\d+$/.test(linkText)) {
+                name = linkText;
+
+                const href = $link.attr("href");
+                if (href && !href.startsWith("javascript:")) {
+                  detailUrl = resolveTechnoparkUrl(sourceUrl, href);
+                } else if (href && href.startsWith("javascript:")) {
+                  // javascript 링크에서 ID 추출
+                  // fncShow('10240'), goBoardView('/user/nd19746.do','View','00003954')
+                  const idMatch = href.match(/['"](\d{4,})['"]/);
+                  if (idMatch) {
+                    const extractedId = idMatch[1];
+                    try {
+                      const baseUrl = new URL(sourceUrl);
+                      // 인천TP: intro.asp?tmid=13 → intro.asp?tmid=13&seq=10240
+                      if (sourceUrl.includes('.asp')) {
+                        const tmid = baseUrl.searchParams.get('tmid');
+                        detailUrl = `${baseUrl.origin}${baseUrl.pathname}?tmid=${tmid}&seq=${extractedId}`;
+                      }
+                      // 서울TP: /user/nd19746.do → nd19746.do?mId=&mode=view&key=00003954
+                      else if (sourceUrl.includes('.do')) {
+                        detailUrl = `${baseUrl.origin}${baseUrl.pathname}?mode=view&key=${extractedId}`;
+                      }
+                    } catch (e) {
+                      // URL 파싱 실패시 무시
+                    }
+                  }
+                }
+              }
+            }
+
+            // 날짜 찾기 (셀 인덱스 2-5 범위에서 - 인천TP는 cellIdx 3)
+            if (cellIdx >= 2 && cellIdx <= 4 && !uploadDate) {
+              // 4자리 연도 형식 (YYYY-MM-DD, YYYY.MM.DD)
+              let dateMatch = text.match(/\d{4}[.\-]\d{2}[.\-]\d{2}/);
+              if (dateMatch) {
+                uploadDate = dateMatch[0].replace(/\./g, '-');
+              } else {
+                // 2자리 연도 형식 (YY-MM-DD, YY.MM.DD)
+                dateMatch = text.match(/(\d{2})[.\-](\d{2})[.\-](\d{2})/);
+                if (dateMatch) {
+                  uploadDate = `20${dateMatch[1]}-${dateMatch[2]}-${dateMatch[3]}`;
+                }
+              }
+            }
+          });
+        } else {
+          // generic: 자동 감지 - 링크가 있는 셀에서 제목, 날짜 패턴이 있는 셀에서 날짜 추출
+          // 경남TP: a 태그 없이 td에 onclick 사용
+          cells.each((cellIdx, cell) => {
+            const text = $(cell).text().trim();
+            const $link = $(cell).find("a").first();
+
+            // 1. 링크가 있고 제목이 아직 없으면 제목으로 사용
+            if ($link.length > 0 && !name) {
+              const linkText = $link.text().trim();
+              // 제목은 최소 3글자 이상이고 숫자만 있는 게 아님
+              if (linkText.length >= 3 && !/^\d+$/.test(linkText)) {
+                name = linkText;
+                const href = $link.attr("href");
+                if (href) {
+                  detailUrl = resolveTechnoparkUrl(sourceUrl, href);
+                }
+              }
+            }
+
+            // 2. 링크가 없지만 td에 onclick이 있는 경우 (경남TP 패턴)
+            // goPage('S', null, '/biz/applyInfo/3573')
+            if (!name && text.length >= 5 && !/^\d+$/.test(text)) {
+              const onclick = $(cell).attr("onclick");
+              if (onclick) {
+                // 경로 추출: goPage(..., '/biz/applyInfo/3573') 또는 location.href='...'
+                const pathMatch = onclick.match(/['"](\/(biz|board|sub|view)[^'"]+)['"]/);
+                if (pathMatch) {
+                  name = text;
+                  try {
+                    const baseUrl = new URL(sourceUrl);
+                    detailUrl = `${baseUrl.origin}${pathMatch[1]}`;
+                  } catch (e) {
+                    // URL 파싱 실패시 무시
+                  }
+                }
+              }
+            }
+
+            // 날짜 패턴 찾기 (아직 날짜가 없을 때)
+            if (!uploadDate) {
+              // 4자리 연도 형식 (YYYY-MM-DD, YYYY.MM.DD)
+              let dateMatch = text.match(/\d{4}[.\-]\d{2}[.\-]\d{2}/);
+              if (dateMatch) {
+                uploadDate = dateMatch[0].replace(/\./g, '-');
+              } else {
+                // 2자리 연도 형식 (YY-MM-DD, YY.MM.DD)
+                dateMatch = text.match(/(\d{2})[.\-](\d{2})[.\-](\d{2})/);
+                if (dateMatch) {
+                  uploadDate = `20${dateMatch[1]}-${dateMatch[2]}-${dateMatch[3]}`;
+                }
+              }
+            }
+          });
+        }
+
+        // 등록일 기반 필터링 - 날짜가 있고 필터 밖이면 스킵
+        // 날짜가 없으면 포함 (날짜 정보가 없는 사이트 대응)
+        if (uploadDate && !isWithinTimeFilter(uploadDate, hoursFilter)) {
           return;
         }
 
@@ -2622,8 +3038,258 @@ function parseTechnoparkHtml(
     }
   }
 
-  logger.debug(`Technopark parser found ${projects.length} projects`);
+  // 테이블 파싱 결과가 없으면 카드/리스트 구조 시도
+  if (projects.length === 0) {
+    logger.info(`[Technopark] No table results, trying card/list parser for ${sourceUrl}`);
+    const cardListProjects = parseTechnoparkCardList($, sourceUrl, hoursFilter);
+    if (cardListProjects.length > 0) {
+      logger.info(`[Technopark] Card/list parser found ${cardListProjects.length} projects`);
+      return cardListProjects;
+    }
+  }
+
+  logger.info(`[Technopark] Parser found ${projects.length} projects for ${tableType} type`);
   return projects;
+}
+
+/**
+ * 카드/리스트 구조 테크노파크 파서
+ * 테이블이 없는 사이트 (경기대진TP, 세종TP, 제주TP, 충남TP 등) 처리
+ */
+function parseTechnoparkCardList(
+  $: ReturnType<typeof import("cheerio")["load"]>,
+  sourceUrl: string,
+  hoursFilter: number
+): CrawledProject[] {
+  const projects: CrawledProject[] = [];
+  const regionFromUrl = extractRegionFromTechnoparkUrl(sourceUrl);
+
+  // 카드/리스트 셀렉터 (우선순위 순서)
+  const selectors = [
+    // 경기대진TP: div 기반 테이블 (.colgroup)
+    '.tbl.type_bbs .colgroup',
+    '.board-list li',
+    'ul.list li',
+    '.list-wrap li',
+    '.bbs-list li',
+    '.board-wrap li',
+    '[class*="board"] > ul > li',
+    '[class*="list"] > li',
+    '.card-list > .card',
+    '.item-list > .item',
+    'ul.bbs li',
+    '.view-list li',
+    'article.list-item',
+  ];
+
+  for (const selector of selectors) {
+    const items = $(selector);
+    if (items.length === 0) continue;
+
+    logger.debug(`[Technopark Card] Selector "${selector}": ${items.length} items`);
+
+    items.each((_idx, element) => {
+      const $item = $(element);
+      const text = $item.text().trim();
+
+      // 빈 항목 스킵
+      if (text.length < 10) return;
+
+      // 공지사항 스킵
+      if (text.startsWith('공지') || text.includes('[공지]') || text.includes('필독')) {
+        return;
+      }
+
+      // 제목 링크 찾기
+      const $link = $item.find('a').first();
+      if ($link.length === 0) return;
+
+      const name = $link.text().trim();
+      if (!name || name.length < 5) return;
+
+      // 상세 URL 추출
+      let detailUrl = '';
+      const href = $link.attr('href');
+      if (href) {
+        detailUrl = resolveTechnoparkUrl(sourceUrl, href);
+      }
+
+      // 날짜 추출 (다양한 패턴)
+      let uploadDate = '';
+      const datePatterns = [
+        /(\d{4})[.\-](\d{2})[.\-](\d{2})/, // 2025-01-07 or 2025.01.07
+        /(\d{2})[.\-](\d{2})[.\-](\d{2})/, // 25-01-07 or 25.01.07
+        /(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일/, // 2025년 1월 7일
+      ];
+
+      for (const pattern of datePatterns) {
+        const match = text.match(pattern);
+        if (match) {
+          if (match[1].length === 4) {
+            uploadDate = `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}`;
+          } else {
+            uploadDate = `20${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}`;
+          }
+          break;
+        }
+      }
+
+      // 날짜 필터 적용
+      if (uploadDate && !isWithinTimeFilter(uploadDate, hoursFilter)) {
+        return;
+      }
+
+      // 중복 체크
+      const isDuplicate = projects.some(
+        p => p.name === name || (p.detailUrl && p.detailUrl === detailUrl)
+      );
+      if (isDuplicate) return;
+
+      const rawProject: CrawledProject = {
+        name,
+        organization: `${regionFromUrl}테크노파크`,
+        category: "기타",
+        target: "중소기업",
+        region: regionFromUrl || "전국",
+        summary: name,
+        sourceUrl,
+        detailUrl: detailUrl || undefined,
+        isPermanent: false,
+      };
+
+      const validatedProject = validateProject(rawProject);
+      projects.push(validatedProject);
+    });
+
+    // 결과 있으면 중단
+    if (projects.length > 0) {
+      break;
+    }
+  }
+
+  return projects;
+}
+
+/**
+ * URL에서 지역 추출 (개별 테크노파크 도메인용)
+ */
+function extractRegionFromTechnoparkUrl(url: string): string {
+  // 긴 prefix부터 매칭해야 함 (dgtp > gtp 순서로 확인)
+  // 배열로 변경하여 순서 보장
+  const domainRegionMap: [string, string][] = [
+    // 긴 것부터 (substring 문제 방지)
+    ['seoultp', '서울'],
+    ['technopark', '전국'],
+    ['jejutp', '제주'],
+    ['gdtpi', '경기'], // 경기대진
+    ['gdtp', '경기'],  // 경기대진
+    ['dgtp', '대구'],  // dgtp > gtp 먼저
+    ['gjtp', '광주'],  // gjtp > jtp 먼저
+    ['gntp', '경남'],
+    ['gwtp', '강원'],
+    ['gbtp', '경북'],
+    ['cbtp', '충북'],
+    ['djtp', '대전'],
+    ['sjtp', '세종'],
+    ['jbtp', '전북'],
+    ['jntp', '전남'],
+    ['gtp', '경기'],   // 짧은 것은 나중에
+    ['itp', '인천'],
+    ['ctp', '충남'],
+    ['btp', '부산'],
+    ['utp', '울산'],
+    ['ptp', '경북'],   // 포항
+  ];
+
+  try {
+    const hostname = new URL(url).hostname.toLowerCase();
+    for (const [prefix, region] of domainRegionMap) {
+      if (hostname.includes(prefix)) {
+        return region;
+      }
+    }
+  } catch {
+    // URL 파싱 실패
+  }
+
+  return '전국';
+}
+
+/**
+ * 테크노파크 테이블 구조 타입 감지
+ * - 'central': 한국테크노파크진흥원 (지역 열 있음)
+ * - 'individual': 부산테크노파크 (접수기간, 상태 열 있음)
+ * - 'simple': 강원테크노파크 등 (번호, 제목, 작성자, 등록일, 조회수)
+ * - 'generic': 기타 (링크+날짜 패턴으로 자동 감지)
+ */
+function detectTechnoparkTableType($: ReturnType<typeof import("cheerio")["load"]>): 'central' | 'individual' | 'simple' | 'generic' {
+  // 모든 테이블 헤더 텍스트 수집
+  const headerTexts: string[] = [];
+  $('table thead tr th, table thead tr td, table tr th').each((_, el) => {
+    headerTexts.push($(el).text().trim().toLowerCase());
+  });
+  const headerText = headerTexts.join(' ');
+
+  logger.debug(`[Technopark] Header text: "${headerText.substring(0, 100)}"`);
+
+  // 한국테크노파크진흥원 특징: 지역 열이 있음
+  if (headerText.includes('지역')) {
+    return 'central';
+  }
+
+  // 부산테크노파크 특징: 접수기간, 상태 열이 동시에 있음
+  if (headerText.includes('접수기간') && headerText.includes('상태')) {
+    return 'individual';
+  }
+
+  // 강원테크노파크, 경기대진 등: 번호, 제목, 작성자, (등록일/게시일), 조회수
+  // 또는: 번호, 제목, 작성자, 등록일, 조회, 첨부
+  if (headerText.includes('번호') &&
+      (headerText.includes('제목') || headerText.includes('공고명')) &&
+      (headerText.includes('등록일') || headerText.includes('게시일') || headerText.includes('작성일'))) {
+    return 'simple';
+  }
+
+  // 첫 번째 row도 확인 (테이블에 thead가 없는 경우)
+  const firstRowText = $('table tr').first().text().toLowerCase();
+  if (firstRowText.includes('지역')) {
+    return 'central';
+  }
+  if (firstRowText.includes('접수기간') && firstRowText.includes('상태')) {
+    return 'individual';
+  }
+  if (firstRowText.includes('번호') && firstRowText.includes('제목')) {
+    return 'simple';
+  }
+
+  // 기본값: generic (자동 감지)
+  return 'generic';
+}
+
+/**
+ * 테크노파크 URL 해석 헬퍼
+ */
+function resolveTechnoparkUrl(sourceUrl: string, href: string): string {
+  if (href.startsWith("http")) {
+    return href;
+  }
+
+  try {
+    const baseUrl = new URL(sourceUrl);
+    if (href.startsWith("/")) {
+      return `${baseUrl.protocol}//${baseUrl.host}${href}`;
+    } else if (href.startsWith("?")) {
+      // 쿼리스트링만 있는 경우 (예: ?mCode=MN013&mode=view&...)
+      return `${baseUrl.protocol}//${baseUrl.host}${baseUrl.pathname}${href}`;
+    } else {
+      // 상대 경로인 경우 현재 디렉토리 기준으로 해석
+      // 예: /business/data.do에서 datadetail.do → /business/datadetail.do
+      const pathDir = baseUrl.pathname.substring(0, baseUrl.pathname.lastIndexOf('/') + 1);
+      return `${baseUrl.protocol}//${baseUrl.host}${pathDir}${href}`;
+    }
+  } catch {
+    return href;
+  }
 }
 
 /**
@@ -2843,7 +3509,7 @@ async function saveProjects(
             },
           });
 
-      // Prepare project data (exclude savedAttachments and cookies which are not in schema)
+      // Prepare project data (exclude savedAttachments, cookies which are not in schema)
       const { savedAttachments: _savedAttachments, attachmentUrls, cookies, ...projectData } = project;
 
       let projectId: string;
