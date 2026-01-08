@@ -92,8 +92,8 @@ export function HeroSection() {
             </Link>
           </Button>
           <Button size="lg" variant="outline" className="w-full sm:w-auto" asChild>
-            <Link href="/projects">
-              지원사업 둘러보기
+            <Link href="/pricing">
+              요금제 보기
               <ArrowRight className="w-4 h-4 ml-2" />
             </Link>
           </Button>
