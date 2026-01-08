@@ -38,26 +38,27 @@ export default async function MatchingResultsPage({
     where.companyId = params.companyId;
   }
 
-  if (params.confidence) {
-    where.confidence = params.confidence;
+  const confidence = params.confidence ?? "high";
+  if (confidence && confidence !== "all") {
+    where.confidence = confidence;
   }
 
-  // Build orderBy clause based on sort parameter
-  const sort = params.sort || "score";
-  let orderBy: any = { totalScore: "desc" }; // default
+  const sort = params.sort ?? "date";
+  let orderBy: any;
 
   switch (sort) {
+    case "score":
+      orderBy = { totalScore: "desc" };
+      break;
     case "score_asc":
       orderBy = { totalScore: "asc" };
-      break;
-    case "date":
-      orderBy = { createdAt: "desc" };
       break;
     case "deadline":
       orderBy = { project: { deadline: "asc" } };
       break;
+    case "date":
     default:
-      orderBy = { totalScore: "desc" };
+      orderBy = { createdAt: "desc" };
   }
 
   const [rawResults, total, userCompanies] = await Promise.all([
@@ -80,6 +81,7 @@ export default async function MatchingResultsPage({
             amountMax: true,
             deadline: true,
             isPermanent: true,
+            crawledAt: true,
           },
         },
         company: {

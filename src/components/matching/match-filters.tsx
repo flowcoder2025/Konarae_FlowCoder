@@ -41,8 +41,8 @@ export function MatchFilters({
   const searchParams = useSearchParams();
 
   const currentCompanyId = searchParams.get("companyId") || "all";
-  const currentConfidence = searchParams.get("confidence") || "all";
-  const currentSort = searchParams.get("sort") || "score";
+  const currentConfidence = searchParams.get("confidence") ?? "high";
+  const currentSort = searchParams.get("sort") ?? "date";
 
   const updateFilter = (key: string, value: string) => {
     const params = new URLSearchParams(searchParams);
@@ -65,8 +65,8 @@ export function MatchFilters({
 
   const hasActiveFilters =
     (!hideCompanyFilter && currentCompanyId !== "all") ||
-    currentConfidence !== "all" ||
-    currentSort !== "score";
+    currentConfidence !== "high" ||
+    currentSort !== "date";
 
   return (
     <div className="space-y-4">
@@ -138,12 +138,12 @@ export function MatchFilters({
               기업: {companies.find((c) => c.id === currentCompanyId)?.name}
             </Badge>
           )}
-          {currentConfidence !== "all" && (
+          {currentConfidence !== "high" && (
             <Badge variant="outline">
               적합도: {CONFIDENCE_OPTIONS.find((o) => o.value === currentConfidence)?.label}
             </Badge>
           )}
-          {currentSort !== "score" && (
+          {currentSort !== "date" && (
             <Badge variant="outline">
               정렬: {SORT_OPTIONS.find((o) => o.value === currentSort)?.label}
             </Badge>

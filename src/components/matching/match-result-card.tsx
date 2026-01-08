@@ -32,6 +32,7 @@ interface MatchResultCardProps {
       amountMax?: bigint | null;
       deadline?: Date | null;
       isPermanent?: boolean;
+      crawledAt?: Date | null;
     };
   };
 }
@@ -154,16 +155,19 @@ export function MatchResultCard({ result }: MatchResultCardProps) {
               <span className="text-muted-foreground">금액 미정</span>
             )}
           </div>
-          <div className="text-muted-foreground text-xs">
-            {result.project.isPermanent ? (
-              <span>상시모집</span>
-            ) : result.project.deadline ? (
-              <span>
-                ~{formatDateKST(result.project.deadline)}
-              </span>
-            ) : (
-              <span>기한 미정</span>
+          <div className="text-muted-foreground text-xs flex items-center gap-3">
+            {result.project.crawledAt && (
+              <span>수집 {formatDateKST(result.project.crawledAt)}</span>
             )}
+            <span>
+              {result.project.isPermanent ? (
+                "상시모집"
+              ) : result.project.deadline ? (
+                `~${formatDateKST(result.project.deadline)}`
+              ) : (
+                "기한 미정"
+              )}
+            </span>
           </div>
         </div>
 
