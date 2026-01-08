@@ -16,6 +16,7 @@ import { SupportModal } from "@/components/support/support-modal";
 const footerLinks = {
   service: [
     { label: "서비스 소개", href: "/about" },
+    { label: "가격 안내", href: "/pricing" },
     { label: "이용 가이드", href: "/guide" },
     { label: "자주 묻는 질문", href: "/faq" },
   ],

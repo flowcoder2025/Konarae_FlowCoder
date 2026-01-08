@@ -34,6 +34,7 @@ import {
   LogOut,
   Sparkles,
   FileText,
+  CreditCard,
 } from "lucide-react";
 
 interface NavItem {
@@ -78,6 +79,11 @@ const navItems: NavItem[] = [
     label: "기업설정",
     href: "/company",
     icon: Building2,
+  },
+  {
+    label: "가격",
+    href: "/pricing",
+    icon: CreditCard,
   },
   {
     label: "설정",
