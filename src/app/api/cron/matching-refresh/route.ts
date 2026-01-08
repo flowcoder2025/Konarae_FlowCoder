@@ -120,7 +120,34 @@ async function delegateToRailway(
  */
 async function executeMatchingRefreshDirect(source: string): Promise<NextResponse> {
   try {
-    logger.info(`Direct matching refresh started via ${source}`);
+    logger.info(`Direct matching refresh started via ${source}`, {
+      timestamp: new Date().toISOString(),
+    });
+
+    // Count total companies for debugging
+    const totalCompanies = await prisma.company.count({
+      where: { deletedAt: null },
+    });
+
+    const companiesWithPrefs = await prisma.company.count({
+      where: {
+        deletedAt: null,
+        matchingPreferences: { some: {} },
+      },
+    });
+
+    const companiesWithMembers = await prisma.company.count({
+      where: {
+        deletedAt: null,
+        members: { some: {} },
+      },
+    });
+
+    logger.info("Company stats for matching", {
+      totalCompanies,
+      companiesWithPrefs,
+      companiesWithMembers,
+    });
 
     // Get companies with matching preferences (only process those with preferences)
     const companies = await prisma.company.findMany({

@@ -55,9 +55,13 @@ async function executeDailyDigest(source: string): Promise<NextResponse> {
   try {
     logger.info(`Daily digest started via ${source}`);
 
-    // Get users with email enabled and matching results from today
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // Fix: Query results from the last 24 hours instead of "today" to handle timezone issues
+    // matching-refresh runs at 21:00 UTC (06:00 KST)
+    // daily-digest runs at 00:00 UTC (09:00 KST)
+    // Using "today" (00:00 UTC) would miss results created at 21:00 UTC the previous day
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    logger.info(`Querying matching results since ${since.toISOString()}`);
 
     // Find users with notification settings enabled for matching results
     const usersWithSettings = await prisma.notificationSetting.findMany({
@@ -86,11 +90,15 @@ async function executeDailyDigest(source: string): Promise<NextResponse> {
 
     const userIds = usersWithSettings.map((s) => s.userId);
 
-    // Get matching results grouped by user (created today or updated today)
+    logger.info(`Found ${usersWithSettings.length} users with notifications enabled`);
+
+    // Get matching results from the last 24 hours
+    // Note: matching-refresh deletes old results and creates new ones,
+    // so createdAt is always fresh after each refresh
     const matchingResults = await prisma.matchingResult.findMany({
       where: {
         userId: { in: userIds },
-        createdAt: { gte: today },
+        createdAt: { gte: since },
       },
       select: {
         userId: true,
@@ -118,6 +126,28 @@ async function executeDailyDigest(source: string): Promise<NextResponse> {
       orderBy: { totalScore: "desc" },
     });
 
+    logger.info(`Found ${matchingResults.length} matching results for ${userIds.length} users`);
+
+    // If no matching results found, log detailed info for debugging
+    if (matchingResults.length === 0) {
+      logger.warn("No matching results found in the last 24 hours", {
+        userCount: userIds.length,
+        since: since.toISOString(),
+        userIds: userIds.slice(0, 5), // Log first 5 user IDs for debugging
+      });
+      return NextResponse.json({
+        success: true,
+        message: "No matching results to send",
+        emailsSent: 0,
+        usersChecked: userIds.length,
+        triggeredBy: source,
+        queryPeriod: {
+          since: since.toISOString(),
+          until: new Date().toISOString(),
+        },
+      });
+    }
+
     // Group results by user
     const resultsByUser = new Map<
       string,
@@ -128,6 +158,8 @@ async function executeDailyDigest(source: string): Promise<NextResponse> {
       existing.push(result);
       resultsByUser.set(result.userId, existing);
     }
+
+    logger.info(`Grouped results for ${resultsByUser.size} users with matches`);
 
     // Send digest emails
     let emailsSent = 0;
