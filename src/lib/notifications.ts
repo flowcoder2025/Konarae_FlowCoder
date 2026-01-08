@@ -455,47 +455,46 @@ function buildDailyDigestHtml(payload: DailyDigestPayload): string {
           ? "보통"
           : "낮음";
 
+      // Email-safe layout using tables instead of flexbox (better email client compatibility)
       return `
         <tr style="border-bottom: 1px solid ${colors.border};">
           <td style="padding: 16px; vertical-align: top;">
-            <div style="display: flex; align-items: flex-start; gap: 12px;">
-              <div style="background: ${colors.primary}; color: white; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; flex-shrink: 0;">
-                ${index + 1}
-              </div>
-              <div style="flex: 1;">
-                <a href="${process.env.NEXTAUTH_URL}/projects/${result.project.id}" style="color: ${colors.foreground}; font-weight: 600; text-decoration: none; font-size: 16px;">
-                  ${result.project.name}
-                </a>
-                <div style="color: ${colors.muted}; font-size: 14px; margin-top: 4px;">
-                  ${result.project.organization} · ${result.project.category}
-                </div>
-                <div style="margin-top: 8px; display: flex; gap: 16px; flex-wrap: wrap;">
-                  <span style="display: inline-flex; align-items: center; gap: 4px; font-size: 13px;">
+            <table cellpadding="0" cellspacing="0" border="0" width="100%">
+              <tr>
+                <td width="44" valign="top" style="padding-right: 12px;">
+                  <div style="background: ${colors.primary}; color: white; width: 32px; height: 32px; border-radius: 50%; text-align: center; line-height: 32px; font-weight: bold; font-size: 14px;">
+                    ${index + 1}
+                  </div>
+                </td>
+                <td valign="top">
+                  <a href="${process.env.NEXTAUTH_URL}/projects/${result.project.id}" style="color: ${colors.foreground}; font-weight: 600; text-decoration: none; font-size: 16px;">
+                    ${result.project.name}
+                  </a>
+                  <div style="color: ${colors.muted}; font-size: 14px; margin-top: 4px;">
+                    ${result.project.organization} · ${result.project.category}
+                  </div>
+                  <div style="margin-top: 8px; font-size: 13px;">
                     <span style="color: ${confidenceColor}; font-weight: 600;">●</span>
-                    <span style="color: #374151;">매칭 ${result.totalScore}점 (${confidenceText})</span>
-                  </span>
-                  <span style="color: ${colors.muted}; font-size: 13px;">
-                    ${labels.calendar}${deadline}
-                  </span>
-                  <span style="color: ${colors.muted}; font-size: 13px;">
-                    ${labels.coins}${formatAmount(result.project.amountMin, result.project.amountMax)}
-                  </span>
-                </div>
-                ${
-                  result.matchReasons.length > 0
-                    ? `<div style="margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap;">
-                        ${result.matchReasons
-                          .slice(0, 3)
-                          .map(
-                            (reason) =>
-                              `<span style="background: #ccfbf1; color: ${colors.primaryDark}; padding: 2px 8px; border-radius: 12px; font-size: 12px;">${reason}</span>`
-                          )
-                          .join("")}
-                      </div>`
-                    : ""
-                }
-              </div>
-            </div>
+                    <span style="color: #374151;"> 매칭 ${result.totalScore}점 (${confidenceText})</span>
+                    <span style="color: ${colors.muted}; margin-left: 12px;">${labels.calendar}${deadline}</span>
+                    <span style="color: ${colors.muted}; margin-left: 12px;">${labels.coins}${formatAmount(result.project.amountMin, result.project.amountMax)}</span>
+                  </div>
+                  ${
+                    result.matchReasons.length > 0
+                      ? `<div style="margin-top: 8px;">
+                          ${result.matchReasons
+                            .slice(0, 3)
+                            .map(
+                              (reason) =>
+                                `<span style="background: #ccfbf1; color: ${colors.primaryDark}; padding: 2px 8px; border-radius: 12px; font-size: 12px; display: inline-block; margin-right: 6px; margin-bottom: 4px;">${reason}</span>`
+                            )
+                            .join("")}
+                        </div>`
+                      : ""
+                  }
+                </td>
+              </tr>
+            </table>
           </td>
         </tr>
       `;
