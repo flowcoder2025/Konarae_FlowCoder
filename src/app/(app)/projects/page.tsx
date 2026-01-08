@@ -148,6 +148,7 @@ export default async function ProjectsPage({
         isPermanent: true,
         summary: true,
         viewCount: true,
+        crawledAt: true,
       },
     }),
     prisma.supportProject.count({ where }),

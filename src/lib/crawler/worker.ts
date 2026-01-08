@@ -56,6 +56,17 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function cleanTextPreservingLineBreaks(text: string): string {
+  return text
+    .replace(/[\r\n]+/g, '\n')
+    .replace(/[ \t]+/g, ' ')
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line.length > 0)
+    .join('\n')
+    .trim();
+}
+
 /**
  * Get crawler headers to avoid bot detection
  * Updated to Chrome 131 (2025.01) with realistic browser fingerprint
@@ -677,11 +688,10 @@ function extractDetailPageInfo(
       }
     }
 
-    // 사업 개요/내용
     if (labelLower.includes('사업개요') || labelLower.includes('사업내용') ||
         labelLower.includes('사업목적') || labelLower.includes('지원내용')) {
       if (!info.description && value.length > 20) {
-        info.description = value.substring(0, 2000);
+        info.description = cleanTextPreservingLineBreaks(value).substring(0, 2000);
       }
     }
 
@@ -745,13 +755,10 @@ function extractDetailPageInfo(
     }
   }
 
-  // ===== 기업마당 특화 파싱 =====
   if (isBizinfo) {
-    // 본문 영역에서 추가 정보 추출
     const contentArea = $('.view_cont, .bbs-view, .board-view').text();
     if (contentArea && !info.description) {
-      // 본문이 충분히 길면 요약으로 사용
-      const cleanContent = contentArea.replace(/\s+/g, ' ').trim();
+      const cleanContent = cleanTextPreservingLineBreaks(contentArea);
       if (cleanContent.length > 100) {
         info.description = cleanContent.substring(0, 2000);
       }
@@ -1594,6 +1601,7 @@ async function extractFileText(buffer: Buffer): Promise<string | null> {
 async function analyzeWithGemini(text: string): Promise<{
   summary?: string;
   description?: string;
+  target?: string;
   eligibility?: string;
   applicationProcess?: string;
   evaluationCriteria?: string;
@@ -1622,17 +1630,18 @@ async function analyzeWithGemini(text: string): Promise<{
     const prompt = `다음은 정부 지원사업 공고문입니다. 아래 정보를 JSON 형식으로 추출해주세요:
 
 1. summary: 사업 요약 (1문장, 30~50자, 핵심 내용만. 예: "창업 3년 이내 기업 대상 최대 1억원 지원")
-2. description: 사업의 목적과 개요 (2-3문장, 핵심만)
-3. eligibility: 신청 자격 요건 (핵심만, 있는 경우)
-4. applicationProcess: 신청 방법 및 절차 (간단히, 있는 경우)
-5. evaluationCriteria: 평가 기준 (있는 경우)
-6. fundingSummary: 지원 금액을 한 줄로 간결하게 요약 (예: "최대 400만원", "업체당 500만원 이내", "최대 1억원 (전액 무상)", "70% 보조금 지원"). 반드시 10~30자 이내로 핵심만 작성.
-7. amountDescription: 지원 금액에 대한 상세 설명. 세부 항목별 금액, 지원 조건, 자부담 비율 등 상세 내용을 포함.
-8. amountMin: 최소 지원 금액 (원화 숫자만, 예: 5000000). 범위가 있는 경우 최소값, 없으면 생략.
-9. amountMax: 최대 지원 금액 (원화 숫자만, 예: 100000000). "최대 1억원"이면 100000000, "500만원"이면 5000000.
-10. deadline: 신청 마감일 (YYYY-MM-DD 형식, 있는 경우)
-11. startDate: 사업/접수 시작일 (YYYY-MM-DD 형식, 있는 경우)
-12. endDate: 사업/접수 종료일 (YYYY-MM-DD 형식, 있는 경우)
+2. description: 사업의 목적과 개요. 항목별로 줄바꿈(\\n)으로 구분하여 가독성 있게 작성.
+3. target: 지원 대상 (어떤 기업/단체가 신청 가능한지. 예: "창업 3년 이내 중소기업", "제조업 영위 기업")
+4. eligibility: 신청 자격 요건. 항목별로 줄바꿈(\\n)으로 구분.
+5. applicationProcess: 신청 방법 및 절차 (간단히, 있는 경우)
+6. evaluationCriteria: 평가 기준 (있는 경우)
+7. fundingSummary: 지원 금액을 한 줄로 간결하게 요약 (예: "최대 400만원", "업체당 500만원 이내"). 10~30자 이내.
+8. amountDescription: 지원 금액에 대한 상세 설명. 세부 항목별 금액, 지원 조건, 자부담 비율 등 포함.
+9. amountMin: 최소 지원 금액 (원화 숫자만, 예: 5000000). 범위가 있는 경우 최소값, 없으면 생략.
+10. amountMax: 최대 지원 금액 (원화 숫자만, 예: 100000000). "최대 1억원"이면 100000000.
+11. deadline: 신청 마감일 (YYYY-MM-DD 형식, 있는 경우)
+12. startDate: 사업/접수 시작일 (YYYY-MM-DD 형식, 있는 경우)
+13. endDate: 사업/접수 종료일 (YYYY-MM-DD 형식, 있는 경우)
 
 중요: amountMin, amountMax는 반드시 숫자(number)로 반환하세요. 문자열이 아닌 순수 숫자입니다.
 - "최대 4억원" → amountMax: 400000000
@@ -1643,8 +1652,9 @@ async function analyzeWithGemini(text: string): Promise<{
 응답은 반드시 다음 JSON 형식으로만 작성해주세요:
 {
   "summary": "...",
-  "description": "...",
-  "eligibility": "...",
+  "description": "사업 목적\\n지원 내용\\n기대 효과",
+  "target": "창업 3년 이내 중소기업",
+  "eligibility": "자격요건1\\n자격요건2",
   "applicationProcess": "...",
   "evaluationCriteria": "...",
   "fundingSummary": "...",
@@ -1762,6 +1772,7 @@ async function processProjectFiles(
   aiAnalysis?: {
     summary?: string;
     description?: string;
+    target?: string;
     eligibility?: string;
     applicationProcess?: string;
     evaluationCriteria?: string;
@@ -1778,6 +1789,7 @@ async function processProjectFiles(
   let aiAnalysis: {
     summary?: string;
     description?: string;
+    target?: string;
     eligibility?: string;
     applicationProcess?: string;
     evaluationCriteria?: string;
@@ -2339,8 +2351,8 @@ async function crawlAndParse(
             if (!projects[i].eligibility && detailInfo.eligibility) {
               projects[i].eligibility = detailInfo.eligibility;
             }
-            // 지원대상 적용
-            if (!projects[i].target && detailInfo.target) {
+            // 지원대상 적용 (기본값 "중소기업"인 경우 덮어쓰기)
+            if (detailInfo.target && (projects[i].target === "중소기업" || !projects[i].target)) {
               projects[i].target = detailInfo.target;
             }
             // 신청절차 적용
@@ -2363,8 +2375,8 @@ async function crawlAndParse(
             if (!projects[i].startDate && detailInfo.startDate) {
               projects[i].startDate = detailInfo.startDate;
             }
-            // 요약 적용 (summary가 기본값인 경우에만)
-            if (projects[i].summary === '정보 확인 필요' && detailInfo.summary) {
+            // 요약 적용 (summary가 기본값(제목)인 경우 덮어쓰기)
+            if (detailInfo.summary && (projects[i].summary === project.name || projects[i].summary === '정보 확인 필요')) {
               projects[i].summary = detailInfo.summary;
             }
           }
@@ -3632,15 +3644,14 @@ async function saveProjects(
             await prisma.supportProject.update({
               where: { id: projectId },
               data: {
-                // AI 분석 결과로 모든 상세 필드 업데이트
                 summary: aiAnalysis.summary || undefined,
                 description: aiAnalysis.description || undefined,
+                target: aiAnalysis.target || undefined,
                 eligibility: aiAnalysis.eligibility || undefined,
                 applicationProcess: aiAnalysis.applicationProcess || undefined,
                 evaluationCriteria: aiAnalysis.evaluationCriteria || undefined,
                 fundingSummary: aiAnalysis.fundingSummary || undefined,
                 amountDescription: aiAnalysis.amountDescription || undefined,
-                // NEW: 지원금액 숫자 필드 업데이트
                 amountMin: parseBigInt(aiAnalysis.amountMin),
                 amountMax: parseBigInt(aiAnalysis.amountMax),
                 deadline: parseDate(aiAnalysis.deadline),
@@ -3659,12 +3670,48 @@ async function saveProjects(
           logger.error("Error processing attachments", { error: fileError });
         }
 
-        // Rate limiting: 2 seconds between projects with files
         await new Promise(resolve => setTimeout(resolve, 2000));
+      } else if (project.description && project.description.length > 100) {
+        try {
+          const aiAnalysis = await analyzeWithGemini(project.description);
+          if (aiAnalysis) {
+            const parseDate = (dateStr?: string): Date | undefined => {
+              if (!dateStr) return undefined;
+              const date = new Date(dateStr);
+              return isNaN(date.getTime()) ? undefined : date;
+            };
+            const parseBigInt = (amount?: number): bigint | undefined => {
+              if (amount === undefined || amount === null || isNaN(amount)) return undefined;
+              return BigInt(Math.round(amount));
+            };
+
+            await prisma.supportProject.update({
+              where: { id: projectId },
+              data: {
+                summary: aiAnalysis.summary || undefined,
+                description: aiAnalysis.description || undefined,
+                target: aiAnalysis.target || undefined,
+                eligibility: aiAnalysis.eligibility || undefined,
+                applicationProcess: aiAnalysis.applicationProcess || undefined,
+                evaluationCriteria: aiAnalysis.evaluationCriteria || undefined,
+                fundingSummary: aiAnalysis.fundingSummary || undefined,
+                amountDescription: aiAnalysis.amountDescription || undefined,
+                amountMin: parseBigInt(aiAnalysis.amountMin),
+                amountMax: parseBigInt(aiAnalysis.amountMax),
+                deadline: parseDate(aiAnalysis.deadline),
+                startDate: parseDate(aiAnalysis.startDate),
+                endDate: parseDate(aiAnalysis.endDate),
+              },
+            });
+            logger.debug("Updated project with AI analysis from description text");
+          }
+        } catch (aiError) {
+          logger.error("AI analysis from description failed", { error: aiError });
+        }
+        await new Promise(resolve => setTimeout(resolve, 500));
       }
     } catch (error) {
       logger.error(`Failed to save project "${project.name}"`, { error });
-      // Continue with next project
     }
   }
 

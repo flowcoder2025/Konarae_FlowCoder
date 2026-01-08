@@ -184,7 +184,7 @@ export default async function ProjectDetailPage({
     <div className="container mx-auto py-8 max-w-6xl">
       <PageHeader
         title={project.name}
-        description={`${project.organization} • ${project.region} • 조회 ${project.viewCount}`}
+        description={`${project.organization} • ${project.region} • 조회 ${project.viewCount}${project.crawledAt ? ` • 수집 ${formatDateKST(project.crawledAt)}` : ""}`}
         listHref="/projects"
         listLabel="지원사업 목록"
         actions={

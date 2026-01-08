@@ -22,6 +22,7 @@ interface ProjectCardProps {
     isPermanent?: boolean;
     summary: string;
     viewCount: number;
+    crawledAt?: Date | null;
   };
 }
 
@@ -115,9 +116,12 @@ export function ProjectCard({ project }: ProjectCardProps) {
               <span>기한 미정</span>
             )}
           </div>
-          <span className="text-muted-foreground">
-            조회 {project.viewCount}
-          </span>
+          <div className="flex items-center gap-2 text-muted-foreground">
+            {project.crawledAt && (
+              <span className="text-xs">수집 {formatDateKST(project.crawledAt)}</span>
+            )}
+            <span>조회 {project.viewCount}</span>
+          </div>
         </div>
       </Card>
     </Link>

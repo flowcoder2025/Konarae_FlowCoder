@@ -254,6 +254,12 @@ export default async function MatchResultDetailPage({
                 : formatDateKST(result.project.deadline)}
             </dd>
           </div>
+          {result.project.crawledAt && (
+            <div>
+              <dt className="text-sm text-muted-foreground mb-1">정보 수집일</dt>
+              <dd className="font-medium">{formatDateKST(result.project.crawledAt)}</dd>
+            </div>
+          )}
         </dl>
       </Card>
 
