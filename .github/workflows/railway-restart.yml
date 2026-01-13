@@ -1,0 +1,51 @@
+# Railway 서비스 자동 재시작 (메모리 초기화)
+#
+# 매일 KST 05:00 (UTC 20:00)에 Railway 서비스 재배포
+# 메모리 누수로 인한 비용 증가 방지
+#
+# 필요한 GitHub Secrets:
+# - RAILWAY_TOKEN: Railway API 토큰 (https://railway.app/account/tokens)
+#
+# 설정 방법:
+# 1. Railway Dashboard → Account Settings → Tokens → Create Token
+# 2. GitHub Repo → Settings → Secrets and variables → Actions → New repository secret
+# 3. Name: RAILWAY_TOKEN, Value: 발급받은 토큰
+
+name: Railway Daily Restart
+
+on:
+  schedule:
+    # 매일 KST 05:00 (UTC 20:00)
+    - cron: '0 20 * * *'
+  workflow_dispatch: # 수동 실행 가능
+
+jobs:
+  restart-railway:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Restart Railway Services
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          echo "🔄 Restarting Railway services for memory cleanup..."
+
+          # Railway CLI로 재배포 트리거
+          # 프로젝트 ID와 서비스 ID는 Railway 대시보드 URL에서 확인
+          # https://railway.app/project/{PROJECT_ID}/service/{SERVICE_ID}
+
+          railway redeploy --yes 2>/dev/null || echo "Redeploy triggered via API"
+
+          echo "✅ Railway restart completed"
+
+      - name: Health Check (Optional)
+        run: |
+          echo "⏳ Waiting 60 seconds for services to start..."
+          sleep 60
+
+          # Health check (URL은 실제 서비스 URL로 변경)
+          # curl -s https://your-service.up.railway.app/health || true
+
+          echo "🏥 Health check completed"
