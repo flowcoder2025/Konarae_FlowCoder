@@ -174,6 +174,7 @@ async function calculateDocumentSimilarityScoresBatch(
 
     // SQL로 기업 문서 임베딩과 지원사업 임베딩 간 유사도 계산
     // 각 지원사업에 대해 가장 높은 유사도를 반환
+    // Memory Optimization (2025.01): LIMIT 축소로 CROSS JOIN 연산량 감소
     const results: Array<{
       project_id: string;
       max_similarity: number;
@@ -185,7 +186,7 @@ async function calculateDocumentSimilarityScoresBatch(
         INNER JOIN "CompanyDocument" cd ON cd.id = cde."documentId"
         WHERE cd."companyId" = ${companyId}
           AND cd."deletedAt" IS NULL
-        LIMIT 50
+        LIMIT 20
       ),
       project_similarities AS (
         SELECT
@@ -205,6 +206,7 @@ async function calculateDocumentSimilarityScoresBatch(
       FROM project_similarities
       WHERE max_similarity > 0.3
       ORDER BY max_similarity DESC
+      LIMIT 50
     `;
 
     const scoreMap = new Map<string, number>();
@@ -658,6 +660,7 @@ export async function executeMatching(
       }
     }
 
+    // Memory Optimization (2025.01): 프로젝트 로드 개수 축소 200 → 100
     const projects = await prisma.supportProject.findMany({
       where: whereClause,
       select: {
@@ -676,7 +679,7 @@ export async function executeMatching(
         isPermanent: true,
         summary: true,
       },
-      take: 200, // v3: 지역 필터링 후 결과 보장을 위해 증가
+      take: 100, // Memory Optimization: 200 → 100 축소
     });
 
     // v3: 지역 필터링 적용 (preferences.regions가 없을 때 자동 필터링)

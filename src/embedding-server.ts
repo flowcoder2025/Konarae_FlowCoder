@@ -51,14 +51,42 @@ app.use((req, res, next) => {
 
 /**
  * Health Check
+ *
+ * Memory Optimization (2025.01):
+ * - 메모리 임계값 경고 추가
+ * - 상세 메모리 정보 제공
  */
 app.get('/health', (req, res) => {
+  const memUsage = process.memoryUsage();
+  const heapUsedMB = Math.round(memUsage.heapUsed / 1024 / 1024);
+  const heapTotalMB = Math.round(memUsage.heapTotal / 1024 / 1024);
+  const rssMB = Math.round(memUsage.rss / 1024 / 1024);
+
+  // Memory warning threshold: 512MB (embedding은 더 많은 메모리 사용)
+  const MEMORY_WARNING_MB = 512;
+  const MEMORY_CRITICAL_MB = 1024;
+
+  let memoryStatus: 'ok' | 'warning' | 'critical' = 'ok';
+  if (rssMB > MEMORY_CRITICAL_MB) {
+    memoryStatus = 'critical';
+    logger.error('CRITICAL: Memory usage exceeds 1GB', { rssMB, heapUsedMB });
+  } else if (rssMB > MEMORY_WARNING_MB) {
+    memoryStatus = 'warning';
+    logger.warn('WARNING: Memory usage exceeds 512MB', { rssMB, heapUsedMB });
+  }
+
   res.json({
-    status: 'ok',
+    status: memoryStatus === 'critical' ? 'degraded' : 'ok',
     service: 'embedding-worker',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
-    memory: process.memoryUsage(),
+    memory: {
+      heapUsedMB,
+      heapTotalMB,
+      rssMB,
+      status: memoryStatus,
+      raw: memUsage,
+    },
   });
 });
 
@@ -251,6 +279,11 @@ app.get('/embedding-stats', async (req, res) => {
 
 /**
  * POST /matching/batch
+ *
+ * Memory Optimization (2025.01):
+ * - maxCompanies 500 → 50 축소 (메모리 누수 방지)
+ * - batchSize 20 → 10 축소 (GC 시간 확보)
+ * - 배치 간 명시적 메모리 정리
  */
 app.post('/matching/batch', async (req, res) => {
   const startTime = Date.now();
@@ -262,7 +295,8 @@ app.post('/matching/batch', async (req, res) => {
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    const { batchSize = 20, maxCompanies = 500 } = req.body;
+    // Memory Optimization: 배치 크기 대폭 축소
+    const { batchSize = 10, maxCompanies = 50 } = req.body;
 
     logger.info(`Matching: Starting batch refresh (batch: ${batchSize}, max: ${maxCompanies})`);
 
@@ -330,7 +364,40 @@ app.post('/matching/batch', async (req, res) => {
 });
 
 /**
+ * Force garbage collection if available
+ * Node.js must be started with --expose-gc flag
+ */
+function tryGarbageCollection(): void {
+  if (global.gc) {
+    try {
+      global.gc();
+      logger.debug('GC executed successfully');
+    } catch (e) {
+      logger.debug('GC failed', { error: e });
+    }
+  }
+}
+
+/**
+ * Log current memory usage
+ */
+function logMemoryUsage(context: string): void {
+  const memUsage = process.memoryUsage();
+  logger.info(`Memory [${context}]`, {
+    heapUsed: `${Math.round(memUsage.heapUsed / 1024 / 1024)}MB`,
+    heapTotal: `${Math.round(memUsage.heapTotal / 1024 / 1024)}MB`,
+    rss: `${Math.round(memUsage.rss / 1024 / 1024)}MB`,
+  });
+}
+
+/**
  * Process matching batch in background
+ *
+ * Memory Optimization (2025.01):
+ * - 배치 간 GC 트리거
+ * - 메모리 사용량 로깅
+ * - 변수 명시적 해제
+ * - 딜레이 증가 (1초 → 3초)
  */
 async function processMatchingBatch(
   companies: Array<{
@@ -352,6 +419,8 @@ async function processMatchingBatch(
   let errorCount = 0;
   let totalResultsStored = 0;
 
+  logMemoryUsage('Matching Start');
+
   for (let i = 0; i < companies.length; i += batchSize) {
     const batch = companies.slice(i, i + batchSize);
     const batchNum = Math.floor(i / batchSize) + 1;
@@ -369,7 +438,8 @@ async function processMatchingBatch(
           continue;
         }
 
-        const results = await executeMatching({
+        // 매칭 실행 (결과를 즉시 처리하고 해제)
+        let results = await executeMatching({
           companyId: company.id,
           userId: firstMember.userId,
           preferences: {
@@ -381,17 +451,22 @@ async function processMatchingBatch(
           },
         });
 
-        if (results.length > 0) {
+        const resultCount = results.length;
+
+        if (resultCount > 0) {
           await storeMatchingResults(
             firstMember.userId,
             company.id,
             results
           );
-          totalResultsStored += results.length;
+          totalResultsStored += resultCount;
         }
 
+        // Memory Optimization: 결과 배열 명시적 해제
+        results = null as any;
+
         successCount++;
-        logger.info(`Matching: ${company.name} - ${results.length} matches stored`);
+        logger.info(`Matching: ${company.name} - ${resultCount} matches stored`);
 
       } catch (error) {
         errorCount++;
@@ -400,13 +475,21 @@ async function processMatchingBatch(
       }
     }
 
+    // Memory Optimization: 배치 간 메모리 정리
     if (i + batchSize < companies.length) {
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      logMemoryUsage(`Batch ${batchNum} Complete`);
+      tryGarbageCollection();
+      // 딜레이 증가: 1초 → 3초 (GC 시간 확보)
+      await new Promise(resolve => setTimeout(resolve, 3000));
     }
   }
 
   const duration = Date.now() - startTime;
   const durationMinutes = Math.round(duration / 1000 / 60 * 10) / 10;
+
+  // Memory Optimization: 최종 메모리 상태 로깅 및 GC
+  logMemoryUsage('Matching Complete');
+  tryGarbageCollection();
 
   logger.info('Matching Batch Complete', {
     companiesProcessed: successCount + errorCount,

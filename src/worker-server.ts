@@ -52,14 +52,42 @@ app.use((req, res, next) => {
 
 /**
  * Health Check Endpoint
+ *
+ * Memory Optimization (2025.01):
+ * - 메모리 임계값 경고 추가
+ * - 상세 메모리 정보 제공
  */
 app.get('/health', (req, res) => {
+  const memUsage = process.memoryUsage();
+  const heapUsedMB = Math.round(memUsage.heapUsed / 1024 / 1024);
+  const heapTotalMB = Math.round(memUsage.heapTotal / 1024 / 1024);
+  const rssMB = Math.round(memUsage.rss / 1024 / 1024);
+
+  // Memory warning threshold: 512MB
+  const MEMORY_WARNING_MB = 512;
+  const MEMORY_CRITICAL_MB = 1024;
+
+  let memoryStatus: 'ok' | 'warning' | 'critical' = 'ok';
+  if (rssMB > MEMORY_CRITICAL_MB) {
+    memoryStatus = 'critical';
+    logger.error('CRITICAL: Memory usage exceeds 1GB', { rssMB, heapUsedMB });
+  } else if (rssMB > MEMORY_WARNING_MB) {
+    memoryStatus = 'warning';
+    logger.warn('WARNING: Memory usage exceeds 512MB', { rssMB, heapUsedMB });
+  }
+
   res.json({
-    status: 'ok',
+    status: memoryStatus === 'critical' ? 'degraded' : 'ok',
     service: 'crawler-worker',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
-    memory: process.memoryUsage(),
+    memory: {
+      heapUsedMB,
+      heapTotalMB,
+      rssMB,
+      status: memoryStatus,
+      raw: memUsage,
+    },
   });
 });
 
