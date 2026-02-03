@@ -712,14 +712,13 @@ export async function executeMatching(
     // Calculate scores for each project
     const results: MatchingResultData[] = [];
 
-    // Batch score calculations (optimized - parallel)
+    // Batch score calculations
+    // Memory Optimization (2025.02): 순차 처리로 변경 (메모리 피크 감소)
     const projectIds = filteredProjects.map((p) => p.id);
 
-    // 병렬로 두 가지 유사도 점수 계산
-    const [semanticScoreMap, documentSimilarityScoreMap] = await Promise.all([
-      calculateSemanticScoresBatch(companyProfile, projectIds),
-      calculateDocumentSimilarityScoresBatch(company.id, projectIds),
-    ]);
+    // 순차 처리로 메모리 사용량 분산
+    const semanticScoreMap = await calculateSemanticScoresBatch(companyProfile, projectIds);
+    const documentSimilarityScoreMap = await calculateDocumentSimilarityScoresBatch(company.id, projectIds);
 
     for (const project of filteredProjects) {
       // 텍스트 기반 유사도
@@ -800,6 +799,10 @@ export async function executeMatching(
 
     // Sort by total score (descending)
     results.sort((a, b) => b.totalScore - a.totalScore);
+
+    // Memory Optimization (2025.02): 스코어 맵 명시적 해제
+    semanticScoreMap.clear();
+    documentSimilarityScoreMap.clear();
 
     return results;
   } catch (error) {

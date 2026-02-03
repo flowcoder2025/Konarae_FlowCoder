@@ -160,18 +160,22 @@ function formatCrawledData(project: {
 
 /**
  * GPT-4o-mini로 마크다운 생성
+ * Memory Optimization (2025.02): 프롬프트 변수 명시적 해제
  */
 export async function generateProjectMarkdown(
   crawledData: string,
   attachmentContent: string | null
 ): Promise<string> {
-  const userPrompt = attachmentContent
+  let userPrompt: string | null = attachmentContent
     ? `크롤링 데이터:\n${crawledData}\n\n---\n\n첨부파일 내용:\n${attachmentContent}`
     : `크롤링 데이터:\n${crawledData}`;
 
   // 컨텍스트 길이 제한 (약 100K 토큰 제한, 안전하게 80K 문자로 제한)
   const truncatedPrompt =
     userPrompt.length > 80000 ? userPrompt.slice(0, 80000) + "\n\n..." : userPrompt;
+
+  // Memory Optimization: 원본 프롬프트 해제
+  userPrompt = null;
 
   const { text } = await generateText({
     model: openai("gpt-4o-mini"),
@@ -185,6 +189,7 @@ export async function generateProjectMarkdown(
 
 /**
  * 단일 프로젝트 분석
+ * Memory Optimization (2025.02): 중간 변수 명시적 해제
  */
 export async function analyzeProject(projectId: string): Promise<{
   success: boolean;
@@ -215,16 +220,22 @@ export async function analyzeProject(projectId: string): Promise<{
       return { success: false, error: "Project not found" };
     }
 
-    logger.info(`Analyzing project: ${project.name}`);
+    const projectName = project.name;
+    const analysisVersion = project.analysisVersion;
+    logger.info(`Analyzing project: ${projectName}`);
 
     // 크롤링 데이터 포맷팅
-    const crawledData = formatCrawledData(project);
+    let crawledData: string | null = formatCrawledData(project);
 
     // 첨부파일 파싱 결과 통합
-    const attachmentContent = await integrateAttachmentContent(projectId);
+    let attachmentContent: string | null = await integrateAttachmentContent(projectId);
 
     // AI 마크다운 생성
     const markdown = await generateProjectMarkdown(crawledData, attachmentContent);
+
+    // Memory Optimization: 중간 데이터 해제
+    crawledData = null;
+    attachmentContent = null;
 
     // 결과 저장
     await prisma.supportProject.update({
@@ -233,12 +244,12 @@ export async function analyzeProject(projectId: string): Promise<{
         descriptionMarkdown: markdown,
         needsAnalysis: false,
         analyzedAt: new Date(),
-        analysisVersion: project.analysisVersion + 1,
+        analysisVersion: analysisVersion + 1,
         needsEmbedding: true, // 분석 완료 후 임베딩 재생성 필요
       },
     });
 
-    logger.info(`Analysis complete for project: ${project.name}`);
+    logger.info(`Analysis complete for project: ${projectName}`);
 
     return { success: true, markdown };
   } catch (error) {

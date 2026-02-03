@@ -127,6 +127,7 @@ export function extractKeywords(text: string): string[] {
 
 /**
  * Store document embeddings (PRD 12.4)
+ * Memory Optimization (2025.02): 청크별 처리 후 명시적 메모리 해제
  */
 export async function storeDocumentEmbeddings(
   sourceType: SourceType,
@@ -137,19 +138,26 @@ export async function storeDocumentEmbeddings(
   try {
     // Chunk the content
     const chunks = chunkText(content);
+    const chunkCount = chunks.length;
 
     // Generate embeddings for each chunk
-    for (let i = 0; i < chunks.length; i++) {
+    for (let i = 0; i < chunkCount; i++) {
       const chunk = chunks[i];
-      const embedding = await generateEmbedding(chunk);
+
+      // Memory Optimization: 임베딩 생성 후 즉시 DB 저장 및 해제
+      let embedding: number[] | null = await generateEmbedding(chunk);
       const keywords = extractKeywords(chunk);
+      const embeddingJson = JSON.stringify(embedding);
+
+      // 임베딩 배열 즉시 해제 (1536 floats = ~12KB per chunk)
+      embedding = null;
 
       // Execute raw SQL to insert into document_embeddings table
       await prisma.$executeRaw`
         INSERT INTO document_embeddings (source_type, source_id, content, chunk_index, chunk_metadata, embedding, keywords)
         VALUES (${sourceType}, ${sourceId}, ${chunk}, ${i}, ${JSON.stringify(
         metadata
-      )}::jsonb, ${JSON.stringify(embedding)}::vector, ${keywords})
+      )}::jsonb, ${embeddingJson}::vector, ${keywords})
         ON CONFLICT (source_type, source_id, chunk_index)
         DO UPDATE SET
           content = EXCLUDED.content,
@@ -160,7 +168,7 @@ export async function storeDocumentEmbeddings(
       `;
     }
 
-    logger.info(`Stored ${chunks.length} embeddings for ${sourceType}:${sourceId}`);
+    logger.info(`Stored ${chunkCount} embeddings for ${sourceType}:${sourceId}`);
   } catch (error) {
     logger.error("Store embeddings error", { error });
     throw new Error("Failed to store embeddings");

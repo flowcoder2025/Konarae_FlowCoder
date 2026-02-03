@@ -59,8 +59,12 @@ app.use((req, res, next) => {
  * Memory Optimization (2025.01):
  * - 메모리 임계값 경고 추가
  * - 상세 메모리 정보 제공
+ *
+ * Memory Optimization (2025.02):
+ * - Critical 시 Prisma 연결 풀 정리
+ * - GC 강제 실행
  */
-app.get('/health', (req, res) => {
+app.get('/health', async (req, res) => {
   const memUsage = process.memoryUsage();
   const heapUsedMB = Math.round(memUsage.heapUsed / 1024 / 1024);
   const heapTotalMB = Math.round(memUsage.heapTotal / 1024 / 1024);
@@ -74,9 +78,21 @@ app.get('/health', (req, res) => {
   if (rssMB > MEMORY_CRITICAL_MB) {
     memoryStatus = 'critical';
     logger.error('CRITICAL: Memory usage exceeds 1GB', { rssMB, heapUsedMB });
+
+    // Memory Optimization (2025.02): Critical 시 Prisma 연결 풀 정리 및 GC
+    try {
+      await prisma.$disconnect();
+      await prisma.$connect();
+      tryGarbageCollection();
+      logger.info('Memory cleanup triggered due to critical memory usage');
+    } catch (e) {
+      logger.error('Memory cleanup failed', { error: e });
+    }
   } else if (rssMB > MEMORY_WARNING_MB) {
     memoryStatus = 'warning';
     logger.warn('WARNING: Memory usage exceeds 512MB', { rssMB, heapUsedMB });
+    // Warning 시에도 GC 시도
+    tryGarbageCollection();
   }
 
   res.json({
@@ -110,7 +126,8 @@ app.post('/generate-embeddings', async (req, res) => {
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    const { batchSize = 50 } = req.body;
+    // Memory Optimization (2025.02): 배치 크기 축소 50 → 20
+    const { batchSize = 20 } = req.body;
 
     logger.info(`Embedding: Starting batch generation (batch size: ${batchSize})`);
 
@@ -197,6 +214,11 @@ app.post('/generate-embeddings', async (req, res) => {
 
         successCount++;
         logger.info(`Embedding: Generated for ${project.name}`);
+
+        // Memory Optimization (2025.02): 10개마다 GC 시도
+        if (successCount % 10 === 0) {
+          tryGarbageCollection();
+        }
       } catch (error) {
         errorCount++;
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -251,7 +273,8 @@ app.post('/analyze-projects', async (req, res) => {
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    const { batchSize = 50 } = req.body;
+    // Memory Optimization (2025.02): 배치 크기 축소 50 → 20
+    const { batchSize = 20 } = req.body;
 
     logger.info(`Analyze: Starting batch analysis (batch size: ${batchSize})`);
 
@@ -298,6 +321,7 @@ app.post('/analyze-projects', async (req, res) => {
 
 /**
  * Process analysis batch in background
+ * Memory Optimization (2025.02): 중간 GC 추가
  */
 async function processAnalysisBatch(
   projectIds: string[],
@@ -305,7 +329,29 @@ async function processAnalysisBatch(
 ): Promise<void> {
   logMemoryUsage('Analysis Start');
 
-  const result = await analyzeProjectsBatch(projectIds);
+  // Memory Optimization: 10개씩 나눠서 처리하고 중간에 GC
+  const MINI_BATCH_SIZE = 10;
+  let totalSuccess = 0;
+  let totalFailed = 0;
+  const allErrors: Array<{ projectId: string; error: string }> = [];
+
+  for (let i = 0; i < projectIds.length; i += MINI_BATCH_SIZE) {
+    const miniBatch = projectIds.slice(i, i + MINI_BATCH_SIZE);
+    const result = await analyzeProjectsBatch(miniBatch);
+
+    totalSuccess += result.success;
+    totalFailed += result.failed;
+    allErrors.push(...result.errors);
+
+    // 미니 배치 완료 후 메모리 정리
+    logMemoryUsage(`Analysis Mini-batch ${Math.floor(i / MINI_BATCH_SIZE) + 1}`);
+    tryGarbageCollection();
+
+    // Rate limiting 및 메모리 안정화
+    if (i + MINI_BATCH_SIZE < projectIds.length) {
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+  }
 
   const duration = Date.now() - startTime;
   const durationMinutes = Math.round(duration / 1000 / 60 * 10) / 10;
@@ -314,11 +360,11 @@ async function processAnalysisBatch(
   tryGarbageCollection();
 
   logger.info('Analysis Batch Complete', {
-    total: result.total,
-    successful: result.success,
-    failed: result.failed,
+    total: projectIds.length,
+    successful: totalSuccess,
+    failed: totalFailed,
     durationMinutes,
-    errors: result.errors.length > 0 ? result.errors.slice(0, 5) : undefined,
+    errors: allErrors.length > 0 ? allErrors.slice(0, 5) : undefined,
   });
 }
 
