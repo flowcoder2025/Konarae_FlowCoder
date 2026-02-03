@@ -8,6 +8,59 @@ import rehypeSanitize from "rehype-sanitize";
 import { cn } from "@/lib/utils";
 import { ChevronDown, ChevronUp } from "lucide-react";
 
+// 알려진 라벨 키워드 (볼드로 변환)
+const KNOWN_LABELS = [
+  "소관부처·지자체",
+  "소관부처",
+  "지자체",
+  "사업수행기관",
+  "수행기관",
+  "신청기간",
+  "접수기간",
+  "모집기간",
+  "사업기간",
+  "사업개요",
+  "사업내용",
+  "사업목적",
+  "지원대상",
+  "지원조건",
+  "신청자격",
+  "참여자격",
+  "지원내용",
+  "지원규모",
+  "지원금액",
+  "사업신청 방법",
+  "사업신청방법",
+  "신청방법",
+  "신청절차",
+  "접수방법",
+  "제출서류",
+  "구비서류",
+  "필요서류",
+  "문의처",
+  "담당부서",
+  "연락처",
+  "사업신청 사이트",
+  "신청사이트",
+  "홈페이지",
+];
+
+/**
+ * Plain text에서 알려진 라벨을 볼드로 변환
+ */
+function preprocessContent(content: string): string {
+  let processed = content;
+
+  // 각 라벨을 볼드로 변환 (줄 시작 또는 줄바꿈 후에 있는 경우)
+  KNOWN_LABELS.forEach((label) => {
+    // 라벨이 줄의 시작에 있고, 그 다음에 줄바꿈이나 다른 내용이 있는 경우
+    const regex = new RegExp(`(^|\\n)(${label})(?=\\s|\\n|$)`, "g");
+    processed = processed.replace(regex, "$1**$2**");
+  });
+
+  return processed;
+}
+
 interface ProjectDescriptionRendererProps {
   content: string;
   className?: string;
@@ -120,7 +173,7 @@ export function ProjectDescriptionRenderer({
             },
           }}
         >
-          {content}
+          {preprocessContent(content)}
         </ReactMarkdown>
       </div>
 
