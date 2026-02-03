@@ -696,6 +696,9 @@ model NotificationSetting {
   matchingResultEnabled     Boolean @default(true)
   evaluationCompleteEnabled Boolean @default(true)
 
+  // Digest tracking (중복 발송 방지)
+  lastDigestSentAt DateTime? // 마지막 다이제스트 발송 시간
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

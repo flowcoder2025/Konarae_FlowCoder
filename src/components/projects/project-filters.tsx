@@ -255,12 +255,15 @@ export function ProjectFilters({
             지역:
           </span>
           <ScrollFade>
-            {regions.slice(0, 10).map((region) => (
+            {regions.map((region) => (
               <button
                 key={region.value}
                 onClick={() => handleRegionClick(region.value)}
+                disabled={region.count === 0}
                 className={`px-3 py-1 text-sm rounded-full border transition-[background-color,border-color,color] duration-150 whitespace-nowrap shrink-0 ${
-                  currentRegion === region.value
+                  region.count === 0
+                    ? "bg-muted/50 text-muted-foreground/50 cursor-not-allowed"
+                    : currentRegion === region.value
                     ? "bg-primary/10 text-primary border-primary/30"
                     : "bg-muted text-muted-foreground hover:bg-muted/80"
                 }`}

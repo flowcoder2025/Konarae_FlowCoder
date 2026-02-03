@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { ProjectFiles } from "@/components/project/project-files";
 import { StartProjectButton } from "@/components/project/start-project-button";
 import { PageHeader } from "@/components/common";
+import { ProjectDescriptionRenderer } from "@/components/projects/project-description-renderer";
 import { ExternalLink } from "lucide-react";
 import type { Metadata } from "next";
 
@@ -268,9 +269,7 @@ export default async function ProjectDetailPage({
         {project.description && (
           <Card className="p-6">
             <h2 className="font-semibold mb-4">상세 내용</h2>
-            <div className="prose max-w-none">
-              <p className="whitespace-pre-wrap">{project.description}</p>
-            </div>
+            <ProjectDescriptionRenderer content={project.description} />
           </Card>
         )}
 
@@ -305,9 +304,7 @@ export default async function ProjectDetailPage({
         {project.eligibility && (
           <Card className="p-6">
             <h2 className="font-semibold mb-4">신청 자격</h2>
-            <div className="prose max-w-none">
-              <p className="whitespace-pre-wrap">{project.eligibility}</p>
-            </div>
+            <ProjectDescriptionRenderer content={project.eligibility} />
           </Card>
         )}
 
@@ -315,9 +312,7 @@ export default async function ProjectDetailPage({
         {project.applicationProcess && (
           <Card className="p-6">
             <h2 className="font-semibold mb-4">신청 절차</h2>
-            <div className="prose max-w-none">
-              <p className="whitespace-pre-wrap">{project.applicationProcess}</p>
-            </div>
+            <ProjectDescriptionRenderer content={project.applicationProcess} />
           </Card>
         )}
 

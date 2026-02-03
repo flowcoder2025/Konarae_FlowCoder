@@ -55,15 +55,8 @@ async function executeDailyDigest(source: string): Promise<NextResponse> {
   try {
     logger.info(`Daily digest started via ${source}`);
 
-    // Fix: Query results from the last 24 hours instead of "today" to handle timezone issues
-    // matching-refresh runs at 21:00 UTC (06:00 KST)
-    // daily-digest runs at 00:00 UTC (09:00 KST)
-    // Using "today" (00:00 UTC) would miss results created at 21:00 UTC the previous day
-    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
-
-    logger.info(`Querying matching results since ${since.toISOString()}`);
-
     // Find users with notification settings enabled for matching results
+    // Include lastDigestSentAt to avoid duplicate sending
     const usersWithSettings = await prisma.notificationSetting.findMany({
       where: {
         emailEnabled: true,
@@ -71,6 +64,7 @@ async function executeDailyDigest(source: string): Promise<NextResponse> {
       },
       select: {
         userId: true,
+        lastDigestSentAt: true,
         discordEnabled: true,
         discordWebhookUrl: true,
         slackEnabled: true,
@@ -88,23 +82,32 @@ async function executeDailyDigest(source: string): Promise<NextResponse> {
       });
     }
 
-    const userIds = usersWithSettings.map((s) => s.userId);
-
     logger.info(`Found ${usersWithSettings.length} users with notifications enabled`);
 
-    // Get matching results from the last 24 hours
-    // Note: matching-refresh deletes old results and creates new ones,
-    // so createdAt is always fresh after each refresh
+    // Build user-specific queries to respect lastDigestSentAt
+    // This prevents duplicate sending when cron runs multiple times
+    const userSettingsMap = new Map(usersWithSettings.map((s) => [s.userId, s]));
+
+    // Fallback: 24 hours ago for users without lastDigestSentAt
+    const fallbackSince = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    // Query matching results for each user based on their lastDigestSentAt
+    // Use a single query with OR conditions for efficiency
     const matchingResults = await prisma.matchingResult.findMany({
       where: {
-        userId: { in: userIds },
-        createdAt: { gte: since },
+        OR: usersWithSettings.map((setting) => ({
+          userId: setting.userId,
+          createdAt: {
+            gt: setting.lastDigestSentAt || fallbackSince,
+          },
+        })),
       },
       select: {
         userId: true,
         totalScore: true,
         confidence: true,
         matchReasons: true,
+        createdAt: true,
         project: {
           select: {
             id: true,
@@ -126,25 +129,19 @@ async function executeDailyDigest(source: string): Promise<NextResponse> {
       orderBy: { totalScore: "desc" },
     });
 
-    logger.info(`Found ${matchingResults.length} matching results for ${userIds.length} users`);
+    logger.info(`Found ${matchingResults.length} matching results for ${usersWithSettings.length} users`);
 
     // If no matching results found, log detailed info for debugging
     if (matchingResults.length === 0) {
-      logger.warn("No matching results found in the last 24 hours", {
-        userCount: userIds.length,
-        since: since.toISOString(),
-        userIds: userIds.slice(0, 5), // Log first 5 user IDs for debugging
+      logger.info("No new matching results to send (all users up to date)", {
+        userCount: usersWithSettings.length,
       });
       return NextResponse.json({
         success: true,
-        message: "No matching results to send",
+        message: "No new matching results to send",
         emailsSent: 0,
-        usersChecked: userIds.length,
+        usersChecked: usersWithSettings.length,
         triggeredBy: source,
-        queryPeriod: {
-          since: since.toISOString(),
-          until: new Date().toISOString(),
-        },
       });
     }
 
@@ -166,6 +163,7 @@ async function executeDailyDigest(source: string): Promise<NextResponse> {
     let discordSent = 0;
     let slackSent = 0;
     const errors: string[] = [];
+    const successfulUserIds: string[] = [];
 
     for (const [userId, results] of resultsByUser) {
       if (results.length === 0) continue;
@@ -180,7 +178,7 @@ async function executeDailyDigest(source: string): Promise<NextResponse> {
         if (!user?.email) continue;
 
         // Get user's notification settings
-        const settings = usersWithSettings.find((s) => s.userId === userId);
+        const settings = userSettingsMap.get(userId);
 
         // Send email digest
         await sendDailyDigestEmail({
@@ -191,6 +189,7 @@ async function executeDailyDigest(source: string): Promise<NextResponse> {
           totalCount: results.length,
         });
         emailsSent++;
+        successfulUserIds.push(userId);
 
         // Send Discord notification if enabled
         if (settings?.discordEnabled && settings.discordWebhookUrl) {
@@ -213,6 +212,17 @@ async function executeDailyDigest(source: string): Promise<NextResponse> {
         logger.error("Daily digest error", { errorMsg });
         errors.push(errorMsg);
       }
+    }
+
+    // Update lastDigestSentAt for all successful users
+    // This prevents duplicate sending on subsequent runs
+    if (successfulUserIds.length > 0) {
+      const now = new Date();
+      await prisma.notificationSetting.updateMany({
+        where: { userId: { in: successfulUserIds } },
+        data: { lastDigestSentAt: now },
+      });
+      logger.info(`Updated lastDigestSentAt for ${successfulUserIds.length} users`);
     }
 
     logger.info(

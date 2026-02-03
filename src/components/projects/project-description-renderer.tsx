@@ -1,0 +1,92 @@
+"use client";
+
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeSanitize from "rehype-sanitize";
+import { cn } from "@/lib/utils";
+
+interface ProjectDescriptionRendererProps {
+  content: string;
+  className?: string;
+}
+
+/**
+ * 지원사업 상세 내용 렌더러
+ * - Markdown 렌더링 지원 (테이블, 리스트, 링크 등)
+ * - XSS 방지 (rehype-sanitize)
+ * - 프로젝트 스타일링 적용
+ */
+export function ProjectDescriptionRenderer({
+  content,
+  className,
+}: ProjectDescriptionRendererProps) {
+  if (!content) {
+    return null;
+  }
+
+  return (
+    <div
+      className={cn(
+        // Base prose styling
+        "prose prose-sm max-w-none dark:prose-invert",
+        // Headings
+        "prose-headings:font-semibold prose-headings:text-foreground",
+        "prose-h1:text-xl prose-h2:text-lg prose-h3:text-base",
+        "prose-headings:mt-6 prose-headings:mb-3",
+        // Paragraphs
+        "prose-p:text-muted-foreground prose-p:leading-relaxed",
+        "prose-p:my-2",
+        // Lists
+        "prose-ul:my-2 prose-ol:my-2",
+        "prose-li:text-muted-foreground prose-li:my-0.5",
+        "prose-li:marker:text-muted-foreground/70",
+        // Tables
+        "prose-table:text-sm",
+        "prose-th:bg-muted prose-th:px-3 prose-th:py-2 prose-th:text-left prose-th:font-medium",
+        "prose-td:px-3 prose-td:py-2 prose-td:border-t prose-td:border-border",
+        // Links
+        "prose-a:text-primary prose-a:underline-offset-2 hover:prose-a:text-primary/80",
+        // Strong/Bold
+        "prose-strong:text-foreground prose-strong:font-semibold",
+        // Code
+        "prose-code:text-sm prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:rounded",
+        // Blockquotes
+        "prose-blockquote:border-l-primary prose-blockquote:bg-muted/30 prose-blockquote:py-1 prose-blockquote:not-italic",
+        // Horizontal rules
+        "prose-hr:border-border prose-hr:my-6",
+        className
+      )}
+    >
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeSanitize]}
+        components={{
+          // Custom table wrapper for horizontal scroll on mobile
+          table: ({ children, ...props }) => (
+            <div className="overflow-x-auto -mx-1">
+              <table {...props} className="min-w-full">
+                {children}
+              </table>
+            </div>
+          ),
+          // External links open in new tab
+          a: ({ href, children, ...props }) => {
+            const isExternal = href?.startsWith("http");
+            return (
+              <a
+                href={href}
+                target={isExternal ? "_blank" : undefined}
+                rel={isExternal ? "noopener noreferrer" : undefined}
+                {...props}
+              >
+                {children}
+              </a>
+            );
+          },
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
+}

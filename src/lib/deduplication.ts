@@ -9,13 +9,16 @@
  */
 
 import { prisma } from "@/lib/prisma";
-import type { SupportProject, ProjectGroup, Prisma } from "@prisma/client";
+import { createLogger } from "@/lib/logger";
+import type { SupportProject, Prisma } from "@prisma/client";
 import {
   normalizeProject,
   calculateProjectSimilarity,
   isSameYearProject,
   type SimilarityResult,
 } from "./project-normalize";
+
+const logger = createLogger({ lib: "deduplication" });
 
 // 유사도 임계값
 const SIMILARITY_THRESHOLDS = {
@@ -262,6 +265,13 @@ export async function processProjectDeduplication(
 ): Promise<DeduplicationResult> {
   const normalized = normalizeProject(project.name);
 
+  logger.info(`[Dedup] Processing project: "${project.name.substring(0, 50)}..."`, {
+    projectId: project.id,
+    region: project.region,
+    normalizedName: normalized.normalizedName,
+    projectYear: normalized.projectYear,
+  });
+
   // 1. 유사 프로젝트 탐색 (같은 지역만)
   const candidates = await findDuplicateCandidates(
     project.name,
@@ -273,6 +283,9 @@ export async function processProjectDeduplication(
 
   // 2. 중복 없음 -> 새 그룹 생성
   if (candidates.length === 0) {
+    logger.info(`[Dedup] No duplicates found - creating new group`, {
+      projectId: project.id,
+    });
     // 새 프로젝트는 자신이 canonical
     const group = await prisma.projectGroup.create({
       data: {
@@ -309,6 +322,17 @@ export async function processProjectDeduplication(
   // 3. 중복 발견 -> 기존 그룹에 추가 또는 새 그룹 생성
   const bestMatch = candidates[0];
   const similarity = bestMatch.similarity.totalScore;
+
+  logger.info(`[Dedup] Duplicate candidates found`, {
+    projectId: project.id,
+    candidateCount: candidates.length,
+    bestMatchId: bestMatch.project.id,
+    bestMatchName: bestMatch.project.name.substring(0, 50),
+    similarityScore: similarity,
+    similarityDetails: bestMatch.similarity,
+    action: similarity >= SIMILARITY_THRESHOLDS.AUTO_MERGE ? "auto_merge" :
+            similarity >= SIMILARITY_THRESHOLDS.REVIEW_REQUIRED ? "review_required" : "separate",
+  });
 
   // 기존 그룹이 있는 경우
   if (bestMatch.project.groupId) {

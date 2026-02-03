@@ -14,6 +14,123 @@ const resend = process.env.RESEND_API_KEY
   ? new Resend(process.env.RESEND_API_KEY)
   : null;
 
+// ============================================
+// Crawler Alert System (Phase 4)
+// ============================================
+
+// Debounce cache for crawler alerts (1 hour)
+const crawlerAlertCache = new Map<string, number>();
+const CRAWLER_ALERT_DEBOUNCE_MS = 60 * 60 * 1000; // 1 hour
+
+/**
+ * Send crawler alert to admin Discord webhook
+ * Debounced to prevent alert spam (1 hour per alert type)
+ */
+export async function sendCrawlerAlert(
+  alertType: "parsing_failure" | "structure_change" | "consecutive_failures",
+  details: {
+    source?: string;
+    message: string;
+    consecutiveFailures?: number;
+    failedFields?: string[];
+    timestamp?: Date;
+  }
+): Promise<void> {
+  const webhookUrl = process.env.CRAWLER_DISCORD_WEBHOOK_URL;
+  if (!webhookUrl) {
+    logger.warn("CRAWLER_DISCORD_WEBHOOK_URL not configured, skipping alert");
+    return;
+  }
+
+  // Debounce check
+  const cacheKey = `${alertType}:${details.source || "unknown"}`;
+  const lastAlert = crawlerAlertCache.get(cacheKey);
+  const now = Date.now();
+
+  if (lastAlert && now - lastAlert < CRAWLER_ALERT_DEBOUNCE_MS) {
+    logger.info(`Crawler alert debounced: ${cacheKey}`);
+    return;
+  }
+
+  // Update cache
+  crawlerAlertCache.set(cacheKey, now);
+
+  // Build Discord embed
+  const color = alertType === "consecutive_failures" ? 0xff0000 : // Red
+                alertType === "structure_change" ? 0xffa500 : // Orange
+                0xffff00; // Yellow
+
+  const title = {
+    parsing_failure: "⚠️ 크롤러 파싱 실패",
+    structure_change: "🔧 웹사이트 구조 변경 감지",
+    consecutive_failures: "🚨 크롤러 연속 실패",
+  }[alertType];
+
+  const fields = [
+    { name: "출처", value: details.source || "알 수 없음", inline: true },
+    { name: "시간", value: (details.timestamp || new Date()).toLocaleString("ko-KR"), inline: true },
+  ];
+
+  if (details.consecutiveFailures) {
+    fields.push({
+      name: "연속 실패 횟수",
+      value: `${details.consecutiveFailures}회`,
+      inline: true,
+    });
+  }
+
+  if (details.failedFields && details.failedFields.length > 0) {
+    fields.push({
+      name: "실패한 필드",
+      value: details.failedFields.join(", "),
+      inline: false,
+    });
+  }
+
+  try {
+    await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        embeds: [
+          {
+            title,
+            description: details.message,
+            color,
+            fields,
+            footer: { text: "FlowMate Crawler Monitor" },
+            timestamp: new Date().toISOString(),
+          },
+        ],
+      }),
+    });
+
+    logger.info(`Crawler alert sent: ${alertType}`, { source: details.source });
+  } catch (error) {
+    logger.error("Failed to send crawler alert", { error });
+  }
+}
+
+/**
+ * Track consecutive failures for a crawl source
+ */
+const consecutiveFailures = new Map<string, number>();
+
+export function trackCrawlerFailure(sourceId: string): number {
+  const current = consecutiveFailures.get(sourceId) || 0;
+  const newCount = current + 1;
+  consecutiveFailures.set(sourceId, newCount);
+  return newCount;
+}
+
+export function resetCrawlerFailures(sourceId: string): void {
+  consecutiveFailures.delete(sourceId);
+}
+
+export function getCrawlerFailureCount(sourceId: string): number {
+  return consecutiveFailures.get(sourceId) || 0;
+}
+
 export type NotificationType =
   | "deadline_alert"
   | "matching_result"
