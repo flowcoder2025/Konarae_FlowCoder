@@ -5,8 +5,12 @@
       "schedule": "0 15 * * *"
     },
     {
+      "path": "/api/cron/analyze-projects",
+      "schedule": "0 17 * * *"
+    },
+    {
       "path": "/api/cron/generate-embeddings",
-      "schedule": "0 18 * * *"
+      "schedule": "0 20 * * *"
     },
     {
       "path": "/api/cron/matching-refresh",

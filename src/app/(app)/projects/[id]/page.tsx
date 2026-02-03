@@ -118,6 +118,7 @@ export default async function ProjectDetailPage({
           },
         },
       },
+      // descriptionMarkdown 포함 (AI 분석 결과)
     }),
     prisma.companyMember.findMany({
       where: { userId: session.user.id },
@@ -266,10 +267,13 @@ export default async function ProjectDetailPage({
         </Card>
 
         {/* Description */}
-        {project.description && (
+        {(project.descriptionMarkdown || project.description) && (
           <Card className="p-6">
             <h2 className="font-semibold mb-4">상세 내용</h2>
-            <ProjectDescriptionRenderer content={project.description} />
+            <ProjectDescriptionRenderer
+              markdownContent={project.descriptionMarkdown}
+              content={project.description || ""}
+            />
           </Card>
         )}
 
@@ -304,7 +308,9 @@ export default async function ProjectDetailPage({
         {project.eligibility && (
           <Card className="p-6">
             <h2 className="font-semibold mb-4">신청 자격</h2>
-            <ProjectDescriptionRenderer content={project.eligibility} />
+            <ProjectDescriptionRenderer
+              content={project.eligibility}
+            />
           </Card>
         )}
 
@@ -312,7 +318,9 @@ export default async function ProjectDetailPage({
         {project.applicationProcess && (
           <Card className="p-6">
             <h2 className="font-semibold mb-4">신청 절차</h2>
-            <ProjectDescriptionRenderer content={project.applicationProcess} />
+            <ProjectDescriptionRenderer
+              content={project.applicationProcess}
+            />
           </Card>
         )}
 

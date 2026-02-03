@@ -58,7 +58,8 @@ export async function GET(
     });
 
     // 다운로드 URL 결정
-    // - storagePath가 있으면: Supabase 서명된 URL (5분 유효)
+    // - storagePath가 있으면: Supabase 서명된 URL 시도 (5분 유효)
+    // - 서명된 URL 실패하면: 원본 sourceUrl로 fallback
     // - storagePath가 없으면: 원본 sourceUrl 직접 사용
     const filesWithUrls = await Promise.all(
       attachments.map(async (attachment) => {
@@ -66,14 +67,18 @@ export async function GET(
         let isStoredLocally = false;
 
         if (attachment.storagePath) {
-          // 핵심 문서: Supabase Storage에 저장됨
+          // Supabase Storage에서 서명된 URL 시도
           const signedUrlResult = await getSignedUrl(attachment.storagePath, 300);
-          downloadUrl = signedUrlResult.success && signedUrlResult.signedUrl
-            ? signedUrlResult.signedUrl
-            : null;
-          isStoredLocally = true;
+          if (signedUrlResult.success && signedUrlResult.signedUrl) {
+            downloadUrl = signedUrlResult.signedUrl;
+            isStoredLocally = true;
+          } else {
+            // 서명된 URL 실패 시 원본 URL로 fallback
+            downloadUrl = attachment.sourceUrl;
+            isStoredLocally = false;
+          }
         } else {
-          // 일반 파일: 원본 URL로 직접 다운로드
+          // storagePath 없음: 원본 URL로 직접 다운로드
           downloadUrl = attachment.sourceUrl;
           isStoredLocally = false;
         }
@@ -88,7 +93,7 @@ export async function GET(
             : "크기 미확인",
           downloadUrl,
           sourceUrl: attachment.sourceUrl,
-          isStoredLocally, // 로컬 저장 여부 (Supabase vs 원본 URL)
+          isStoredLocally, // Supabase 서명된 URL 성공 여부
           isParsed: attachment.isParsed,
           createdAt: attachment.createdAt.toISOString(),
         };

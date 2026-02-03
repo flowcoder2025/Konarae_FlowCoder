@@ -317,6 +317,12 @@ model SupportProject {
   normalizedName String? // 정규화된 이름 (연도 제외, 검색/비교용)
   projectYear    Int? // 사업 연도 추출값
 
+  // AI 분석 관련
+  needsAnalysis       Boolean   @default(true) // 분석 필요 여부
+  analyzedAt          DateTime? // 분석 완료 시간
+  analysisVersion     Int       @default(0) // 분석 버전 (재분석 시 증가)
+  descriptionMarkdown String?   @db.Text // AI 정리된 마크다운
+
   // Amount
   amountMin         BigInt?
   amountMax         BigInt?
@@ -380,6 +386,7 @@ model SupportProject {
   @@index([normalizedName])
   @@index([projectYear])
   @@index([isCanonical])
+  @@index([needsAnalysis])
 }
 
 model ProjectAttachment {

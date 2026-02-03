@@ -3,12 +3,10 @@
 import { useState, useRef, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import remarkBreaks from "remark-breaks";
-import rehypeSanitize from "rehype-sanitize";
 import { cn } from "@/lib/utils";
 import { ChevronDown, ChevronUp } from "lucide-react";
 
-// 알려진 라벨 키워드 (볼드로 변환)
+// 알려진 라벨 키워드 (볼드로 변환) - AI 분석 전 fallback용
 const KNOWN_LABELS = [
   "소관부처·지자체",
   "소관부처",
@@ -47,6 +45,7 @@ const KNOWN_LABELS = [
 
 /**
  * Plain text에서 알려진 라벨을 볼드로 변환
+ * AI 분석이 완료되지 않은 fallback 콘텐츠에만 적용
  */
 function preprocessContent(content: string): string {
   let processed = content;
@@ -62,6 +61,9 @@ function preprocessContent(content: string): string {
 }
 
 interface ProjectDescriptionRendererProps {
+  /** AI 분석된 마크다운 (우선 사용) */
+  markdownContent?: string | null;
+  /** 원본 크롤링 콘텐츠 (fallback) */
   content: string;
   className?: string;
   /** 접이식 기능 활성화 (기본: true) */
@@ -78,6 +80,7 @@ interface ProjectDescriptionRendererProps {
  * - 프로젝트 스타일링 적용
  */
 export function ProjectDescriptionRenderer({
+  markdownContent,
   content,
   className,
   collapsible = true,
@@ -87,17 +90,23 @@ export function ProjectDescriptionRenderer({
   const [needsCollapse, setNeedsCollapse] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
 
+  // AI 분석된 마크다운 우선 사용, 없으면 원본 콘텐츠 사용
+  const displayContent = markdownContent || content;
+  // AI 분석이 안된 경우에만 전처리 적용
+  const isAIAnalyzed = !!markdownContent;
+
   // 콘텐츠 높이 체크
   useEffect(() => {
     if (contentRef.current && collapsible) {
       const height = contentRef.current.scrollHeight;
       setNeedsCollapse(height > collapsedHeight);
     }
-  }, [content, collapsible, collapsedHeight]);
+  }, [displayContent, collapsible, collapsedHeight]);
 
-  if (!content) {
+  if (!displayContent) {
     return null;
   }
+
 
   const proseClasses = cn(
     // Base prose styling
@@ -146,8 +155,7 @@ export function ProjectDescriptionRenderer({
         }}
       >
         <ReactMarkdown
-          remarkPlugins={[remarkGfm, remarkBreaks]}
-          rehypePlugins={[rehypeSanitize]}
+          remarkPlugins={[remarkGfm]}
           components={{
             // Custom table wrapper for horizontal scroll on mobile
             table: ({ children, ...props }) => (
@@ -173,7 +181,7 @@ export function ProjectDescriptionRenderer({
             },
           }}
         >
-          {preprocessContent(content)}
+          {isAIAnalyzed ? displayContent : preprocessContent(displayContent)}
         </ReactMarkdown>
       </div>
 

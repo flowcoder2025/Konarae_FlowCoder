@@ -13,6 +13,10 @@ import { prisma } from '@/lib/prisma';
 import { storeDocumentEmbeddings } from '@/lib/rag';
 import { executeMatching, storeMatchingResults } from '@/lib/matching';
 import { createLogger } from '@/lib/logger';
+import {
+  getProjectsNeedingAnalysis,
+  analyzeProjectsBatch,
+} from '@/lib/crawler/project-analyzer';
 
 const logger = createLogger({ lib: 'embedding-server' });
 
@@ -226,6 +230,143 @@ app.post('/generate-embeddings', async (req, res) => {
       error: 'Embedding generation failed',
       details: error instanceof Error ? error.message : 'Unknown error',
       duration,
+    });
+  }
+});
+
+/**
+ * POST /analyze-projects
+ *
+ * AI 분석으로 프로젝트 마크다운 생성
+ * GPT-4o-mini를 사용하여 구조화된 설명 생성
+ */
+app.post('/analyze-projects', async (req, res) => {
+  const startTime = Date.now();
+
+  try {
+    // Verify API key
+    const authHeader = req.headers.authorization;
+    if (!authHeader || authHeader !== `Bearer ${process.env.WORKER_API_KEY}`) {
+      logger.error('Analyze: Unauthorized request');
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const { batchSize = 50 } = req.body;
+
+    logger.info(`Analyze: Starting batch analysis (batch size: ${batchSize})`);
+
+    // Get projects needing analysis
+    const projects = await getProjectsNeedingAnalysis(batchSize);
+
+    if (projects.length === 0) {
+      logger.info('Analyze: No projects need analysis');
+      return res.json({
+        success: true,
+        message: 'No projects need analysis',
+        processed: 0,
+        duration: Date.now() - startTime,
+      });
+    }
+
+    logger.info(`Analyze: Processing ${projects.length} project(s)`);
+
+    // Respond immediately (202 Accepted) for long-running tasks
+    res.status(202).json({
+      accepted: true,
+      message: `Analysis started for ${projects.length} projects`,
+      projectsQueued: projects.length,
+      batchSize,
+      timestamp: new Date().toISOString(),
+    });
+
+    // Process in background
+    processAnalysisBatch(projects.map(p => p.id), startTime).catch((error) => {
+      logger.error('Analyze: Batch processing error', { error });
+    });
+
+  } catch (error) {
+    const duration = Date.now() - startTime;
+    logger.error('Analyze: Batch error', { error });
+
+    return res.status(500).json({
+      error: 'Analysis batch failed',
+      details: error instanceof Error ? error.message : 'Unknown error',
+      duration,
+    });
+  }
+});
+
+/**
+ * Process analysis batch in background
+ */
+async function processAnalysisBatch(
+  projectIds: string[],
+  startTime: number
+): Promise<void> {
+  logMemoryUsage('Analysis Start');
+
+  const result = await analyzeProjectsBatch(projectIds);
+
+  const duration = Date.now() - startTime;
+  const durationMinutes = Math.round(duration / 1000 / 60 * 10) / 10;
+
+  logMemoryUsage('Analysis Complete');
+  tryGarbageCollection();
+
+  logger.info('Analysis Batch Complete', {
+    total: result.total,
+    successful: result.success,
+    failed: result.failed,
+    durationMinutes,
+    errors: result.errors.length > 0 ? result.errors.slice(0, 5) : undefined,
+  });
+}
+
+/**
+ * GET /analysis-stats
+ *
+ * 분석 통계 조회
+ */
+app.get('/analysis-stats', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || authHeader !== `Bearer ${process.env.WORKER_API_KEY}`) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const [totalProjects, needsAnalysis, analyzed] = await Promise.all([
+      prisma.supportProject.count({
+        where: { deletedAt: null },
+      }),
+      prisma.supportProject.count({
+        where: {
+          needsAnalysis: true,
+          deletedAt: null,
+          description: { not: null },
+        },
+      }),
+      prisma.supportProject.count({
+        where: {
+          descriptionMarkdown: { not: null },
+          deletedAt: null,
+        },
+      }),
+    ]);
+
+    return res.json({
+      totalProjects,
+      needsAnalysis,
+      analyzed,
+      completionRate: totalProjects > 0
+        ? Math.round((analyzed / totalProjects) * 100)
+        : 0,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    logger.error('Analysis: Stats error', { error });
+    return res.status(500).json({
+      error: 'Failed to get stats',
+      details: error instanceof Error ? error.message : 'Unknown error',
     });
   }
 });
