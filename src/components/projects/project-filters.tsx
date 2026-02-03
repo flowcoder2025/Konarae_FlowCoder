@@ -80,6 +80,15 @@ const DEADLINE_OPTIONS = [
   { value: "permanent", label: "상시모집" },
 ];
 
+// 권역별 지역 그룹화
+const REGION_GROUPS = [
+  { name: "수도권", regions: ["서울", "인천", "경기"] },
+  { name: "충청권", regions: ["대전", "세종", "충북", "충남"] },
+  { name: "호남권", regions: ["광주", "전북", "전남", "제주"] },
+  { name: "영남권", regions: ["부산", "대구", "울산", "경북", "경남"] },
+  { name: "강원권", regions: ["강원"] },
+];
+
 export function ProjectFilters({
   categories,
   regions,
@@ -248,30 +257,44 @@ export function ProjectFilters({
         </div>
       )}
 
-      {/* Region Filters */}
+      {/* Region Filters - 권역별 그룹화 */}
       {regions.length > 1 && (
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground py-1 shrink-0">
-            지역:
-          </span>
-          <ScrollFade>
-            {regions.map((region) => (
-              <button
-                key={region.value}
-                onClick={() => handleRegionClick(region.value)}
-                disabled={region.count === 0}
-                className={`px-3 py-1 text-sm rounded-full border transition-[background-color,border-color,color] duration-150 whitespace-nowrap shrink-0 ${
-                  region.count === 0
-                    ? "bg-muted/50 text-muted-foreground/50 cursor-not-allowed"
-                    : currentRegion === region.value
-                    ? "bg-primary/10 text-primary border-primary/30"
-                    : "bg-muted text-muted-foreground hover:bg-muted/80"
-                }`}
-              >
-                {region.value} ({region.count})
-              </button>
-            ))}
-          </ScrollFade>
+        <div className="space-y-2">
+          {REGION_GROUPS.map((group) => {
+            // 해당 권역에 속한 지역들 필터링
+            const groupRegions = regions.filter((r) =>
+              group.regions.includes(r.value)
+            );
+            if (groupRegions.length === 0) return null;
+
+            const groupTotal = groupRegions.reduce((sum, r) => sum + r.count, 0);
+
+            return (
+              <div key={group.name} className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground py-1 shrink-0 w-16">
+                  {group.name}:
+                </span>
+                <ScrollFade>
+                  {groupRegions.map((region) => (
+                    <button
+                      key={region.value}
+                      onClick={() => handleRegionClick(region.value)}
+                      disabled={region.count === 0}
+                      className={`px-3 py-1 text-sm rounded-full border transition-[background-color,border-color,color] duration-150 whitespace-nowrap shrink-0 ${
+                        region.count === 0
+                          ? "bg-muted/50 text-muted-foreground/50 cursor-not-allowed"
+                          : currentRegion === region.value
+                          ? "bg-primary/10 text-primary border-primary/30"
+                          : "bg-muted text-muted-foreground hover:bg-muted/80"
+                      }`}
+                    >
+                      {region.value} ({region.count})
+                    </button>
+                  ))}
+                </ScrollFade>
+              </div>
+            );
+          })}
         </div>
       )}
 

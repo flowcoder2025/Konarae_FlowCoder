@@ -12,6 +12,7 @@ import { CrawlerSourceCard } from "@/components/admin/crawler-source-card";
 import { AddSourceDialog } from "@/components/admin/add-source-dialog";
 import { StartAllCrawlButton } from "@/components/admin/start-all-crawl-button";
 import { LiveMonitoringDashboard } from "@/components/admin/live-monitoring-dashboard";
+import { CrawlerStatsDashboard } from "@/components/admin/crawler-stats-dashboard";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { FormattedDate } from "@/components/common/formatted-date";
 
@@ -103,6 +104,7 @@ export default async function AdminCrawlerPage() {
       <Tabs defaultValue="monitoring" className="space-y-6">
         <TabsList>
           <TabsTrigger value="monitoring">실시간 모니터링</TabsTrigger>
+          <TabsTrigger value="stats">통계</TabsTrigger>
           <TabsTrigger value="sources">소스 관리</TabsTrigger>
           <TabsTrigger value="history">작업 이력</TabsTrigger>
         </TabsList>
@@ -110,6 +112,11 @@ export default async function AdminCrawlerPage() {
         {/* Live Monitoring Tab */}
         <TabsContent value="monitoring" className="space-y-6">
           <LiveMonitoringDashboard />
+        </TabsContent>
+
+        {/* Statistics Tab */}
+        <TabsContent value="stats" className="space-y-6">
+          <CrawlerStatsDashboard />
         </TabsContent>
 
         {/* Sources Management Tab */}
