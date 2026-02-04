@@ -126,8 +126,8 @@ app.post('/generate-embeddings', async (req, res) => {
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    // Memory Optimization (2025.02): 배치 크기 축소 50 → 20
-    const { batchSize = 20 } = req.body;
+    // Memory Optimization (2025.02): 배치 크기 축소 50 → 10 (추가 축소)
+    const { batchSize = 10 } = req.body;
 
     logger.info(`Embedding: Starting batch generation (batch size: ${batchSize})`);
 
@@ -273,8 +273,8 @@ app.post('/analyze-projects', async (req, res) => {
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    // Memory Optimization (2025.02): 배치 크기 축소 50 → 20
-    const { batchSize = 20 } = req.body;
+    // Memory Optimization (2025.02): 배치 크기 축소 50 → 10 (추가 축소)
+    const { batchSize = 10 } = req.body;
 
     logger.info(`Analyze: Starting batch analysis (batch size: ${batchSize})`);
 
@@ -482,8 +482,8 @@ app.post('/matching/batch', async (req, res) => {
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    // Memory Optimization: 배치 크기 대폭 축소
-    const { batchSize = 10, maxCompanies = 50 } = req.body;
+    // Memory Optimization (2025.02): 배치 크기 추가 축소
+    const { batchSize = 5, maxCompanies = 30 } = req.body;
 
     logger.info(`Matching: Starting batch refresh (batch: ${batchSize}, max: ${maxCompanies})`);
 

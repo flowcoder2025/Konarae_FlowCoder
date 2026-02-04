@@ -800,11 +800,15 @@ export async function executeMatching(
     // Sort by total score (descending)
     results.sort((a, b) => b.totalScore - a.totalScore);
 
-    // Memory Optimization (2025.02): 스코어 맵 명시적 해제
+    // Memory Optimization (2025.02): 스코어 맵 및 중간 데이터 명시적 해제
     semanticScoreMap.clear();
     documentSimilarityScoreMap.clear();
 
-    return results;
+    // Memory Optimization: 상위 100개만 반환하여 메모리 사용량 제한
+    const topResults = results.slice(0, 100);
+    results.length = 0; // 원본 배열 해제
+
+    return topResults;
   } catch (error) {
     logger.error("Execute matching error", { error });
     throw new Error("Failed to execute matching");

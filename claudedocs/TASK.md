@@ -1,6 +1,6 @@
 # FlowCoder 6가지 개선 사항 구현
 
-## 현재 Phase: 완료 - 다음 세션에서 계속
+## 현재 Phase: Phase 7 완료 ✅ (Railway 메모리 최적화)
 
 ---
 
@@ -127,3 +127,19 @@
 | Phase 3 | ✅ 완료 (선택사항 포함) | 2026-02-03 |
 | Phase 4 | ✅ 완료 (선택사항 포함) | 2026-02-03 |
 | Phase 5 | ✅ 완료 (선택사항 포함) | 2026-02-03 |
+| Phase 7 | ✅ 완료 (Railway 메모리 최적화) | 2026-02-04 |
+
+---
+
+## Phase 7: Railway 메모리 최적화 ✅ 완료
+
+### Contract 7.1: text_parser 메모리 누수 수정 ✅
+- [x] tasks.py: get_parser() 싱글톤 사용
+- [x] pdf_parser.py: pdfplumber 이중 파싱 제거
+- [x] extract.py: 매 요청 gc.collect() 제거
+- [x] enhanced_hwp_parser.py: 과도한 gc.collect() 패턴 제거
+- [x] memory_manager.py: RSS 기준 모니터링으로 변경
+
+### Contract 7.2: crawler 메모리 최적화 ✅
+- [x] embedding-server.ts: 배치 크기 축소 (20→10, 10→5)
+- [x] matching.ts: 검색 결과 즉시 해제 (상위 100개만 반환)
