@@ -80,7 +80,7 @@ export async function generateMetadata({
       url: `${SITE_URL}/projects/${id}`,
       images: [
         {
-          url: "/og-image.png",
+          url: "/opengraph-image.png",
           width: 1200,
           height: 630,
           alt: project.name,
@@ -91,7 +91,7 @@ export async function generateMetadata({
       card: "summary_large_image",
       title: project.name,
       description,
-      images: ["/og-image.png"],
+      images: ["/opengraph-image.png"],
     },
   };
 }

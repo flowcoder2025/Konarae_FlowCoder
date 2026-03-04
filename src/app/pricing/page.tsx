@@ -5,8 +5,9 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 
 export const metadata: Metadata = {
-  title: "가격 안내 | FlowMate",
-  description: "FlowMate 크레딧 가격 및 서비스 요금 안내",
+  title: "요금제 | FlowMate",
+  description:
+    "FlowMate 크레딧 요금 안내. 정부 지원사업 매칭, AI 사업계획서 작성 등 서비스별 크레딧 사용량과 가격을 확인하세요. 무료 크레딧으로 시작 가능.",
 };
 
 export const dynamic = "force-static";
@@ -81,9 +82,52 @@ const CREDIT_PACKAGES = [
   },
 ];
 
+const faqJsonLd = {
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  mainEntity: [
+    {
+      "@type": "Question",
+      name: "크레딧 유효기간이 있나요?",
+      acceptedAnswer: {
+        "@type": "Answer",
+        text: "유료 구매 크레딧은 유효기간이 없습니다. 보너스 크레딧은 지급일로부터 30일간 유효합니다.",
+      },
+    },
+    {
+      "@type": "Question",
+      name: "환불이 가능한가요?",
+      acceptedAnswer: {
+        "@type": "Answer",
+        text: "미사용 크레딧은 구매일로부터 7일 이내 전액 환불 가능합니다.",
+      },
+    },
+    {
+      "@type": "Question",
+      name: "Standard와 Pro의 차이는?",
+      acceptedAnswer: {
+        "@type": "Answer",
+        text: "Pro는 더 정밀한 AI 모델을 사용하여 심층 분석과 고품질 결과물을 제공합니다.",
+      },
+    },
+    {
+      "@type": "Question",
+      name: "무료 기능만으로도 충분한가요?",
+      acceptedAnswer: {
+        "@type": "Answer",
+        text: "네! 공고 매칭, 프로필 관리, 증빙 보관 등 핵심 기능은 완전 무료입니다. AI 기능은 필요할 때만 사용하세요.",
+      },
+    },
+  ],
+};
+
 export default function PricingPage() {
   return (
     <div className="min-h-screen bg-background">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqJsonLd) }}
+      />
       <div className="container mx-auto max-w-6xl px-4 py-12">
         <Link
           href="/"

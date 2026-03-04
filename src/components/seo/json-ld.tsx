@@ -23,7 +23,13 @@ interface OrganizationSchema {
   contactPoint: {
     "@type": "ContactPoint";
     contactType: string;
+    email: string;
     availableLanguage: string[];
+  };
+  address: {
+    "@type": "PostalAddress";
+    addressCountry: string;
+    addressLocality: string;
   };
 }
 
@@ -34,14 +40,6 @@ interface WebSiteSchema {
   url: string;
   description: string;
   inLanguage: string;
-  potentialAction: {
-    "@type": "SearchAction";
-    target: {
-      "@type": "EntryPoint";
-      urlTemplate: string;
-    };
-    "query-input": string;
-  };
 }
 
 interface SoftwareApplicationSchema {
@@ -69,13 +67,22 @@ const organizationSchema: OrganizationSchema = {
   "@type": "Organization",
   name: SITE_NAME,
   url: SITE_URL,
-  logo: `${SITE_URL}/logo.png`,
+  logo: `${SITE_URL}/Flow_icon.png`,
   description: SITE_DESCRIPTION,
-  sameAs: [],
+  sameAs: [
+    "https://github.com/flowcoder2025",
+    "https://about.flow-coder.com",
+  ],
   contactPoint: {
     "@type": "ContactPoint",
     contactType: "customer service",
+    email: "contact@flow-coder.com",
     availableLanguage: ["Korean"],
+  },
+  address: {
+    "@type": "PostalAddress",
+    addressCountry: "KR",
+    addressLocality: "Seoul",
   },
 };
 
@@ -86,14 +93,6 @@ const webSiteSchema: WebSiteSchema = {
   url: SITE_URL,
   description: SITE_DESCRIPTION,
   inLanguage: "ko-KR",
-  potentialAction: {
-    "@type": "SearchAction",
-    target: {
-      "@type": "EntryPoint",
-      urlTemplate: `${SITE_URL}/search?q={search_term_string}`,
-    },
-    "query-input": "required name=search_term_string",
-  },
 };
 
 const softwareApplicationSchema: SoftwareApplicationSchema = {
