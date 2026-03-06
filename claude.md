@@ -438,11 +438,37 @@ Cloudflare (SSL) → Nginx (호스트, port 80) → Docker 컨테이너
 **배포 파일**: `deploy/oci/` (Dockerfile, nginx 설정, deploy.sh)
 **Nginx 설정**: `/etc/nginx/sites-available/worker` (호스트 nginx에 통합)
 **환경변수**: `/home/ubuntu/flowmate/.env.production`
+**SSH**: `ssh -i ~/.ssh/oci_key ubuntu@158.180.81.7`
+
+**배포 절차**:
+```bash
+ssh -i ~/.ssh/oci_key ubuntu@158.180.81.7
+cd ~/flowmate && git pull
+sudo docker stop flowmate-crawler flowmate-embedding
+sudo docker rm flowmate-crawler flowmate-embedding
+sudo docker build -f deploy/oci/crawler/Dockerfile -t flowmate-crawler .
+sudo docker build -f deploy/oci/embedding/Dockerfile -t flowmate-embedding .
+sudo docker run -d --name flowmate-crawler --env-file .env.production -p 3001:3001 --restart unless-stopped flowmate-crawler
+sudo docker run -d --name flowmate-embedding --env-file .env.production -p 3002:3002 --restart unless-stopped flowmate-embedding
+```
 
 **Vercel 환경변수**:
 - `RAILWAY_CRAWLER_URL=https://worker.jerome87.com`
 - `RAILWAY_WORKER_URL=https://worker.jerome87.com`
 - `TEXT_PARSER_URL=https://worker.jerome87.com`
+
+### 9.6 Worker 메모리 관리 규칙
+
+> Worker 코드 수정 시 메모리 누수 방지 패턴 준수 필수
+
+| 패턴 | 적용 위치 | 설명 |
+|------|----------|------|
+| 배열 크기 제한 | 에러 수집 배열 | `MAX_ERRORS` 제한 + `shift()` |
+| Map/Set null 해제 | 매칭 스코어맵 | `.clear()` 후 `= null` |
+| 벡터 배열 null 해제 | 임베딩 저장 루프 | stringify 후 `= null as any` |
+| 브라우저 idle 타이머 | Playwright 싱글톤 | 5분 미사용 시 자동 종료 |
+| 순차 배치 처리 | batch crawl/embedding | `await` 순차 실행 (병렬 금지) |
+| Graceful shutdown | SIGTERM/SIGINT | `prisma.$disconnect()`, `closeBrowser()` |
 
 ---
 
@@ -538,3 +564,4 @@ CREATE POLICY "users can view own data" ON companies
 | 2025-12-15 | 3.0.0 | Hub-Spoke 아키텍처 강화, 7개 하위 claude.md 가이드 통합 |
 | 2025-12-16 | 3.1.0 | 개발 규칙 섹션 추가 (Prisma 우선, 환경변수, ReBAC) |
 | 2026-03-06 | 3.2.0 | Railway → OCI 마이그레이션, Worker 인프라 섹션 추가 |
+| 2026-03-06 | 3.3.0 | Worker 메모리 관리 규칙 추가, OCI 배포 절차 문서화 |

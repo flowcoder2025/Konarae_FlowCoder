@@ -283,12 +283,25 @@ pnpm test:watch       # Watch 모드로 테스트
 - **배포**: `deploy/oci/deploy.sh` (build / start / stop / status / logs)
 
 ```bash
-# OCI 서버에서 배포
-cd /home/ubuntu/flowmate
-./deploy/oci/deploy.sh build    # Docker 이미지 빌드
-./deploy/oci/deploy.sh start    # 컨테이너 시작
-./deploy/oci/deploy.sh status   # 헬스 체크
-./deploy/oci/deploy.sh logs parser  # 로그 확인
+# OCI 접속
+ssh -i ~/.ssh/oci_key ubuntu@158.180.81.7
+
+# 배포 (git pull → rebuild → restart)
+cd ~/flowmate && git pull
+sudo docker stop flowmate-crawler flowmate-embedding
+sudo docker rm flowmate-crawler flowmate-embedding
+sudo docker build -f deploy/oci/crawler/Dockerfile -t flowmate-crawler .
+sudo docker build -f deploy/oci/embedding/Dockerfile -t flowmate-embedding .
+sudo docker run -d --name flowmate-crawler --env-file .env.production -p 3001:3001 --restart unless-stopped flowmate-crawler
+sudo docker run -d --name flowmate-embedding --env-file .env.production -p 3002:3002 --restart unless-stopped flowmate-embedding
+
+# 헬스 체크
+curl https://worker.jerome87.com/health
+curl https://worker.jerome87.com/generate-embeddings/health
+
+# 로그 확인
+sudo docker logs -f flowmate-crawler
+sudo docker logs -f flowmate-embedding
 ```
 
 ## 📖 문서
