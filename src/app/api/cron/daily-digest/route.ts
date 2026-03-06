@@ -88,21 +88,14 @@ async function executeDailyDigest(source: string): Promise<NextResponse> {
     // This prevents duplicate sending when cron runs multiple times
     const userSettingsMap = new Map(usersWithSettings.map((s) => [s.userId, s]));
 
-    // Fallback: 24 hours ago for users without lastDigestSentAt
-    const fallbackSince = new Date(Date.now() - 24 * 60 * 60 * 1000);
-
-    // Query matching results for each user based on their lastDigestSentAt
-    // Use a single query with OR conditions for efficiency
+    // Query matching results that haven't been sent yet (isNew = true)
     const matchingResults = await prisma.matchingResult.findMany({
       where: {
-        OR: usersWithSettings.map((setting) => ({
-          userId: setting.userId,
-          createdAt: {
-            gt: setting.lastDigestSentAt || fallbackSince,
-          },
-        })),
+        userId: { in: usersWithSettings.map((s) => s.userId) },
+        isNew: true,
       },
       select: {
+        id: true,
         userId: true,
         totalScore: true,
         confidence: true,
@@ -214,15 +207,24 @@ async function executeDailyDigest(source: string): Promise<NextResponse> {
       }
     }
 
-    // Update lastDigestSentAt for all successful users
-    // This prevents duplicate sending on subsequent runs
+    // Mark sent results as no longer new
     if (successfulUserIds.length > 0) {
       const now = new Date();
+
+      await prisma.matchingResult.updateMany({
+        where: {
+          userId: { in: successfulUserIds },
+          isNew: true,
+        },
+        data: { isNew: false },
+      });
+
       await prisma.notificationSetting.updateMany({
         where: { userId: { in: successfulUserIds } },
         data: { lastDigestSentAt: now },
       });
-      logger.info(`Updated lastDigestSentAt for ${successfulUserIds.length} users`);
+
+      logger.info(`Marked results as sent for ${successfulUserIds.length} users`);
     }
 
     logger.info(

@@ -496,8 +496,8 @@ app.post('/matching/batch', async (req, res) => {
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    // Memory Optimization (2025.02): 배치 크기 추가 축소
-    const { batchSize = 5, maxCompanies = 30 } = req.body;
+    // OCI Worker (24GB RAM) - increased capacity
+    const { batchSize = 10, maxCompanies = 200 } = req.body;
 
     logger.info(`Matching: Starting batch refresh (batch: ${batchSize}, max: ${maxCompanies})`);
 

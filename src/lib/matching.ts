@@ -818,42 +818,80 @@ export async function executeMatching(
 }
 
 /**
- * Store matching results in database
+ * Store matching results in database (incremental upsert)
+ *
+ * - New projects: INSERT with isNew=true
+ * - Existing projects: UPDATE scores only (preserve isRelevant, feedbackNote, isNew)
+ * - User feedback fields are never overwritten
  */
 export async function storeMatchingResults(
   userId: string,
   companyId: string,
   results: MatchingResultData[]
-): Promise<void> {
+): Promise<{ inserted: number; updated: number }> {
   try {
-    // Delete old results for this company (모든 사용자의 결과 삭제 - @@unique([companyId, projectId]) 충돌 방지)
-    await prisma.matchingResult.deleteMany({
-      where: { companyId },
-    });
-
-    // Store new results (top 50)
     const topResults = results.slice(0, 50);
 
-    await prisma.matchingResult.createMany({
-      data: topResults.map((result) => ({
-        userId,
-        companyId,
-        projectId: result.projectId,
-        totalScore: result.totalScore,
-        businessSimilarityScore: result.businessSimilarityScore,
-        categoryScore: result.categoryScore,
-        eligibilityScore: result.eligibilityScore,
-        timelinessScore: 0, // Deprecated: 더 이상 사용하지 않음
-        amountScore: 0, // Deprecated: 더 이상 사용하지 않음
-        confidence: result.confidence,
-        matchReasons: result.matchReasons,
-      })),
+    // Get existing result projectIds for this company
+    const existingResults = await prisma.matchingResult.findMany({
+      where: { companyId },
+      select: { projectId: true },
     });
+    const existingProjectIds = new Set(existingResults.map((r) => r.projectId));
 
-    logger.info("Matching results stored", {
-      resultCount: topResults.length,
+    let inserted = 0;
+    let updated = 0;
+
+    for (const result of topResults) {
+      if (existingProjectIds.has(result.projectId)) {
+        // UPDATE: refresh scores, keep user feedback and isNew status
+        await prisma.matchingResult.update({
+          where: {
+            companyId_projectId: {
+              companyId,
+              projectId: result.projectId,
+            },
+          },
+          data: {
+            totalScore: result.totalScore,
+            businessSimilarityScore: result.businessSimilarityScore,
+            categoryScore: result.categoryScore,
+            eligibilityScore: result.eligibilityScore,
+            confidence: result.confidence,
+            matchReasons: result.matchReasons,
+            // isNew, isRelevant, feedbackNote are NOT touched
+          },
+        });
+        updated++;
+      } else {
+        // INSERT: new matching result
+        await prisma.matchingResult.create({
+          data: {
+            userId,
+            companyId,
+            projectId: result.projectId,
+            totalScore: result.totalScore,
+            businessSimilarityScore: result.businessSimilarityScore,
+            categoryScore: result.categoryScore,
+            eligibilityScore: result.eligibilityScore,
+            timelinessScore: 0, // Deprecated: 더 이상 사용하지 않음
+            amountScore: 0, // Deprecated: 더 이상 사용하지 않음
+            confidence: result.confidence,
+            matchReasons: result.matchReasons,
+            isNew: true,
+          },
+        });
+        inserted++;
+      }
+    }
+
+    logger.info("Matching results stored (incremental)", {
+      inserted,
+      updated,
       companyId,
     });
+
+    return { inserted, updated };
   } catch (error) {
     logger.error("Store results error", { error, companyId });
     throw new Error("Failed to store matching results");
