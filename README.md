@@ -36,7 +36,7 @@
 - **Email**: Resend
 - **Notifications**: Discord/Slack Webhooks
 - **Storage**: Supabase Storage
-- **Document Parsing**: Railway Microservices
+- **Document Parsing**: OCI Worker (HWP/HWPX/PDF)
 - **Cron Jobs**: Vercel Cron
 
 ## 🚀 시작하기
@@ -267,6 +267,29 @@ pnpm test:watch       # Watch 모드로 테스트
 - [x] 기본 테스트 커버리지
 
 자세한 내용은 `/docs/prd.md` 참조
+
+## 🖥 Worker 인프라 (OCI)
+
+워커 서비스는 OCI Always Free VM에서 Docker 컨테이너로 운영됩니다.
+
+| 서비스 | 포트 | 역할 |
+|--------|------|------|
+| flowmate-crawler | 3001 | 지원사업 크롤링 |
+| flowmate-embedding | 3002 | 임베딩 생성 + RAG 매칭 |
+| flowmate-parser | 8000 | HWP/HWPX/PDF 텍스트 추출 |
+
+- **서버**: Ampere A1.Flex (4 OCPU, 24GB RAM, ARM64)
+- **도메인**: `worker.jerome87.com` (Cloudflare Proxy)
+- **배포**: `deploy/oci/deploy.sh` (build / start / stop / status / logs)
+
+```bash
+# OCI 서버에서 배포
+cd /home/ubuntu/flowmate
+./deploy/oci/deploy.sh build    # Docker 이미지 빌드
+./deploy/oci/deploy.sh start    # 컨테이너 시작
+./deploy/oci/deploy.sh status   # 헬스 체크
+./deploy/oci/deploy.sh logs parser  # 로그 확인
+```
 
 ## 📖 문서
 

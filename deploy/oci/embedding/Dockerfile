@@ -3,19 +3,18 @@ FROM node:20-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 
-ENV NODE_ENV=production
 WORKDIR /app
 
 # Install pnpm
 RUN corepack enable && corepack prepare pnpm@9.15.3 --activate
 
-# Dependencies (cache layer)
+# Dependencies (cache layer) - need devDeps for prisma + tsx
 COPY package.json pnpm-lock.yaml .npmrc* ./
 COPY prisma ./prisma/
-RUN pnpm install --frozen-lockfile
-
-# Generate Prisma client
-RUN pnpm run db:generate
+ENV NODE_ENV=development
+RUN pnpm install --frozen-lockfile --ignore-scripts \
+    && pnpm exec prisma generate
+ENV NODE_ENV=production
 
 # Source code
 COPY src ./src/

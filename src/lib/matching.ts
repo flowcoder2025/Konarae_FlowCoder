@@ -717,16 +717,16 @@ export async function executeMatching(
     const projectIds = filteredProjects.map((p) => p.id);
 
     // 순차 처리로 메모리 사용량 분산
-    const semanticScoreMap = await calculateSemanticScoresBatch(companyProfile, projectIds);
-    const documentSimilarityScoreMap = await calculateDocumentSimilarityScoresBatch(company.id, projectIds);
+    let semanticScoreMap: Map<string, number> | null = await calculateSemanticScoresBatch(companyProfile, projectIds);
+    let documentSimilarityScoreMap: Map<string, number> | null = await calculateDocumentSimilarityScoresBatch(company.id, projectIds);
 
     for (const project of filteredProjects) {
       // 텍스트 기반 유사도
-      const semanticScore = semanticScoreMap.get(project.id) || 0;
+      const semanticScore = semanticScoreMap!.get(project.id) || 0;
 
       // 문서 벡터 유사도
       const documentSimilarityScore =
-        documentSimilarityScoreMap.get(project.id) || 0;
+        documentSimilarityScoreMap!.get(project.id) || 0;
 
       // 사업 유사도 = 텍스트(60%) + 문서벡터(40%) 가중 평균
       // 문서 벡터가 없으면 텍스트만 사용
@@ -800,9 +800,11 @@ export async function executeMatching(
     // Sort by total score (descending)
     results.sort((a, b) => b.totalScore - a.totalScore);
 
-    // Memory Optimization (2025.02): 스코어 맵 및 중간 데이터 명시적 해제
-    semanticScoreMap.clear();
-    documentSimilarityScoreMap.clear();
+    // Memory Optimization: 스코어 맵 null 해제로 GC 대상화
+    semanticScoreMap!.clear();
+    documentSimilarityScoreMap!.clear();
+    semanticScoreMap = null;
+    documentSimilarityScoreMap = null;
 
     // Memory Optimization: 상위 100개만 반환하여 메모리 사용량 제한
     const topResults = results.slice(0, 100);

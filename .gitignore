@@ -35,3 +35,5 @@ Thumbs.db
 *.log
 .playwright-mcp/
 tsconfig.tsbuildinfo
+.vercel
+.env*.local

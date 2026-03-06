@@ -168,6 +168,7 @@ app.post('/generate-embeddings', async (req, res) => {
     let successCount = 0;
     let errorCount = 0;
     const errors: Array<{ projectId: string; error: string }> = [];
+    const MAX_ERRORS = 10;
 
     for (const project of projects) {
       try {
@@ -190,10 +191,12 @@ app.post('/generate-embeddings', async (req, res) => {
             data: { needsEmbedding: false },
           });
           errorCount++;
-          errors.push({
-            projectId: project.id,
-            error: 'No content to embed',
-          });
+          if (errors.length < MAX_ERRORS) {
+            errors.push({
+              projectId: project.id,
+              error: 'No content to embed',
+            });
+          }
           continue;
         }
 
@@ -223,10 +226,12 @@ app.post('/generate-embeddings', async (req, res) => {
         errorCount++;
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
         logger.error(`Embedding: Failed for project ${project.id}`, { error: errorMessage });
-        errors.push({
-          projectId: project.id,
-          error: errorMessage,
-        });
+        if (errors.length < MAX_ERRORS) {
+          errors.push({
+            projectId: project.id,
+            error: errorMessage,
+          });
+        }
       }
     }
 
@@ -333,7 +338,9 @@ async function processAnalysisBatch(
   const MINI_BATCH_SIZE = 10;
   let totalSuccess = 0;
   let totalFailed = 0;
-  const allErrors: Array<{ projectId: string; error: string }> = [];
+  // Memory fix: cap error array to prevent unbounded growth
+  const recentErrors: Array<{ projectId: string; error: string }> = [];
+  const MAX_ERRORS_KEPT = 10;
 
   for (let i = 0; i < projectIds.length; i += MINI_BATCH_SIZE) {
     const miniBatch = projectIds.slice(i, i + MINI_BATCH_SIZE);
@@ -341,7 +348,14 @@ async function processAnalysisBatch(
 
     totalSuccess += result.success;
     totalFailed += result.failed;
-    allErrors.push(...result.errors);
+
+    // Memory fix: only keep recent errors, discard old ones
+    for (const err of result.errors) {
+      if (recentErrors.length >= MAX_ERRORS_KEPT) {
+        recentErrors.shift();
+      }
+      recentErrors.push(err);
+    }
 
     // 미니 배치 완료 후 메모리 정리
     logMemoryUsage(`Analysis Mini-batch ${Math.floor(i / MINI_BATCH_SIZE) + 1}`);
@@ -364,7 +378,7 @@ async function processAnalysisBatch(
     successful: totalSuccess,
     failed: totalFailed,
     durationMinutes,
-    errors: allErrors.length > 0 ? allErrors.slice(0, 5) : undefined,
+    errors: recentErrors.length > 0 ? recentErrors.slice(0, 5) : undefined,
   });
 }
 
@@ -777,12 +791,14 @@ app.listen(PORT, () => {
 /**
  * Graceful Shutdown
  */
-process.on('SIGTERM', () => {
+process.on('SIGTERM', async () => {
   logger.info('SIGTERM received, shutting down gracefully...');
+  await prisma.$disconnect();
   process.exit(0);
 });
 
-process.on('SIGINT', () => {
+process.on('SIGINT', async () => {
   logger.info('SIGINT received, shutting down gracefully...');
+  await prisma.$disconnect();
   process.exit(0);
 });

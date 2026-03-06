@@ -89,39 +89,19 @@ export function chunkText(
 /**
  * Extract keywords from text for BM25 search
  */
-export function extractKeywords(text: string): string[] {
-  // Simple keyword extraction: lowercase, remove punctuation, filter common words
-  const commonWords = new Set([
-    "the",
-    "a",
-    "an",
-    "and",
-    "or",
-    "but",
-    "in",
-    "on",
-    "at",
-    "to",
-    "for",
-    "of",
-    "with",
-    "by",
-    "from",
-    "이",
-    "그",
-    "저",
-    "것",
-    "등",
-    "및",
-    "와",
-    "과",
-  ]);
+// Memory fix: module-level constant instead of per-call allocation
+const COMMON_WORDS = new Set([
+  "the", "a", "an", "and", "or", "but", "in", "on", "at", "to",
+  "for", "of", "with", "by", "from",
+  "이", "그", "저", "것", "등", "및", "와", "과",
+]);
 
+export function extractKeywords(text: string): string[] {
   return text
     .toLowerCase()
     .replace(/[^\w\sㄱ-ㅎ가-힣]/g, "")
     .split(/\s+/)
-    .filter((word) => word.length > 1 && !commonWords.has(word))
+    .filter((word) => word.length > 1 && !COMMON_WORDS.has(word))
     .slice(0, 50); // Limit keywords
 }
 
@@ -147,17 +127,17 @@ export async function storeDocumentEmbeddings(
       // Memory Optimization: 임베딩 생성 후 즉시 DB 저장 및 해제
       let embedding: number[] | null = await generateEmbedding(chunk);
       const keywords = extractKeywords(chunk);
-      const embeddingJson = JSON.stringify(embedding);
+      let embeddingJson: string | null = JSON.stringify(embedding);
 
       // 임베딩 배열 즉시 해제 (1536 floats = ~12KB per chunk)
       embedding = null;
 
+      const metadataJson = JSON.stringify(metadata);
+
       // Execute raw SQL to insert into document_embeddings table
       await prisma.$executeRaw`
         INSERT INTO document_embeddings (source_type, source_id, content, chunk_index, chunk_metadata, embedding, keywords)
-        VALUES (${sourceType}, ${sourceId}, ${chunk}, ${i}, ${JSON.stringify(
-        metadata
-      )}::jsonb, ${embeddingJson}::vector, ${keywords})
+        VALUES (${sourceType}, ${sourceId}, ${chunk}, ${i}, ${metadataJson}::jsonb, ${embeddingJson}::vector, ${keywords})
         ON CONFLICT (source_type, source_id, chunk_index)
         DO UPDATE SET
           content = EXCLUDED.content,
@@ -166,6 +146,9 @@ export async function storeDocumentEmbeddings(
           chunk_metadata = EXCLUDED.chunk_metadata,
           updated_at = NOW()
       `;
+
+      // Memory fix: release JSON string (~25KB per chunk)
+      embeddingJson = null;
     }
 
     logger.info(`Stored ${chunkCount} embeddings for ${sourceType}:${sourceId}`);

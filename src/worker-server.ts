@@ -182,16 +182,19 @@ app.post('/crawl/batch', async (req, res) => {
       timestamp: new Date().toISOString(),
     });
 
-    // 백그라운드에서 순차 처리
-    for (const jobId of jobIds) {
-      processCrawlJob(jobId)
-        .then((stats) => {
+    // 백그라운드에서 순차 처리 (Memory fix: await each to prevent parallel memory spikes)
+    (async () => {
+      for (const jobId of jobIds) {
+        try {
+          const stats = await processCrawlJob(jobId);
           logger.info(`Batch job ${jobId} completed`, { stats });
-        })
-        .catch((error) => {
+        } catch (error) {
           logger.error(`Batch job ${jobId} failed`, { error });
-        });
-    }
+        }
+      }
+    })().catch((error) => {
+      logger.error('Batch processing loop error', { error });
+    });
 
   } catch (error) {
     logger.error('Batch processing error', { error });
@@ -298,12 +301,20 @@ app.listen(PORT, () => {
 /**
  * Graceful Shutdown
  */
-process.on('SIGTERM', () => {
+process.on('SIGTERM', async () => {
   logger.info('SIGTERM received, shutting down gracefully...');
+  try {
+    const { closeBrowser } = await import('@/lib/crawler/playwright-browser');
+    await closeBrowser();
+  } catch { /* playwright may not be loaded */ }
   process.exit(0);
 });
 
-process.on('SIGINT', () => {
+process.on('SIGINT', async () => {
   logger.info('SIGINT received, shutting down gracefully...');
+  try {
+    const { closeBrowser } = await import('@/lib/crawler/playwright-browser');
+    await closeBrowser();
+  } catch { /* playwright may not be loaded */ }
   process.exit(0);
 });

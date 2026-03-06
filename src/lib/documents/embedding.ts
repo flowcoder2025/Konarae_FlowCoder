@@ -174,7 +174,9 @@ export async function saveDocumentEmbeddings(
     // 새 임베딩 저장 (Raw SQL 사용 - Unsupported vector 타입)
     for (let i = 0; i < embeddings.length; i++) {
       const emb = embeddings[i];
+      // Memory fix: build vector string, use it, then let it be GC'd each iteration
       const vectorStr = `[${emb.embedding.join(",")}]`;
+      const metadataStr = JSON.stringify(emb.metadata);
 
       await prisma.$executeRaw`
         INSERT INTO "CompanyDocumentEmbedding" (
@@ -185,10 +187,12 @@ export async function saveDocumentEmbeddings(
           ${i},
           ${emb.content},
           ${vectorStr}::vector,
-          ${JSON.stringify(emb.metadata)}::jsonb,
+          ${metadataStr}::jsonb,
           NOW()
         )
       `;
+      // embedding array no longer needed after stringify
+      emb.embedding = null as any;
     }
 
     return { success: true };

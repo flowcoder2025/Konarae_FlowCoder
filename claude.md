@@ -55,7 +55,7 @@
 | Auth | NextAuth.js + ReBAC 권한 시스템 |
 | AI/ML | Gemini 2.5 Pro Vision (문서 분석) + OpenAI Embeddings |
 | Storage | Supabase Storage |
-| Deploy | Vercel (Main) + Railway (Worker) |
+| Deploy | Vercel (Main) + OCI VM (Worker) |
 
 **참조 스킬**: `fdp-backend-architect` (백엔드 아키텍처)
 
@@ -389,9 +389,9 @@ CompanyDocument (메타데이터)
 ```
 SupportProject.needsEmbedding = true (크롤러 설정)
     ↓
-Vercel Cron (매일 01:00 KST) → Railway Worker 트리거
+Vercel Cron (매일 01:00 KST) → OCI Worker 트리거
     ↓
-Railway Worker: 배치 처리 (50개씩, 무제한 실행시간)
+OCI Worker: 배치 처리 (50개씩, 무제한 실행시간)
     ↓
 document_embeddings 테이블에 저장
 ```
@@ -412,6 +412,37 @@ CrawlSource → CrawlJob → SupportProject + ProjectAttachment
 - CP949 → UTF-8 → Latin-1 → UTF-8 복원 전략
 - EUC-KR variant 복원 지원
 - mojibake 패턴 감지 (혚혞혱, 챘챙챗 등)
+
+### 9.5 OCI Worker 인프라
+
+**서버**: OCI Always Free Ampere A1.Flex (4 OCPU, 24GB RAM, ARM64) - `158.180.81.7`
+**도메인**: `worker.jerome87.com` (Cloudflare Proxy ON, SSL 종단)
+
+```
+Cloudflare (SSL) → Nginx (호스트, port 80) → Docker 컨테이너
+                    ├── /crawl, /test-parser      → flowmate-crawler  (:3001)
+                    ├── /generate-embeddings, /matching → flowmate-embedding (:3002)
+                    └── /api/v1/extract            → flowmate-parser   (:8000)
+```
+
+| 컨테이너 | 포트 | 역할 | 메모리 |
+|-----------|------|------|--------|
+| flowmate-crawler | 3001 | 크롤링 잡 처리 | 1GB |
+| flowmate-embedding | 3002 | 임베딩 생성 + RAG 매칭 | 1GB |
+| flowmate-parser | 8000 | HWP/HWPX/PDF 텍스트 추출 | 512MB |
+
+**HWP 파싱 전략 (A+C 하이브리드)**:
+1. [A] HWP → HWPX 변환 (pyhwp/olefile) → lxml 기반 HWPX 파서
+2. [C] 폴백: Enhanced → Improved → Hybrid → OLE 멀티파서
+
+**배포 파일**: `deploy/oci/` (Dockerfile, nginx 설정, deploy.sh)
+**Nginx 설정**: `/etc/nginx/sites-available/worker` (호스트 nginx에 통합)
+**환경변수**: `/home/ubuntu/flowmate/.env.production`
+
+**Vercel 환경변수**:
+- `RAILWAY_CRAWLER_URL=https://worker.jerome87.com`
+- `RAILWAY_WORKER_URL=https://worker.jerome87.com`
+- `TEXT_PARSER_URL=https://worker.jerome87.com`
 
 ---
 
@@ -506,3 +537,4 @@ CREATE POLICY "users can view own data" ON companies
 | 2025-12-15 | 2.2.0 | 기업 문서 관리, 비동기 임베딩, RAG 매칭, 크롤러 시스템 추가 |
 | 2025-12-15 | 3.0.0 | Hub-Spoke 아키텍처 강화, 7개 하위 claude.md 가이드 통합 |
 | 2025-12-16 | 3.1.0 | 개발 규칙 섹션 추가 (Prisma 우선, 환경변수, ReBAC) |
+| 2026-03-06 | 3.2.0 | Railway → OCI 마이그레이션, Worker 인프라 섹션 추가 |

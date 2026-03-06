@@ -17,6 +17,19 @@ const logger = createLogger({ lib: "playwright-browser" });
 // 싱글톤 브라우저 인스턴스
 let browserInstance: Browser | null = null;
 let browserContext: BrowserContext | null = null;
+// Memory fix: auto-close browser after inactivity (5 minutes)
+let browserIdleTimer: ReturnType<typeof setTimeout> | null = null;
+const BROWSER_IDLE_TIMEOUT = 5 * 60 * 1000;
+
+function resetBrowserIdleTimer(): void {
+  if (browserIdleTimer) {
+    clearTimeout(browserIdleTimer);
+  }
+  browserIdleTimer = setTimeout(async () => {
+    logger.info("Browser idle timeout, closing...");
+    await closeBrowser();
+  }, BROWSER_IDLE_TIMEOUT);
+}
 
 /**
  * WAF 차단 도메인 목록
@@ -85,6 +98,7 @@ async function getBrowser(): Promise<Browser> {
     logger.info("Playwright browser launched successfully");
   }
 
+  resetBrowserIdleTimer();
   return browserInstance;
 }
 
@@ -184,6 +198,7 @@ export async function fetchWithPlaywright(
     throw error;
   } finally {
     await page.close();
+    resetBrowserIdleTimer();
   }
 }
 
@@ -245,6 +260,7 @@ export async function downloadWithPlaywright(
     throw error;
   } finally {
     await page.close();
+    resetBrowserIdleTimer();
   }
 }
 
@@ -252,6 +268,11 @@ export async function downloadWithPlaywright(
  * 브라우저 종료
  */
 export async function closeBrowser(): Promise<void> {
+  if (browserIdleTimer) {
+    clearTimeout(browserIdleTimer);
+    browserIdleTimer = null;
+  }
+
   if (browserContext) {
     await browserContext.close();
     browserContext = null;
