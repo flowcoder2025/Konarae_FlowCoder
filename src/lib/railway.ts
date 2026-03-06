@@ -11,13 +11,13 @@ import { createLogger } from "./logger";
 
 const logger = createLogger({ module: "railway" });
 
-// Railway Microservices URLs
+// Worker Service URLs (OCI VM via Nginx reverse proxy)
 const CRAWLER_SERVICE_URL =
   process.env.RAILWAY_CRAWLER_URL ||
-  "https://crawler-production-5fd6.up.railway.app";
+  "https://worker.jerome87.com";
 const AI_PROCESSOR_URL =
   process.env.RAILWAY_AI_PROCESSOR_URL ||
-  "https://ai-processor-production-4f58.up.railway.app";
+  "https://worker.jerome87.com";
 
 // Re-export document parser for backward compatibility
 export {

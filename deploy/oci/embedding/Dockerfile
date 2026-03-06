@@ -1,0 +1,30 @@
+# Embedding Worker for ARM64 (OCI Ampere A1)
+FROM node:20-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
+ENV NODE_ENV=production
+WORKDIR /app
+
+# Install pnpm
+RUN corepack enable && corepack prepare pnpm@9.15.3 --activate
+
+# Dependencies (cache layer)
+COPY package.json pnpm-lock.yaml .npmrc* ./
+COPY prisma ./prisma/
+RUN pnpm install --frozen-lockfile
+
+# Generate Prisma client
+RUN pnpm run db:generate
+
+# Source code
+COPY src ./src/
+COPY tsconfig.json tsconfig.worker.json ./
+
+EXPOSE 3002
+ENV PORT=3002
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:3002/health || exit 1
+
+CMD ["pnpm", "run", "worker:embedding"]
