@@ -17,9 +17,11 @@ const logger = createLogger({ lib: "playwright-browser" });
 // 싱글톤 브라우저 인스턴스
 let browserInstance: Browser | null = null;
 let browserContext: BrowserContext | null = null;
-// Memory fix: auto-close browser after inactivity (5 minutes)
+// Memory fix: auto-close browser after inactivity (2 minutes, reduced from 5)
 let browserIdleTimer: ReturnType<typeof setTimeout> | null = null;
-const BROWSER_IDLE_TIMEOUT = 5 * 60 * 1000;
+const BROWSER_IDLE_TIMEOUT = 2 * 60 * 1000;
+// Track active page count for leak detection
+let activePageCount = 0;
 
 function resetBrowserIdleTimer(): void {
   if (browserIdleTimer) {
@@ -66,7 +68,15 @@ export function isWafBlockedDomain(url: string): boolean {
  * 브라우저 초기화 (싱글톤)
  */
 async function getBrowser(): Promise<Browser> {
-  if (!browserInstance || !browserInstance.isConnected()) {
+  // Clean up disconnected browser before launching new one
+  if (browserInstance && !browserInstance.isConnected()) {
+    logger.warn("Browser disconnected, cleaning up before relaunch");
+    browserContext = null;
+    browserInstance = null;
+    activePageCount = 0;
+  }
+
+  if (!browserInstance) {
     logger.info("Launching Playwright browser...");
 
     browserInstance = await chromium.launch({
@@ -78,7 +88,18 @@ async function getBrowser(): Promise<Browser> {
         "--disable-gpu",
         "--disable-web-security",
         "--disable-features=IsolateOrigins,site-per-process",
+        "--single-process",           // Reduce child processes
+        "--disable-renderer-backgrounding",
+        "--js-flags=--max-old-space-size=256",
       ],
+    });
+
+    // Auto-cleanup on disconnect to prevent orphan processes
+    browserInstance.on('disconnected', () => {
+      logger.warn("Browser disconnected event fired, resetting singleton");
+      browserInstance = null;
+      browserContext = null;
+      activePageCount = 0;
     });
 
     // 브라우저 컨텍스트 생성 (쿠키/세션 유지)
@@ -137,9 +158,10 @@ export async function fetchWithPlaywright(
 
   const context = await getBrowserContext();
   const page = await context.newPage();
+  activePageCount++;
 
   try {
-    logger.info(`[Playwright] Navigating to: ${url}`);
+    logger.info(`[Playwright] Navigating to: ${url} (active pages: ${activePageCount})`);
 
     // 페이지 이동
     const response = await page.goto(url, {
@@ -197,7 +219,8 @@ export async function fetchWithPlaywright(
     logger.error(`[Playwright] Failed to fetch ${url}`, { error: error.message });
     throw error;
   } finally {
-    await page.close();
+    await page.close().catch(() => {});
+    activePageCount = Math.max(0, activePageCount - 1);
     resetBrowserIdleTimer();
   }
 }
@@ -259,7 +282,8 @@ export async function downloadWithPlaywright(
     logger.error(`[Playwright] Download failed: ${url}`, { error: error.message });
     throw error;
   } finally {
-    await page.close();
+    await page.close().catch(() => {});
+    activePageCount = Math.max(0, activePageCount - 1);
     resetBrowserIdleTimer();
   }
 }
@@ -274,13 +298,28 @@ export async function closeBrowser(): Promise<void> {
   }
 
   if (browserContext) {
-    await browserContext.close();
+    try {
+      // Close all open pages first
+      const pages = browserContext.pages();
+      if (pages.length > 0) {
+        logger.info(`Closing ${pages.length} open pages before browser shutdown`);
+        await Promise.allSettled(pages.map(p => p.close()));
+      }
+      await browserContext.close();
+    } catch (e) {
+      logger.warn("Error closing browser context", { error: (e as Error).message });
+    }
     browserContext = null;
   }
 
   if (browserInstance) {
-    await browserInstance.close();
+    try {
+      await browserInstance.close();
+    } catch (e) {
+      logger.warn("Error closing browser", { error: (e as Error).message });
+    }
     browserInstance = null;
+    activePageCount = 0;
     logger.info("Playwright browser closed");
   }
 }

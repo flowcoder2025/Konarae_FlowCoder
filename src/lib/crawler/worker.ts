@@ -56,6 +56,46 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+/**
+ * Gemini API rate limiter
+ * Free tier: 20 RPM for gemini-3-flash
+ * Self-limit to 15 RPM with quota-aware backoff
+ */
+const geminiRateLimiter = {
+  timestamps: [] as number[],
+  RPM_LIMIT: 15,
+  WINDOW_MS: 60_000,
+
+  async waitForSlot(): Promise<void> {
+    const now = Date.now();
+    // Prune timestamps older than 1 minute
+    this.timestamps = this.timestamps.filter(t => now - t < this.WINDOW_MS);
+
+    if (this.timestamps.length >= this.RPM_LIMIT) {
+      const oldestInWindow = this.timestamps[0];
+      const waitMs = this.WINDOW_MS - (now - oldestInWindow) + 1000; // +1s buffer
+      logger.info(`Gemini rate limit: waiting ${Math.round(waitMs / 1000)}s`);
+      await sleep(waitMs);
+      // Re-prune after wait
+      const afterWait = Date.now();
+      this.timestamps = this.timestamps.filter(t => afterWait - t < this.WINDOW_MS);
+    }
+
+    this.timestamps.push(Date.now());
+  },
+
+  /**
+   * Parse "retry in X seconds" from quota error message
+   */
+  parseRetryDelay(errorMessage: string): number | null {
+    const match = errorMessage.match(/retry in (\d+(?:\.\d+)?)s/i);
+    if (match) {
+      return Math.ceil(parseFloat(match[1]) * 1000) + 2000; // +2s buffer
+    }
+    return null;
+  },
+};
+
 function cleanTextPreservingLineBreaks(text: string): string {
   return text
     .replace(/[\r\n]+/g, '\n')
@@ -1671,11 +1711,38 @@ async function analyzeWithGemini(text: string): Promise<{
 원문:
 ${text}`;
 
-    const { text: result } = await generateText({
-      model,
-      prompt,
-      temperature: 0.1, // Low temperature for consistency
-    });
+    // Rate limit + quota-aware retry
+    const MAX_GEMINI_RETRIES = 3;
+    let result: string | null = null;
+
+    for (let attempt = 0; attempt < MAX_GEMINI_RETRIES; attempt++) {
+      try {
+        await geminiRateLimiter.waitForSlot();
+        const response = await generateText({
+          model,
+          prompt,
+          temperature: 0.1,
+        });
+        result = response.text;
+        break;
+      } catch (geminiError: any) {
+        const errMsg = geminiError?.message || '';
+        const isQuotaError = errMsg.includes('quota') || errMsg.includes('RESOURCE_EXHAUSTED') || errMsg.includes('429');
+
+        if (isQuotaError && attempt < MAX_GEMINI_RETRIES - 1) {
+          const retryMs = geminiRateLimiter.parseRetryDelay(errMsg) || 65_000;
+          logger.warn(`Gemini quota hit (attempt ${attempt + 1}/${MAX_GEMINI_RETRIES}), waiting ${Math.round(retryMs / 1000)}s`);
+          await sleep(retryMs);
+          continue;
+        }
+        throw geminiError;
+      }
+    }
+
+    if (!result) {
+      logger.warn("Gemini returned no result after retries");
+      return null;
+    }
 
     // Try to parse JSON response
     const jsonMatch = result.match(/\{[\s\S]*\}/);

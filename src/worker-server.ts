@@ -71,6 +71,14 @@ app.get('/health', (req, res) => {
   if (rssMB > MEMORY_CRITICAL_MB) {
     memoryStatus = 'critical';
     logger.error('CRITICAL: Memory usage exceeds 1GB', { rssMB, heapUsedMB });
+    // Force close browser to reclaim memory
+    import('@/lib/crawler/playwright-browser').then(({ closeBrowser }) => {
+      closeBrowser().catch(() => {});
+    });
+    // Force GC if available
+    if (global.gc) {
+      try { global.gc(); } catch { /* ignore */ }
+    }
   } else if (rssMB > MEMORY_WARNING_MB) {
     memoryStatus = 'warning';
     logger.warn('WARNING: Memory usage exceeds 512MB', { rssMB, heapUsedMB });

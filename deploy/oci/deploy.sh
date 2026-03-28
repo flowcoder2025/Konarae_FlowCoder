@@ -43,16 +43,22 @@ case "${1:-help}" in
       --restart always \
       --name flowmate-crawler \
       -p 3001:3001 \
+      --memory 2g \
+      --memory-swap 2g \
       --env-file "$PROJECT_DIR/.env.production" \
       -e PORT=3001 \
+      -e NODE_OPTIONS="--max-old-space-size=1024 --expose-gc" \
       flowmate-crawler
 
     sudo docker run -d \
       --restart always \
       --name flowmate-embedding \
       -p 3002:3002 \
+      --memory 1g \
+      --memory-swap 1g \
       --env-file "$PROJECT_DIR/.env.production" \
       -e PORT=3002 \
+      -e NODE_OPTIONS="--max-old-space-size=768 --expose-gc" \
       flowmate-embedding
 
     sudo docker run -d \

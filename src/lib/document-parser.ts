@@ -193,7 +193,7 @@ export async function parseDocument(
       headers: formData.getHeaders(),
       maxContentLength: Infinity,
       maxBodyLength: Infinity,
-      timeout: 60000, // 60초 타임아웃
+      timeout: 120000, // 120초 타임아웃 (HWP 대용량 파일 대응)
     });
 
     const data = response.data;
