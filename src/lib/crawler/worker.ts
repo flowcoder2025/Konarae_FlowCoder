@@ -1665,7 +1665,10 @@ async function analyzeWithGemini(text: string): Promise<{
 
     logger.debug("Analyzing with Gemini AI...");
 
-    const model = google("gemini-3-flash-preview");
+    // Disable SDK-level retry to prevent 3x3=9 API calls per analysis
+    const model = google("gemini-3-flash-preview", {
+      structuredOutputs: false,
+    });
 
     const prompt = `다음은 정부 지원사업 공고문입니다. 아래 정보를 JSON 형식으로 추출해주세요:
 
@@ -1722,6 +1725,7 @@ ${text}`;
           model,
           prompt,
           temperature: 0.1,
+          maxRetries: 0, // Disable SDK retry — we handle retry with quota-aware backoff
         });
         result = response.text;
         break;
