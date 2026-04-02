@@ -88,11 +88,12 @@ async function executeDailyDigest(source: string): Promise<NextResponse> {
     // This prevents duplicate sending when cron runs multiple times
     const userSettingsMap = new Map(usersWithSettings.map((s) => [s.userId, s]));
 
-    // Query matching results that haven't been sent yet (isNew = true)
+    // Query matching results that haven't been sent via digest yet
     const matchingResults = await prisma.matchingResult.findMany({
       where: {
         userId: { in: usersWithSettings.map((s) => s.userId) },
-        isNew: true,
+        disqualified: false,    // v3: exclude disqualified results
+        digestSentAt: null,     // v3: not yet sent via digest (independent of viewedAt)
       },
       select: {
         id: true,
@@ -207,7 +208,7 @@ async function executeDailyDigest(source: string): Promise<NextResponse> {
       }
     }
 
-    // Mark sent results as no longer new
+    // Mark sent results with digestSentAt timestamp
     if (successfulUserIds.length > 0) {
       const now = new Date();
 
@@ -215,8 +216,12 @@ async function executeDailyDigest(source: string): Promise<NextResponse> {
         where: {
           userId: { in: successfulUserIds },
           isNew: true,
+          digestSentAt: null,
         },
-        data: { isNew: false },
+        data: {
+          isNew: false,
+          digestSentAt: now,
+        },
       });
 
       await prisma.notificationSetting.updateMany({
@@ -261,18 +266,19 @@ async function sendDiscordDigest(
   webhookUrl: string,
   results: Array<{
     totalScore: number;
-    project: { name: string; organization: string; deadline: Date | null };
+    project: { id: string; name: string; organization: string; deadline: Date | null };
   }>,
   totalCount: number
 ): Promise<void> {
   try {
+    const baseUrl = process.env.NEXTAUTH_URL || "https://mate.flow-coder.com";
     const fields = results.map((r, i) => ({
       name: `${i + 1}. ${r.project.name}`,
       value: `${r.project.organization} | 점수: ${r.totalScore}점${
         r.project.deadline
           ? ` | 마감: ${r.project.deadline.toLocaleDateString("ko-KR")}`
           : ""
-      }`,
+      }\n[공고 보기](${baseUrl}/projects/${r.project.id})`,
       inline: false,
     }));
 
@@ -304,16 +310,17 @@ async function sendSlackDigest(
   webhookUrl: string,
   results: Array<{
     totalScore: number;
-    project: { name: string; organization: string; deadline: Date | null };
+    project: { id: string; name: string; organization: string; deadline: Date | null };
   }>,
   totalCount: number
 ): Promise<void> {
   try {
+    const baseUrl = process.env.NEXTAUTH_URL || "https://mate.flow-coder.com";
     const resultBlocks = results.map((r, i) => ({
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `*${i + 1}. ${r.project.name}*\n${r.project.organization} | 점수: ${r.totalScore}점${
+        text: `*${i + 1}. <${baseUrl}/projects/${r.project.id}|${r.project.name}>*\n${r.project.organization} | 점수: ${r.totalScore}점${
           r.project.deadline
             ? ` | 마감: ${r.project.deadline.toLocaleDateString("ko-KR")}`
             : ""

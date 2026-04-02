@@ -364,6 +364,11 @@ model SupportProject {
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
+  // Structured eligibility criteria (AI-extracted from target/eligibility text)
+  eligibilityCriteria  Json?      // EligibilityCriteria type (structured requirements)
+  criteriaExtractedAt  DateTime?  // When criteria were last extracted
+  criteriaVersion      Int    @default(0) // Extraction version (re-extract on increment)
+
   // Embedding queue flag
   needsEmbedding Boolean @default(true) // Flag for async embedding generation
 
@@ -476,10 +481,18 @@ model MatchingResult {
   isRelevant   Boolean?
   feedbackNote String?
 
+  // Disqualification tracking
+  disqualified       Boolean @default(false) // Hard-filtered by eligibility criteria
+  disqualifyReasons  String[]               // Why this match was disqualified
+
   // Tracking
-  isNew     Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @default(now()) @updatedAt
+  isNew            Boolean   @default(true)
+  firstMatchedAt   DateTime  @default(now()) // When first matched (never changes)
+  lastRefreshedAt  DateTime  @default(now()) // When scores were last recalculated
+  viewedAt         DateTime?                 // When user viewed this result (null=unseen)
+  digestSentAt     DateTime?                 // When digest email was sent for this result
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @default(now()) @updatedAt
 
   user    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   company Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
@@ -491,6 +504,9 @@ model MatchingResult {
   @@index([userId])
   @@index([totalScore(sort: Desc)])
   @@index([isNew])
+  @@index([disqualified])
+  @@index([viewedAt])
+  @@index([digestSentAt])
 }
 
 model MatchingPreference {

@@ -1,17 +1,22 @@
 /**
- * Matching Algorithm (PRD 6.2) - v2
+ * Matching Algorithm (PRD 6.2) - v3 Qualification-First
  *
- * 매칭 점수 계산 (3가지 요소):
- * - businessSimilarity (50%): 사업 유사도 (텍스트 + 문서 벡터)
- * - category (25%): 업종 적합도 (기업 업종 vs 프로젝트 대상/자격요건)
- * - eligibility (25%): 자격 요건 (인증, 기업 유형 등)
+ * 3-Stage Pipeline:
+ * [Stage 1] Hard Disqualify: confidence="high" eligibilityCriteria → pass/fail
+ * [Stage 2] Soft Penalty: confidence="medium" → score deduction
+ * [Stage 3] Qualification Score: weighted scoring
  *
- * 필터링:
- * - preferences.categories: 사용자 관심 분야로 프로젝트 필터링 (R&D, 수출 등)
+ * v3 가중치 (Qualification-First):
+ * - eligibility (40%): 자격 요건 (인증, 기업 유형, 규모 등)
+ * - category (20%): 업종 적합도
+ * - semantic (25%): RAG 유사도 (보너스)
+ * - document (15%): 문서 벡터 유사도 (보너스)
  *
- * v2 변경사항:
- * - timeliness, amount 점수 제거 (매칭 품질에 불필요)
- * - categoryScore: 기업 업종과 프로젝트 target/eligibility 키워드 매칭으로 변경
+ * v3 변경사항:
+ * - Hard disqualification based on structured eligibilityCriteria
+ * - Qualification-first weight inversion (eligibility > semantic)
+ * - Profile quality gating (thin profiles → semantic weight reduced)
+ * - Score scaling removed (raw scores used)
  */
 
 import { hybridSearch } from "./rag";
@@ -22,47 +27,188 @@ import {
   extractRegionFromAddress,
   extractSubRegionFromAddress,
   isRegionMatch,
-  type RegionCode,
 } from "./region";
+import type { EligibilityCriteria } from "./crawler/project-analyzer";
 
 const logger = createLogger({ module: "matching" });
 
-// Matching weights - Simplified (v2)
-// Removed: timeliness, amount (not meaningful for matching quality)
+// v3: Qualification-First weights
 const MATCHING_WEIGHTS = {
-  businessSimilarity: 0.50, // 사업 유사도 (텍스트 + 문서 벡터 통합)
-  category: 0.25, // 관심 분야 일치도 (사용자 선호도 vs 프로젝트 카테고리)
-  eligibility: 0.25, // 자격 요건 (인증, 기업 유형 등)
+  eligibility: 0.40,       // 자격 요건 (주 점수)
+  category: 0.20,          // 업종 적합도
+  semantic: 0.25,          // RAG 유사도 (보너스)
+  document: 0.15,          // 문서 벡터 유사도 (보너스)
 } as const;
 
+// v3: Weights for thin profiles (semantic is unreliable)
+const THIN_PROFILE_WEIGHTS = {
+  eligibility: 0.60,
+  category: 0.40,
+  semantic: 0.00,
+  document: 0.00,
+} as const;
+
+// Minimum profile text length for semantic scoring to be meaningful
+const MIN_PROFILE_LENGTH = 30;
+
+
 /**
- * Scale business similarity score to realistic range
- * Raw cosine similarity typically produces 25-50 range scores
- * This scales them to 50-100 range for better distribution
- *
- * @param rawScore - Raw similarity score (0-100)
- * @returns Scaled score (0-100)
+ * [Stage 1] Hard Disqualification Check
+ * Returns disqualify reasons if company fails high-confidence criteria.
+ * Returns empty array if company passes (or data is missing).
  */
-function scaleBusinessSimilarity(rawScore: number): number {
-  if (rawScore <= 0) return 0;
+export function checkHardDisqualification(
+  criteria: EligibilityCriteria | null | undefined,
+  company: {
+    establishedDate?: Date | null;
+    address?: string | null;
+    companySize?: string | null;
+    companyType?: string;
+    isVenture?: boolean;
+    isInnoBiz?: boolean;
+    isMainBiz?: boolean;
+    annualRevenue?: bigint | null;
+    employeeCount?: number | null;
+    businessCategory?: string | null;
+    certifications?: Array<{ certificationType: string; certificationName: string }>;
+  }
+): string[] {
+  if (!criteria || typeof criteria !== "object") return [];
 
-  // Input range: 20-50 (realistic observed range)
-  // Output range: 50-100
-  const inputMin = 20;
-  const inputMax = 50;
-  const outputMin = 50;
-  const outputMax = 100;
+  const reasons: string[] = [];
 
-  // Clamp input to expected range
-  const clampedScore = Math.max(inputMin, Math.min(inputMax, rawScore));
+  // 1. Company age check (업력)
+  if (criteria.maxCompanyAge?.confidence === "high" && company.establishedDate) {
+    const ageYears = (Date.now() - new Date(company.establishedDate).getTime()) / (365.25 * 24 * 60 * 60 * 1000);
+    const maxAge = criteria.maxCompanyAge.value as number;
+    if (ageYears > maxAge) {
+      reasons.push(`업력 ${maxAge}년 이내 조건 미충족 (현재 약 ${Math.floor(ageYears)}년)`);
+    }
+  }
+  if (criteria.minCompanyAge?.confidence === "high" && company.establishedDate) {
+    const ageYears = (Date.now() - new Date(company.establishedDate).getTime()) / (365.25 * 24 * 60 * 60 * 1000);
+    const minAge = criteria.minCompanyAge.value as number;
+    if (ageYears < minAge) {
+      reasons.push(`업력 ${minAge}년 이상 조건 미충족 (현재 약 ${Math.floor(ageYears)}년)`);
+    }
+  }
 
-  // Linear scaling
-  const scaled =
-    ((clampedScore - inputMin) / (inputMax - inputMin)) *
-      (outputMax - outputMin) +
-    outputMin;
+  // 2. Region check (지역)
+  if (criteria.requiredRegions?.confidence === "high" && company.address) {
+    const companyRegion = extractRegionFromAddress(company.address);
+    const requiredValues = criteria.requiredRegions.value as string[];
+    const regionType = (criteria.requiredRegions as { type?: string }).type;
 
-  return Math.round(Math.min(100, scaled));
+    if (companyRegion && requiredValues.length > 0) {
+      if (regionType === "exclude") {
+        // 제외 지역에 해당하면 탈락
+        if (requiredValues.some(r => companyRegion.includes(r) || r.includes(companyRegion))) {
+          reasons.push(`${requiredValues.join(", ")} 소재 기업 제외 대상`);
+        }
+      } else {
+        // 포함 지역에 해당하지 않으면 탈락
+        if (!requiredValues.some(r => companyRegion.includes(r) || r.includes(companyRegion))) {
+          reasons.push(`${requiredValues.join(", ")} 소재 기업만 지원 가능`);
+        }
+      }
+    }
+  }
+
+  // 3. Required certifications check (필수 인증서)
+  if (criteria.requiredCerts?.confidence === "high") {
+    const requiredCerts = criteria.requiredCerts.value as string[];
+    for (const cert of requiredCerts) {
+      const certLower = cert.toLowerCase();
+      const hasCert =
+        (certLower.includes("벤처") && company.isVenture) ||
+        (certLower.includes("이노비즈") && company.isInnoBiz) ||
+        (certLower.includes("메인비즈") && company.isMainBiz) ||
+        company.certifications?.some(
+          c => c.certificationType.includes(cert) || c.certificationName.includes(cert)
+        );
+
+      if (!hasCert) {
+        reasons.push(`${cert} 인증 필수 (미보유)`);
+      }
+    }
+  }
+
+  // 4. Revenue check (매출)
+  if (criteria.maxRevenue?.confidence === "high" && company.annualRevenue) {
+    const maxRev = criteria.maxRevenue.value as number;
+    if (Number(company.annualRevenue) > maxRev) {
+      reasons.push(`매출 ${(maxRev / 100000000).toFixed(0)}억원 이하 조건 미충족`);
+    }
+  }
+
+  // 5. Employee count check
+  if (criteria.maxEmployees?.confidence === "high" && company.employeeCount) {
+    const maxEmp = criteria.maxEmployees.value as number;
+    if (company.employeeCount > maxEmp) {
+      reasons.push(`종업원 ${maxEmp}인 이하 조건 미충족 (현재 ${company.employeeCount}인)`);
+    }
+  }
+
+  return reasons;
+}
+
+/**
+ * [Stage 2] Soft Penalty for medium-confidence criteria
+ * Returns a penalty multiplier (0.0 to 1.0, where 1.0 = no penalty)
+ */
+export function calculateSoftPenalty(
+  criteria: EligibilityCriteria | null | undefined,
+  company: {
+    establishedDate?: Date | null;
+    businessCategory?: string | null;
+    mainBusiness?: string | null;
+    businessItems?: string[];
+  }
+): { multiplier: number; warnings: string[] } {
+  if (!criteria || typeof criteria !== "object") return { multiplier: 1.0, warnings: [] };
+
+  const warnings: string[] = [];
+  let penalty = 0;
+
+  // Medium-confidence industry restriction
+  if (criteria.industryRestriction?.confidence === "medium") {
+    const industries = criteria.industryRestriction.value as string[];
+    const restrictionType = (criteria.industryRestriction as { type?: string }).type;
+    const companyBiz = [company.businessCategory, company.mainBusiness, ...(company.businessItems || [])]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+
+    if (restrictionType === "include" && industries.length > 0) {
+      const matches = industries.some(ind => companyBiz.includes(ind.toLowerCase()));
+      if (!matches) {
+        penalty += 0.3;
+        warnings.push(`업종 조건 확인 필요: ${industries.join(", ")}`);
+      }
+    }
+  }
+
+  // Medium-confidence company age
+  if (criteria.maxCompanyAge?.confidence === "medium" && company.establishedDate) {
+    const ageYears = (Date.now() - new Date(company.establishedDate).getTime()) / (365.25 * 24 * 60 * 60 * 1000);
+    const maxAge = criteria.maxCompanyAge.value as number;
+    if (ageYears > maxAge) {
+      penalty += 0.2;
+      warnings.push(`업력 조건 확인 필요: ${maxAge}년 이내`);
+    }
+  }
+
+  // Medium-confidence certifications
+  if (criteria.requiredCerts?.confidence === "medium") {
+    const certs = criteria.requiredCerts.value as string[];
+    warnings.push(`인증 우대: ${certs.join(", ")}`);
+    // No penalty for medium-confidence certs (just a warning)
+  }
+
+  return {
+    multiplier: Math.max(0.5, 1.0 - penalty),
+    warnings,
+  };
 }
 
 export interface MatchingInput {
@@ -89,6 +235,8 @@ export interface MatchingScore {
 
 export interface MatchingResultData extends MatchingScore {
   projectId: string;
+  disqualified: boolean;
+  disqualifyReasons: string[];
   project: {
     id: string;
     name: string;
@@ -513,7 +661,8 @@ export async function executeMatching(
       select: {
         id: true,
         name: true,
-        address: true, // 지역 필터링용 주소 추가
+        address: true,
+        establishedDate: true, // v3: hard disqualification check
         companyType: true,
         companySize: true,
         businessCategory: true,
@@ -669,17 +818,18 @@ export async function executeMatching(
         organization: true,
         category: true,
         subCategory: true,
-        region: true, // v3: 지역 필터링용
-        subRegion: true, // v4: 시·군·구 필터링용
+        region: true,
+        subRegion: true,
         target: true,
         eligibility: true,
+        eligibilityCriteria: true, // v3: structured criteria for hard filter
         amountMin: true,
         amountMax: true,
         deadline: true,
         isPermanent: true,
         summary: true,
       },
-      take: 100, // Memory Optimization: 200 → 100 축소
+      take: 100,
     });
 
     // v3: 지역 필터링 적용 (preferences.regions가 없을 때 자동 필터링)
@@ -709,36 +859,77 @@ export async function executeMatching(
       hasExplicitSubRegionPreference: !!input.preferences?.subRegions?.length,
     });
 
+    // v3: Determine profile quality for weight selection
+    const profileLength = companyProfile.length;
+    const isThinProfile = profileLength < MIN_PROFILE_LENGTH;
+    const weights = isThinProfile ? THIN_PROFILE_WEIGHTS : MATCHING_WEIGHTS;
+
+    if (isThinProfile) {
+      logger.info("Thin profile detected, using qualification-only weights", {
+        profileLength,
+        companyName: company.name,
+      });
+    }
+
     // Calculate scores for each project
     const results: MatchingResultData[] = [];
 
-    // Batch score calculations
-    // Memory Optimization (2025.02): 순차 처리로 변경 (메모리 피크 감소)
     const projectIds = filteredProjects.map((p) => p.id);
 
-    // 순차 처리로 메모리 사용량 분산
-    let semanticScoreMap: Map<string, number> | null = await calculateSemanticScoresBatch(companyProfile, projectIds);
-    let documentSimilarityScoreMap: Map<string, number> | null = await calculateDocumentSimilarityScoresBatch(company.id, projectIds);
+    // Only compute semantic scores if profile is thick enough
+    let semanticScoreMap: Map<string, number> | null = isThinProfile
+      ? new Map()
+      : await calculateSemanticScoresBatch(companyProfile, projectIds);
+    let documentSimilarityScoreMap: Map<string, number> | null = isThinProfile
+      ? new Map()
+      : await calculateDocumentSimilarityScoresBatch(company.id, projectIds);
 
     for (const project of filteredProjects) {
-      // 텍스트 기반 유사도
+      // [Stage 1] Hard Disqualification - confidence="high" criteria
+      const criteria = project.eligibilityCriteria as EligibilityCriteria | null;
+      const disqualifyReasons = checkHardDisqualification(criteria, company);
+
+      if (disqualifyReasons.length > 0) {
+        // Disqualified: include in results but flagged (so user can see why)
+        results.push({
+          projectId: project.id,
+          disqualified: true,
+          disqualifyReasons,
+          project: {
+            id: project.id,
+            name: project.name,
+            organization: project.organization,
+            category: project.category,
+            summary: project.summary,
+            deadline: project.deadline,
+            amountMin: project.amountMin,
+            amountMax: project.amountMax,
+          },
+          totalScore: 0,
+          businessSimilarityScore: 0,
+          categoryScore: 0,
+          eligibilityScore: 0,
+          confidence: "low",
+          matchReasons: disqualifyReasons,
+        });
+        continue;
+      }
+
+      // [Stage 2] Soft Penalty - confidence="medium" criteria
+      const { multiplier: softMultiplier, warnings } = calculateSoftPenalty(criteria, company);
+
+      // Semantic score (RAG hybrid search)
       const semanticScore = semanticScoreMap!.get(project.id) || 0;
 
-      // 문서 벡터 유사도
-      const documentSimilarityScore =
-        documentSimilarityScoreMap!.get(project.id) || 0;
+      // Document vector similarity
+      const documentSimilarityScore = documentSimilarityScoreMap!.get(project.id) || 0;
 
-      // 사업 유사도 = 텍스트(60%) + 문서벡터(40%) 가중 평균
-      // 문서 벡터가 없으면 텍스트만 사용
-      const rawBusinessSimilarity =
-        documentSimilarityScore > 0
-          ? Math.round(semanticScore * 0.6 + documentSimilarityScore * 0.4)
-          : semanticScore;
+      // v3: Combined business similarity score (no scaling - raw scores)
+      const businessSimilarityScore = documentSimilarityScore > 0
+        ? Math.round(semanticScore * 0.6 + documentSimilarityScore * 0.4)
+        : semanticScore;
 
-      // 스케일링 적용: 20-50 범위를 50-100 범위로 변환
-      const businessSimilarityScore = scaleBusinessSimilarity(rawBusinessSimilarity);
-
-      // Category score (업종 적합도) - v2: 기업 업종과 프로젝트 대상/이름 비교
+      // Category score
       const categoryScore = calculateCategoryScore(
         [
           company.businessCategory,
@@ -747,29 +938,30 @@ export async function executeMatching(
         ].filter(Boolean) as string[],
         project.target,
         project.eligibility,
-        project.name // 프로젝트 이름도 업종 매칭에 활용
+        project.name
       );
 
-      // Eligibility score (자격 요건)
+      // Eligibility score
       const { score: eligibilityScore, reasons: eligibilityReasons } =
         calculateEligibilityScore(company, project);
 
-      // Calculate total score (v2: 3가지 요소만 사용)
-      const totalScore = Math.round(
-        businessSimilarityScore * MATCHING_WEIGHTS.businessSimilarity +
-          categoryScore * MATCHING_WEIGHTS.category +
-          eligibilityScore * MATCHING_WEIGHTS.eligibility
+      // v3: Qualification-First weighted total
+      const rawTotal = Math.round(
+        eligibilityScore * weights.eligibility +
+        categoryScore * weights.category +
+        semanticScore * weights.semantic +
+        documentSimilarityScore * weights.document
       );
 
-      // Combine reasons
-      const matchReasons = [...eligibilityReasons];
+      // Apply soft penalty
+      const totalScore = Math.round(rawTotal * softMultiplier);
 
-      // Add business similarity reason if high
-      if (businessSimilarityScore >= 70) {
+      // Combine reasons
+      const matchReasons = [...eligibilityReasons, ...warnings];
+
+      if (semanticScore >= 40) {
         matchReasons.push("높은 사업 유사도");
       }
-
-      // Add category reason if high
       if (categoryScore >= 60) {
         matchReasons.push("업종 일치");
       }
@@ -778,6 +970,8 @@ export async function executeMatching(
 
       results.push({
         projectId: project.id,
+        disqualified: false,
+        disqualifyReasons: [],
         project: {
           id: project.id,
           name: project.name,
@@ -797,10 +991,13 @@ export async function executeMatching(
       });
     }
 
-    // Sort by total score (descending)
-    results.sort((a, b) => b.totalScore - a.totalScore);
+    // Sort: qualified results first (by score), then disqualified at the end
+    results.sort((a, b) => {
+      if (a.disqualified !== b.disqualified) return a.disqualified ? 1 : -1;
+      return b.totalScore - a.totalScore;
+    });
 
-    // Memory Optimization: 스코어 맵 null 해제로 GC 대상화
+    // Memory Optimization
     semanticScoreMap!.clear();
     documentSimilarityScoreMap!.clear();
     semanticScoreMap = null;
@@ -818,19 +1015,21 @@ export async function executeMatching(
 }
 
 /**
- * Store matching results in database (incremental upsert)
+ * Store matching results in database (v3 incremental upsert)
  *
- * - New projects: INSERT with isNew=true
- * - Existing projects: UPDATE scores only (preserve isRelevant, feedbackNote, isNew)
- * - User feedback fields are never overwritten
+ * - Disqualified projects: skip storage (not shown to user by default)
+ * - New qualified projects: INSERT with isNew=true, firstMatchedAt=now
+ * - Existing projects: UPDATE scores + lastRefreshedAt (preserve viewedAt, feedback)
  */
 export async function storeMatchingResults(
   userId: string,
   companyId: string,
   results: MatchingResultData[]
-): Promise<{ inserted: number; updated: number }> {
+): Promise<{ inserted: number; updated: number; disqualified: number }> {
   try {
-    const topResults = results.slice(0, 50);
+    // Filter out disqualified results — don't store them
+    const qualifiedResults = results.filter((r) => !r.disqualified).slice(0, 50);
+    const disqualifiedCount = results.filter((r) => r.disqualified).length;
 
     // Get existing result projectIds for this company
     const existingResults = await prisma.matchingResult.findMany({
@@ -841,10 +1040,11 @@ export async function storeMatchingResults(
 
     let inserted = 0;
     let updated = 0;
+    const now = new Date();
 
-    for (const result of topResults) {
+    for (const result of qualifiedResults) {
       if (existingProjectIds.has(result.projectId)) {
-        // UPDATE: refresh scores, keep user feedback and isNew status
+        // UPDATE: refresh scores + lastRefreshedAt
         await prisma.matchingResult.update({
           where: {
             companyId_projectId: {
@@ -859,7 +1059,10 @@ export async function storeMatchingResults(
             eligibilityScore: result.eligibilityScore,
             confidence: result.confidence,
             matchReasons: result.matchReasons,
-            // isNew, isRelevant, feedbackNote are NOT touched
+            disqualified: false,
+            disqualifyReasons: [],
+            lastRefreshedAt: now,
+            // viewedAt, isNew, isRelevant, feedbackNote are NOT touched
           },
         });
         updated++;
@@ -874,24 +1077,29 @@ export async function storeMatchingResults(
             businessSimilarityScore: result.businessSimilarityScore,
             categoryScore: result.categoryScore,
             eligibilityScore: result.eligibilityScore,
-            timelinessScore: 0, // Deprecated: 더 이상 사용하지 않음
-            amountScore: 0, // Deprecated: 더 이상 사용하지 않음
+            timelinessScore: 0,
+            amountScore: 0,
             confidence: result.confidence,
             matchReasons: result.matchReasons,
+            disqualified: false,
+            disqualifyReasons: [],
             isNew: true,
+            firstMatchedAt: now,
+            lastRefreshedAt: now,
           },
         });
         inserted++;
       }
     }
 
-    logger.info("Matching results stored (incremental)", {
+    logger.info("Matching results stored (v3)", {
       inserted,
       updated,
+      disqualified: disqualifiedCount,
       companyId,
     });
 
-    return { inserted, updated };
+    return { inserted, updated, disqualified: disqualifiedCount };
   } catch (error) {
     logger.error("Store results error", { error, companyId });
     throw new Error("Failed to store matching results");

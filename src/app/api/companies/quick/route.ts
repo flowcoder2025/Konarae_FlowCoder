@@ -97,17 +97,15 @@ export async function POST(request: Request) {
     // Grant ReBAC permissions
     await grant("company", company.id, "owner", "user", session.user.id);
 
-    // Create matching preferences if interests provided
-    if (interests.length > 0) {
-      await prisma.matchingPreference.create({
-        data: {
-          userId: session.user.id,
-          companyId: company.id,
-          categories: interests,
-          regions: ["전국"],
-        },
-      });
-    }
+    // Always create matching preferences so company is included in auto-matching
+    await prisma.matchingPreference.create({
+      data: {
+        userId: session.user.id,
+        companyId: company.id,
+        categories: interests,
+        regions: ["전국"],
+      },
+    });
 
     logger.info("Quick company created", {
       companyId: company.id,

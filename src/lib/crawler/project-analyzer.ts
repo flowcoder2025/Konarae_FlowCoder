@@ -10,9 +10,65 @@
 import { generateText } from "ai";
 import { openai } from "@ai-sdk/openai";
 import { prisma } from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
 import { createLogger } from "@/lib/logger";
 
 const logger = createLogger({ lib: "project-analyzer" });
+
+/**
+ * Structured eligibility criteria extracted from project text
+ */
+export interface EligibilityCriterion {
+  value: string | number | string[];
+  confidence: "high" | "medium";
+}
+
+export interface EligibilityCriteria {
+  maxCompanyAge?: EligibilityCriterion;    // 업력 상한 (년)
+  minCompanyAge?: EligibilityCriterion;    // 업력 하한 (년)
+  requiredRegions?: EligibilityCriterion & { type: "include" | "exclude" };
+  companySize?: EligibilityCriterion;      // 중소기업, 중견기업 등
+  requiredCerts?: EligibilityCriterion;    // 벤처, 이노비즈 등
+  maxRevenue?: EligibilityCriterion;       // 매출 상한 (원)
+  minRevenue?: EligibilityCriterion;       // 매출 하한 (원)
+  maxEmployees?: EligibilityCriterion;     // 종업원 수 상한
+  minEmployees?: EligibilityCriterion;     // 종업원 수 하한
+  industryRestriction?: EligibilityCriterion & { type: "include" | "exclude" };
+}
+
+/**
+ * AI prompt for extracting structured eligibility criteria
+ */
+const ELIGIBILITY_EXTRACTION_PROMPT = `당신은 정부 지원사업 공고에서 신청 자격 조건을 구조화하여 추출하는 전문가입니다.
+
+## 역할
+주어진 공고의 "지원대상", "신청자격" 텍스트에서 **명확한 필수 조건**을 JSON으로 추출하세요.
+
+## 추출 규칙
+
+1. **confidence 판단 기준**:
+   - "high": 명확한 수치/조건이 있는 경우 ("창업 3년 이내", "수도권 제외", "벤처기업 한정")
+   - "medium": 해석 여지가 있는 경우 ("SW 분야 기업", "기술기반 기업")
+
+2. **필수 vs 우대 구분**:
+   - "~만 가능", "~에 한함", "~이어야 함", "~제외" → 필수조건으로 추출
+   - "~우대", "~가점", "~우선" → 추출하지 않음 (우대사항은 제외)
+
+3. **추출하지 않는 경우**:
+   - 조건이 명시되지 않은 항목은 포함하지 마세요
+   - "중소기업" 같은 매우 일반적인 대상은 companySize에 포함하되 confidence="medium"
+
+## 출력 형식 (JSON)
+
+{
+  "maxCompanyAge": { "value": 3, "confidence": "high" },
+  "requiredRegions": { "value": ["경북", "경남"], "type": "include", "confidence": "high" },
+  "companySize": { "value": ["중소기업"], "confidence": "medium" },
+  "requiredCerts": { "value": ["벤처기업"], "confidence": "high" },
+  "industryRestriction": { "value": ["제조업", "IT"], "type": "include", "confidence": "medium" }
+}
+
+조건이 없으면 빈 객체 {}를 반환하세요. JSON만 출력하세요.`;
 
 /**
  * AI 분석용 프롬프트
@@ -188,6 +244,43 @@ export async function generateProjectMarkdown(
 }
 
 /**
+ * Extract structured eligibility criteria from project text using GPT-4o-mini
+ */
+export async function extractEligibilityCriteria(
+  target: string,
+  eligibility: string | null,
+  description: string | null
+): Promise<EligibilityCriteria> {
+  try {
+    const inputText = [
+      `지원대상: ${target}`,
+      eligibility ? `신청자격: ${eligibility}` : null,
+      description ? `상세내용 (참고): ${description.slice(0, 3000)}` : null,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+
+    const { text } = await generateText({
+      model: openai("gpt-4o-mini"),
+      system: ELIGIBILITY_EXTRACTION_PROMPT,
+      prompt: inputText,
+      maxOutputTokens: 1000,
+    });
+
+    // Parse JSON from response (handle markdown code blocks)
+    const jsonStr = text.replace(/```json\n?|\n?```/g, "").trim();
+    const parsed = JSON.parse(jsonStr);
+
+    return parsed as EligibilityCriteria;
+  } catch (error) {
+    logger.warn("Failed to extract eligibility criteria", {
+      error: error instanceof Error ? error.message : "Unknown",
+    });
+    return {};
+  }
+}
+
+/**
  * 단일 프로젝트 분석
  * Memory Optimization (2025.02): 중간 변수 명시적 해제
  */
@@ -230,18 +323,28 @@ export async function analyzeProject(projectId: string): Promise<{
     // 첨부파일 파싱 결과 통합
     let attachmentContent: string | null = await integrateAttachmentContent(projectId);
 
-    // AI 마크다운 생성
-    const markdown = await generateProjectMarkdown(crawledData, attachmentContent);
+    // AI 마크다운 생성 + 필수조건 추출 (병렬 실행)
+    const [markdown, eligibilityCriteria] = await Promise.all([
+      generateProjectMarkdown(crawledData, attachmentContent),
+      extractEligibilityCriteria(project.target, project.eligibility, project.description),
+    ]);
 
     // Memory Optimization: 중간 데이터 해제
     crawledData = null;
     attachmentContent = null;
 
-    // 결과 저장
+    // 결과 저장 (markdown + eligibility criteria)
     await prisma.supportProject.update({
       where: { id: projectId },
       data: {
         descriptionMarkdown: markdown,
+        eligibilityCriteria: Object.keys(eligibilityCriteria).length > 0
+          ? (eligibilityCriteria as unknown as Prisma.InputJsonValue)
+          : undefined,
+        criteriaExtractedAt: Object.keys(eligibilityCriteria).length > 0
+          ? new Date()
+          : undefined,
+        criteriaVersion: { increment: 1 },
         needsAnalysis: false,
         analyzedAt: new Date(),
         analysisVersion: analysisVersion + 1,
@@ -249,7 +352,9 @@ export async function analyzeProject(projectId: string): Promise<{
       },
     });
 
-    logger.info(`Analysis complete for project: ${projectName}`);
+    logger.info(`Analysis complete for project: ${projectName}`, {
+      criteriaExtracted: Object.keys(eligibilityCriteria).length,
+    });
 
     return { success: true, markdown };
   } catch (error) {

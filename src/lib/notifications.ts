@@ -572,6 +572,8 @@ function buildDailyDigestHtml(payload: DailyDigestPayload): string {
           ? "보통"
           : "낮음";
 
+      const projectUrl = `${process.env.NEXTAUTH_URL}/projects/${result.project.id}`;
+
       // Email-safe layout using tables instead of flexbox (better email client compatibility)
       return `
         <tr style="border-bottom: 1px solid ${colors.border};">
@@ -584,7 +586,7 @@ function buildDailyDigestHtml(payload: DailyDigestPayload): string {
                   </div>
                 </td>
                 <td valign="top">
-                  <a href="${process.env.NEXTAUTH_URL}/projects/${result.project.id}" style="color: ${colors.foreground}; font-weight: 600; text-decoration: none; font-size: 16px;">
+                  <a href="${projectUrl}" style="color: ${colors.primary}; font-weight: 600; text-decoration: underline; font-size: 16px;">
                     ${result.project.name}
                   </a>
                   <div style="color: ${colors.muted}; font-size: 14px; margin-top: 4px;">
@@ -609,6 +611,11 @@ function buildDailyDigestHtml(payload: DailyDigestPayload): string {
                         </div>`
                       : ""
                   }
+                  <div style="margin-top: 10px;">
+                    <a href="${projectUrl}" style="display: inline-block; background: ${colors.primary}; color: white; padding: 6px 16px; text-decoration: none; border-radius: 6px; font-size: 13px; font-weight: 600;">
+                      공고 보기 →
+                    </a>
+                  </div>
                 </td>
               </tr>
             </table>

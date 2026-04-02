@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { grant } from "@/lib/rebac";
+import { extractRegionFromAddress } from "@/lib/region";
 import { z } from "zod";
 import { createLogger } from "@/lib/logger";
 
@@ -140,6 +141,17 @@ export async function POST(req: NextRequest) {
 
       // Grant owner permission using ReBAC
       await grant("company", newCompany.id, "owner", "user", session.user.id);
+
+      // Create default matching preferences so company is included in auto-matching
+      const region = extractRegionFromAddress(validatedData.address);
+      await tx.matchingPreference.create({
+        data: {
+          userId: session.user.id,
+          companyId: newCompany.id,
+          categories: [],
+          regions: region ? [region] : [],
+        },
+      });
 
       return newCompany;
     });

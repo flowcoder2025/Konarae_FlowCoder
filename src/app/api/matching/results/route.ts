@@ -1,6 +1,7 @@
 /**
- * Matching Results API (PRD 4.4)
- * GET /api/matching/results - List matching results
+ * Matching Results API (PRD 4.4) - v3
+ * GET /api/matching/results - List matching results (filtered: active, non-expired, qualified)
+ * PATCH /api/matching/results - Mark results as viewed (viewedAt)
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -22,8 +23,19 @@ export async function GET(req: NextRequest) {
     const confidence = searchParams.get("confidence");
 
     // Build where clause
+    const now = new Date();
     const where: any = {
       userId: session.user.id,
+      disqualified: false, // v3: hide disqualified results
+      // v3: only show results for active, non-expired projects
+      project: {
+        status: "active",
+        deletedAt: null,
+        OR: [
+          { isPermanent: true },
+          { deadline: { gte: now } },
+        ],
+      },
     };
 
     if (companyId) {
@@ -84,6 +96,42 @@ export async function GET(req: NextRequest) {
     logger.error("Failed to fetch matching results", { error });
     return NextResponse.json(
       { error: "Failed to fetch matching results" },
+      { status: 500 }
+    );
+  }
+}
+
+/**
+ * PATCH /api/matching/results - Mark results as viewed
+ * Body: { resultIds: string[] }
+ */
+export async function PATCH(req: NextRequest) {
+  try {
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const { resultIds } = await req.json();
+
+    if (!Array.isArray(resultIds) || resultIds.length === 0) {
+      return NextResponse.json({ error: "resultIds required" }, { status: 400 });
+    }
+
+    const updated = await prisma.matchingResult.updateMany({
+      where: {
+        id: { in: resultIds },
+        userId: session.user.id,
+        viewedAt: null,
+      },
+      data: { viewedAt: new Date() },
+    });
+
+    return NextResponse.json({ marked: updated.count });
+  } catch (error) {
+    logger.error("Failed to mark results as viewed", { error });
+    return NextResponse.json(
+      { error: "Failed to mark results" },
       { status: 500 }
     );
   }
