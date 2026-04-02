@@ -386,7 +386,7 @@ export async function getProjectsNeedingAnalysis(batchSize: number = 50): Promis
     },
     take: batchSize,
     orderBy: {
-      updatedAt: "desc",
+      crawledAt: "desc", // 최근 크롤링된 프로젝트부터 분석
     },
   });
 }
