@@ -23,6 +23,11 @@ const BROWSER_IDLE_TIMEOUT = 2 * 60 * 1000;
 // Track active page count for leak detection
 let activePageCount = 0;
 
+// Race condition fix: Promise lock to prevent multiple browser launches
+let browserInitPromise: Promise<Browser> | null = null;
+// Concurrency limit: max simultaneous pages
+const MAX_CONCURRENT_PAGES = 5;
+
 function resetBrowserIdleTimer(): void {
   if (browserIdleTimer) {
     clearTimeout(browserIdleTimer);
@@ -74,53 +79,72 @@ async function getBrowser(): Promise<Browser> {
     browserContext = null;
     browserInstance = null;
     activePageCount = 0;
+    browserInitPromise = null;
   }
 
-  if (!browserInstance) {
-    logger.info("Launching Playwright browser...");
-
-    browserInstance = await chromium.launch({
-      headless: true,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-gpu",
-        "--disable-web-security",
-        "--disable-features=IsolateOrigins,site-per-process",
-        "--single-process",           // Reduce child processes
-        "--disable-renderer-backgrounding",
-        "--js-flags=--max-old-space-size=256",
-      ],
-    });
-
-    // Auto-cleanup on disconnect to prevent orphan processes
-    browserInstance.on('disconnected', () => {
-      logger.warn("Browser disconnected event fired, resetting singleton");
-      browserInstance = null;
-      browserContext = null;
-      activePageCount = 0;
-    });
-
-    // 브라우저 컨텍스트 생성 (쿠키/세션 유지)
-    browserContext = await browserInstance.newContext({
-      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-      viewport: { width: 1920, height: 1080 },
-      locale: "ko-KR",
-      timezoneId: "Asia/Seoul",
-      extraHTTPHeaders: {
-        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Sec-Ch-Ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
-        "Sec-Ch-Ua-Mobile": "?0",
-        "Sec-Ch-Ua-Platform": '"Windows"',
-      },
-    });
-
-    logger.info("Playwright browser launched successfully");
+  // Already initialized — fast path
+  if (browserInstance) {
+    resetBrowserIdleTimer();
+    return browserInstance;
   }
+
+  // Race condition fix: if another call is already initializing, wait for it
+  if (browserInitPromise) {
+    return browserInitPromise;
+  }
+
+  // Start initialization with Promise lock
+  browserInitPromise = (async () => {
+    try {
+      logger.info("Launching Playwright browser...");
+
+      browserInstance = await chromium.launch({
+        headless: true,
+        args: [
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--disable-dev-shm-usage",
+          "--disable-gpu",
+          "--disable-web-security",
+          "--disable-features=IsolateOrigins,site-per-process",
+          "--single-process",
+          "--disable-renderer-backgrounding",
+          "--js-flags=--max-old-space-size=256",
+        ],
+      });
+
+      // Auto-cleanup on disconnect to prevent orphan processes
+      browserInstance.on("disconnected", () => {
+        logger.warn("Browser disconnected event fired, resetting singleton");
+        browserInstance = null;
+        browserContext = null;
+        activePageCount = 0;
+        browserInitPromise = null;
+      });
+
+      // 브라우저 컨텍스트 생성 (쿠키/세션 유지)
+      browserContext = await browserInstance.newContext({
+        userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        viewport: { width: 1920, height: 1080 },
+        locale: "ko-KR",
+        timezoneId: "Asia/Seoul",
+        extraHTTPHeaders: {
+          "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+          "Sec-Ch-Ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+          "Sec-Ch-Ua-Mobile": "?0",
+          "Sec-Ch-Ua-Platform": '"Windows"',
+        },
+      });
+
+      logger.info("Playwright browser launched successfully");
+      return browserInstance;
+    } finally {
+      browserInitPromise = null;
+    }
+  })();
 
   resetBrowserIdleTimer();
-  return browserInstance;
+  return browserInitPromise;
 }
 
 /**
@@ -156,12 +180,18 @@ export async function fetchWithPlaywright(
     waitForLoadState = "domcontentloaded",
   } = options;
 
+  // Concurrency gate: wait if too many pages are open
+  while (activePageCount >= MAX_CONCURRENT_PAGES) {
+    logger.debug(`[Playwright] Waiting for page slot (${activePageCount}/${MAX_CONCURRENT_PAGES})`);
+    await new Promise((r) => setTimeout(r, 500));
+  }
+
   const context = await getBrowserContext();
   const page = await context.newPage();
   activePageCount++;
 
   try {
-    logger.info(`[Playwright] Navigating to: ${url} (active pages: ${activePageCount})`);
+    logger.info(`[Playwright] Navigating to: ${url} (active pages: ${activePageCount}/${MAX_CONCURRENT_PAGES})`);
 
     // 페이지 이동
     const response = await page.goto(url, {
