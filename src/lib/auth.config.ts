@@ -34,20 +34,31 @@ export const authConfig: NextAuthConfig = {
       const isLoggedIn = !!auth?.user;
       const pathname = nextUrl.pathname;
 
-      const publicRoutes = ["/", "/login", "/signup", "/pricing"];
-      const isPublicRoute = publicRoutes.some((route) => pathname.startsWith(route));
+      const publicRoutes = ["/", "/projects", "/pricing", "/terms", "/privacy", "/refund", "/robots.txt", "/sitemap.xml"];
+      const legacyPublicRedirects = [
+        "/login",
+        "/dashboard",
+        "/home",
+        "/company",
+        "/companies",
+        "/matching",
+        "/business-plans",
+        "/evaluations",
+        "/diagnosis",
+        "/my-projects",
+        "/settings",
+      ];
+      const isPublicRoute = publicRoutes.some((route) => pathname === route || pathname.startsWith(`${route}/`));
+      const shouldRedirectLegacy = legacyPublicRedirects.some((route) => pathname === route || pathname.startsWith(`${route}/`));
 
-      // Redirect logged-in users away from auth pages
-      if (isLoggedIn && (pathname.startsWith("/login") || pathname.startsWith("/signup"))) {
-        return Response.redirect(new URL("/dashboard", nextUrl));
+      if (shouldRedirectLegacy && !pathname.startsWith("/admin")) {
+        return Response.redirect(new URL("/projects", nextUrl));
       }
 
-      // Allow public routes
       if (isPublicRoute) {
         return true;
       }
 
-      // Require login for protected routes
       return isLoggedIn;
     },
   },
