@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { PublicProjectCard } from "@/components/projects/public-project-card";
 import { Button } from "@/components/ui/button";
 import { parsePublicProjectQuery } from "@/lib/projects/public-query";
@@ -51,7 +52,7 @@ export default async function ProjectsPage({ searchParams }: ProjectsPageProps) 
           {regions.map((item) => <option key={item.region} value={item.region}>{item.region}</option>)}
         </select>
         <Button rounded="md" type="submit">검색</Button>
-        <Button asChild rounded="md" variant="outline"><a href="/projects">초기화</a></Button>
+        <Button asChild rounded="md" variant="outline"><Link href="/projects">초기화</Link></Button>
       </form>
 
       {result.projects.length === 0 ? (
