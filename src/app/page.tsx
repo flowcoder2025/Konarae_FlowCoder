@@ -4,6 +4,8 @@ import { PublicProjectCard } from "@/components/projects/public-project-card";
 import { Button } from "@/components/ui/button";
 import { listPublicProjects } from "@/lib/projects/public-service";
 
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = {
   title: "FlowMate - 정부지원사업 보드",
   description: "로그인 없이 정부지원사업을 검색하고 AI 요약으로 지원 조건과 준비 포인트를 빠르게 확인하세요.",

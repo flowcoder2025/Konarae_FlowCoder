@@ -7,6 +7,8 @@ import { getPublicProject } from "@/lib/projects/public-service";
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://mate.flow-coder.com";
 
+export const dynamic = "force-dynamic";
+
 interface ProjectDetailPageProps {
   params: Promise<{ id: string }>;
 }

@@ -3,6 +3,8 @@ import { Button } from "@/components/ui/button";
 import { parsePublicProjectQuery } from "@/lib/projects/public-query";
 import { listPublicCategories, listPublicProjects, listPublicRegions } from "@/lib/projects/public-service";
 
+export const dynamic = "force-dynamic";
+
 interface ProjectsPageProps {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
