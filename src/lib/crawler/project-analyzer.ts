@@ -12,6 +12,7 @@ import { openai } from "@ai-sdk/openai";
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { createLogger } from "@/lib/logger";
+import { ProjectAnalysisSchema, type ProjectAnalysis } from "@/lib/projects/analysis-schema";
 
 const logger = createLogger({ lib: "project-analyzer" });
 
@@ -34,6 +35,11 @@ export interface EligibilityCriteria {
   maxEmployees?: EligibilityCriterion;     // 종업원 수 상한
   minEmployees?: EligibilityCriterion;     // 종업원 수 하한
   industryRestriction?: EligibilityCriterion & { type: "include" | "exclude" };
+}
+
+interface EligibilityExtractionResult {
+  criteria: EligibilityCriteria;
+  succeeded: boolean;
 }
 
 /**
@@ -246,11 +252,102 @@ export async function generateProjectMarkdown(
 /**
  * Extract structured eligibility criteria from project text using GPT-4o-mini
  */
+function deriveAnalysisConfidence(criteriaCount: number, hasAttachmentContent: boolean): "high" | "medium" | "low" {
+  if (criteriaCount > 0 && hasAttachmentContent) return "high";
+  if (criteriaCount > 0) return "medium";
+  return "low";
+}
+
+function buildProjectAnalysis(input: {
+  project: {
+    summary: string;
+    target: string;
+    fundingSummary: string | null;
+    amountDescription: string | null;
+    startDate?: Date | null;
+    endDate?: Date | null;
+    deadline?: Date | null;
+    isPermanent?: boolean;
+    applicationProcess: string | null;
+    evaluationCriteria: string | null;
+    requiredDocuments: string[];
+    contactInfo: string | null;
+  };
+  markdown: string;
+  eligibilityCriteria: EligibilityCriteria;
+  hasAttachmentContent: boolean;
+}): ProjectAnalysis {
+  const criteriaEntries = Object.entries(input.eligibilityCriteria);
+  const confidence = deriveAnalysisConfidence(criteriaEntries.length, input.hasAttachmentContent);
+  const evidenceIds = criteriaEntries.map(([key]) => key);
+
+  const benefits: ProjectAnalysis["benefits"] = {
+    maxAmount: null,
+    nonCashBenefits: [],
+    notes: input.project.amountDescription ? [input.project.amountDescription] : [],
+  };
+  if (input.project.fundingSummary) benefits.cash = input.project.fundingSummary;
+
+  const period: ProjectAnalysis["period"] = {
+    isOpenEnded: Boolean(input.project.isPermanent),
+    status: input.project.isPermanent ? "open" : input.project.deadline ? "open" : "unknown",
+  };
+  if (input.project.startDate) period.startDate = input.project.startDate.toISOString();
+  if (input.project.endDate) period.endDate = input.project.endDate.toISOString();
+
+  return {
+    summary: {
+      plain: input.project.summary,
+      keyPoints: [input.project.target, input.project.fundingSummary].filter(Boolean) as string[],
+    },
+    benefits,
+    eligibility: {
+      required: criteriaEntries.map(([key, value]) => ({
+        label: key,
+        description: Array.isArray(value.value) ? value.value.join(", ") : String(value.value),
+        confidence: value.confidence,
+        evidenceIds: [key],
+        notes: [],
+      })),
+      preferred: [],
+      excluded: [],
+      ambiguous: [],
+    },
+    period,
+    application: {
+      method: input.project.applicationProcess ? [input.project.applicationProcess] : [],
+      channels: [],
+      requiredDocuments: input.project.requiredDocuments,
+      contact: input.project.contactInfo ? [input.project.contactInfo] : [],
+    },
+    selection: {
+      criteria: input.project.evaluationCriteria ? [input.project.evaluationCriteria] : [],
+      scoringHints: [],
+      likelyImportantFactors: [],
+    },
+    aiTips: {
+      whoShouldApply: [input.project.target],
+      preparationPriority: input.project.requiredDocuments,
+      writingStrategy: [],
+      commonRisks: [],
+      checklist: [],
+    },
+    evidence: evidenceIds.map((id) => ({ id, source: "ai", label: id, text: id })),
+    quality: {
+      confidence,
+      hasParsedAttachment: input.hasAttachmentContent,
+      hasSelectionCriteria: Boolean(input.project.evaluationCriteria),
+      missingFields: [],
+      warnings: [],
+    },
+  };
+}
+
 export async function extractEligibilityCriteria(
   target: string,
   eligibility: string | null,
   description: string | null
-): Promise<EligibilityCriteria> {
+): Promise<EligibilityExtractionResult> {
   try {
     const inputText = [
       `지원대상: ${target}`,
@@ -271,12 +368,12 @@ export async function extractEligibilityCriteria(
     const jsonStr = text.replace(/```json\n?|\n?```/g, "").trim();
     const parsed = JSON.parse(jsonStr);
 
-    return parsed as EligibilityCriteria;
+    return { criteria: parsed as EligibilityCriteria, succeeded: true };
   } catch (error) {
     logger.warn("Failed to extract eligibility criteria", {
       error: error instanceof Error ? error.message : "Unknown",
     });
-    return {};
+    return { criteria: {}, succeeded: false };
   }
 }
 
@@ -305,6 +402,10 @@ export async function analyzeProject(projectId: string): Promise<{
         amountDescription: true,
         contactInfo: true,
         requiredDocuments: true,
+        startDate: true,
+        endDate: true,
+        deadline: true,
+        isPermanent: true,
         analysisVersion: true,
       },
     });
@@ -323,11 +424,22 @@ export async function analyzeProject(projectId: string): Promise<{
     // 첨부파일 파싱 결과 통합
     let attachmentContent: string | null = await integrateAttachmentContent(projectId);
 
+    const hasAttachmentContent = Boolean(attachmentContent?.trim());
+
     // AI 마크다운 생성 + 필수조건 추출 (병렬 실행)
-    const [markdown, eligibilityCriteria] = await Promise.all([
+    const [markdown, eligibilityExtraction] = await Promise.all([
       generateProjectMarkdown(crawledData, attachmentContent),
       extractEligibilityCriteria(project.target, project.eligibility, project.description),
     ]);
+    const eligibilityCriteria = eligibilityExtraction.criteria;
+
+    const projectAnalysis = ProjectAnalysisSchema.parse(buildProjectAnalysis({
+      project,
+      markdown,
+      eligibilityCriteria,
+      hasAttachmentContent,
+    }));
+    const hasExtractedCriteria = Object.keys(eligibilityCriteria).length > 0;
 
     // Memory Optimization: 중간 데이터 해제
     crawledData = null;
@@ -338,13 +450,17 @@ export async function analyzeProject(projectId: string): Promise<{
       where: { id: projectId },
       data: {
         descriptionMarkdown: markdown,
-        eligibilityCriteria: Object.keys(eligibilityCriteria).length > 0
+        projectAnalysis: projectAnalysis as unknown as Prisma.InputJsonValue,
+        analysisStatus: "analyzed",
+        analysisConfidence: projectAnalysis.quality.confidence,
+        hasParsedAttachment: projectAnalysis.quality.hasParsedAttachment,
+        hasSelectionCriteria: projectAnalysis.quality.hasSelectionCriteria,
+        publicationStatus: "visible",
+        eligibilityCriteria: eligibilityExtraction.succeeded
           ? (eligibilityCriteria as unknown as Prisma.InputJsonValue)
           : undefined,
-        criteriaExtractedAt: Object.keys(eligibilityCriteria).length > 0
-          ? new Date()
-          : undefined,
-        criteriaVersion: { increment: 1 },
+        criteriaExtractedAt: eligibilityExtraction.succeeded ? new Date() : undefined,
+        criteriaVersion: eligibilityExtraction.succeeded ? { increment: 1 } : undefined,
         needsAnalysis: false,
         analyzedAt: new Date(),
         analysisVersion: analysisVersion + 1,
@@ -360,6 +476,13 @@ export async function analyzeProject(projectId: string): Promise<{
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
     logger.error(`Analysis failed for project ${projectId}`, { error: errorMessage });
+    await prisma.supportProject.update({
+      where: { id: projectId },
+      data: {
+        analysisStatus: "failed",
+        needsAnalysis: true,
+      },
+    }).catch(() => undefined);
     return { success: false, error: errorMessage };
   }
 }

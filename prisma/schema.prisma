@@ -323,6 +323,14 @@ model SupportProject {
   analysisVersion     Int       @default(0) // 분석 버전 (재분석 시 증가)
   descriptionMarkdown String?   @db.Text // AI 정리된 마크다운
 
+  // Public board analysis state
+  projectAnalysis      Json?
+  analysisStatus       String  @default("pending") // pending | analyzing | analyzed | failed | stale
+  analysisConfidence   String? // high | medium | low
+  hasParsedAttachment  Boolean @default(false)
+  hasSelectionCriteria Boolean @default(false)
+  publicationStatus    String  @default("visible") // visible | hidden | archived
+
   // Amount
   amountMin         BigInt?
   amountMax         BigInt?
@@ -392,6 +400,11 @@ model SupportProject {
   @@index([projectYear])
   @@index([isCanonical])
   @@index([needsAnalysis])
+  @@index([analysisStatus])
+  @@index([analysisConfidence])
+  @@index([hasParsedAttachment])
+  @@index([hasSelectionCriteria])
+  @@index([publicationStatus])
 }
 
 model ProjectAttachment {

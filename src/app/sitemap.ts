@@ -14,16 +14,16 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       priority: 1,
     },
     {
+      url: `${SITE_URL}/projects`,
+      lastModified: currentDate,
+      changeFrequency: "daily",
+      priority: 0.9,
+    },
+    {
       url: `${SITE_URL}/pricing`,
       lastModified: currentDate,
       changeFrequency: "monthly",
       priority: 0.7,
-    },
-    {
-      url: `${SITE_URL}/login`,
-      lastModified: currentDate,
-      changeFrequency: "monthly",
-      priority: 0.5,
     },
     {
       url: `${SITE_URL}/terms`,
@@ -48,9 +48,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   // 동적 프로젝트 페이지 추가
   const projects = await prisma.supportProject.findMany({
     where: {
-      status: "active",
       deletedAt: null,
-      isCanonical: true,
+      publicationStatus: "visible",
+      OR: [{ isCanonical: true }, { groupId: null }],
     },
     select: {
       id: true,
