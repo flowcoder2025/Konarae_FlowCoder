@@ -10,8 +10,9 @@
  * - Per-company refresh status
  */
 
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth-utils";
+import { handleAPIError } from "@/lib/api-error";
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { createLogger } from "@/lib/logger";
@@ -27,7 +28,7 @@ interface HealthCheck {
   message: string;
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     await requireAdmin();
 
@@ -239,22 +240,13 @@ export async function GET() {
       checks: checks.map((c) => `${c.name}:${c.status}`).join(", "),
     });
 
-    return NextResponse.json(response);
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      error.message.includes("관리자 권한")
-    ) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-
-    logger.error("Matching health check error", { error });
-    return NextResponse.json(
-      {
-        status: "error",
-        error: error instanceof Error ? error.message : "Unknown error",
+    return NextResponse.json(response, {
+      headers: {
+        "Cache-Control": "private, no-store",
       },
-      { status: 500 }
-    );
+    });
+  } catch (error) {
+    logger.error("Matching health check error", { error });
+    return handleAPIError(error, request.url);
   }
 }

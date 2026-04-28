@@ -7,6 +7,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth-utils";
+import { handleAPIError } from "@/lib/api-error";
 import { prisma } from "@/lib/prisma";
 
 interface RouteContext {
@@ -36,10 +37,7 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
     return NextResponse.json(group);
   } catch (error) {
     console.error("Failed to fetch group:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch group" },
-      { status: 500 }
-    );
+    return handleAPIError(error, req.url);
   }
 }
 
@@ -112,10 +110,7 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
     return NextResponse.json(updatedGroup);
   } catch (error) {
     console.error("Failed to update group:", error);
-    return NextResponse.json(
-      { error: "Failed to update group" },
-      { status: 500 }
-    );
+    return handleAPIError(error, req.url);
   }
 }
 
@@ -154,9 +149,6 @@ export async function DELETE(req: NextRequest, { params }: RouteContext) {
     });
   } catch (error) {
     console.error("Failed to dissolve group:", error);
-    return NextResponse.json(
-      { error: "Failed to dissolve group" },
-      { status: 500 }
-    );
+    return handleAPIError(error, req.url);
   }
 }

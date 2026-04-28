@@ -11,9 +11,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { createLogger } from "@/lib/logger";
-
-const logger = createLogger({ api: "admin-crawler-live-status" });
+import { requireAdmin } from "@/lib/auth-utils";
+import { handleAPIError } from "@/lib/api-error";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -71,6 +70,8 @@ interface LiveStatusResponse {
 
 export async function GET(_req: NextRequest) {
   try {
+    await requireAdmin();
+
     const now = new Date();
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -198,15 +199,12 @@ export async function GET(_req: NextRequest) {
       },
     };
 
-    return NextResponse.json(response);
-  } catch (error) {
-    logger.error("Crawler live status error", { error });
-    return NextResponse.json(
-      {
-        error: "Failed to fetch crawler status",
-        details: error instanceof Error ? error.message : "Unknown error",
+    return NextResponse.json(response, {
+      headers: {
+        "Cache-Control": "private, no-store",
       },
-      { status: 500 }
-    );
+    });
+  } catch (error) {
+    return handleAPIError(error, _req.url);
   }
 }

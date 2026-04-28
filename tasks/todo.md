@@ -156,3 +156,27 @@ Verify the public support-project board/API artifacts now present on `origin/mai
 - The configured DB is schema-compatible with the public board columns and returned public project data through read-only service and HTTP checks.
 - Public DTO/API boundary did not expose forbidden internal keys in unit, service, or HTTP smoke checks.
 - Warnings: nested worktree causes Next.js multiple-lockfile workspace-root warning; build prints an ESLint config warning for `next/core-web-vitals` from the parent `.eslintrc.json`, but compilation and route generation completed.
+
+# Task 3 Pipeline Readiness Verification
+
+Acceptance criteria:
+- Report crawler -> parser -> AI pipeline readiness from read-only local/dev data only.
+- Do not call mutation or expensive endpoints/jobs: pipeline/embed, pipeline/parse, crawler/start, internal analyze endpoints.
+- Run focused tests if practical.
+- Return DONE/BLOCKED with exact commands, results, and readiness findings.
+
+Checklist:
+- [x] Locate existing schema and safe read-only helpers.
+- [x] Create a temporary read-only inspection script if useful.
+- [x] Run local/dev read-only data inspection using .env.local if available.
+- [x] Run focused test command.
+- [x] Summarize findings, commands, and verification status.
+
+Working Notes:
+- User explicitly requested no commit.
+- Read-only script: `/Users/jerome/DEV/FlowMate/tasks/tmp/task3-pipeline-readiness.ts`.
+
+Results:
+- Read-only DB inspection reached the `.env.local` Supabase DB target with credentials redacted.
+- Focused Jest command passed 3 suites / 34 tests.
+- Pipeline readiness is blocked by no PipelineJob records, all SupportProject rows still `analysisStatus=pending`, 5,489 projects needing embedding, 2,393 failed parsable attachments, and parser service health unavailable.

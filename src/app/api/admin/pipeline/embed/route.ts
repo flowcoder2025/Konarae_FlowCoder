@@ -8,6 +8,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireAdmin } from "@/lib/auth-utils";
+import { handleAPIError } from "@/lib/api-error";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // 5 minutes max
@@ -39,6 +41,8 @@ interface EmbedResult {
 
 export async function POST(req: NextRequest) {
   try {
+    await requireAdmin();
+
     const body: EmbedRequest = await req.json();
     const { batchSize = 50, projectIds, force = false } = body;
 
@@ -258,11 +262,7 @@ export async function POST(req: NextRequest) {
       details: results,
     } as EmbedResult);
   } catch (error) {
-    console.error("Embed pipeline error:", error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Unknown error" },
-      { status: 500 }
-    );
+    return handleAPIError(error, req.url);
   }
 }
 

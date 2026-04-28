@@ -5,6 +5,7 @@
 
 import { NextResponse } from "next/server"
 import { requireAdmin } from "@/lib/auth-utils"
+import { handleAPIError } from "@/lib/api-error"
 import { prisma } from "@/lib/prisma"
 import { createLogger } from "@/lib/logger"
 
@@ -123,15 +124,7 @@ export async function POST(request: Request) {
       message: `${user.name || user.email}님의 크래딧에서 ${amount}C가 차감되었습니다`,
     })
   } catch (error) {
-    // requireAdmin이 throw한 경우
-    if (error instanceof Response) {
-      return error
-    }
-
     logger.error("Failed to deduct credit", { error })
-    return NextResponse.json(
-      { error: "크래딧 차감 중 오류가 발생했습니다" },
-      { status: 500 }
-    )
+    return handleAPIError(error, request.url)
   }
 }

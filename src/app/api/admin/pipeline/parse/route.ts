@@ -10,6 +10,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { parseDocument } from "@/lib/document-parser";
 import { createClient } from "@supabase/supabase-js";
+import { requireAdmin } from "@/lib/auth-utils";
+import { handleAPIError } from "@/lib/api-error";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // 5 minutes max
@@ -59,6 +61,8 @@ function detectFileType(buffer: Buffer): "pdf" | "hwp" | "hwpx" | "unknown" {
 
 export async function POST(req: NextRequest) {
   try {
+    await requireAdmin();
+
     const body: ParseRequest = await req.json();
     const { batchSize = 20, errorType, fileIds } = body;
 
@@ -284,11 +288,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(response);
   } catch (error) {
-    console.error("Parse pipeline error:", error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Unknown error" },
-      { status: 500 }
-    );
+    return handleAPIError(error, req.url);
   }
 }
 

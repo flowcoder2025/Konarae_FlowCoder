@@ -1,9 +1,10 @@
 import type { MetadataRoute } from "next";
 import { prisma } from "@/lib/prisma";
+import { parseSitemapProjectLimit } from "@/lib/projects/sitemap";
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://mate.flow-coder.com";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 600; // Sitemap visibility can lag publication changes by up to 10 minutes.
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const currentDate = new Date();
@@ -47,6 +48,11 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     },
   ];
 
+  const projectLimit = parseSitemapProjectLimit();
+  if (projectLimit === 0) {
+    return staticPages;
+  }
+
   // 동적 프로젝트 페이지 추가
   const projects = await prisma.supportProject.findMany({
     where: {
@@ -61,6 +67,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     orderBy: {
       updatedAt: "desc",
     },
+    take: projectLimit,
   });
 
   const projectPages: MetadataRoute.Sitemap = projects.map((project) => ({

@@ -13,9 +13,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getParserServiceInfo } from "@/lib/document-parser";
 import { listSchedules, isQStashConfigured } from "@/lib/qstash";
-import { createLogger } from "@/lib/logger";
-
-const logger = createLogger({ api: "admin-system-status" });
+import { requireAdmin } from "@/lib/auth-utils";
+import { handleAPIError } from "@/lib/api-error";
 
 // Vercel Cron schedules defined in vercel.json
 // These are static and known at build time
@@ -306,6 +305,8 @@ async function getCrawlerStats(): Promise<CrawlStats> {
 
 export async function GET(_req: NextRequest) {
   try {
+    await requireAdmin();
+
     // Run all checks in parallel
     const [database, textParser, qstash, railwayWorker, crawlerStats] = await Promise.all([
       checkDatabase(),
@@ -368,19 +369,11 @@ export async function GET(_req: NextRequest) {
 
     return NextResponse.json(response, {
       headers: {
-        // 30초 서버 캐시, 60초 stale-while-revalidate
-        "Cache-Control": "public, s-maxage=30, stale-while-revalidate=60",
+        // Admin-only: must not be cached by shared caches
+        "Cache-Control": "private, no-store",
       },
     });
   } catch (error) {
-    logger.error("System status error", { error });
-    return NextResponse.json(
-      {
-        status: "down",
-        timestamp: new Date().toISOString(),
-        error: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 }
-    );
+    return handleAPIError(error, _req.url);
   }
 }
