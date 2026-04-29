@@ -258,7 +258,11 @@ function deriveAnalysisConfidence(criteriaCount: number, hasAttachmentContent: b
   return "low";
 }
 
-function buildProjectAnalysis(input: {
+function normalizeConfidence(value: unknown): "high" | "medium" | "low" {
+  return value === "high" || value === "medium" || value === "low" ? value : "low";
+}
+
+export function buildProjectAnalysis(input: {
   project: {
     summary: string;
     target: string;
@@ -305,7 +309,7 @@ function buildProjectAnalysis(input: {
       required: criteriaEntries.map(([key, value]) => ({
         label: key,
         description: Array.isArray(value.value) ? value.value.join(", ") : String(value.value),
-        confidence: value.confidence,
+        confidence: normalizeConfidence(value.confidence),
         evidenceIds: [key],
         notes: [],
       })),
@@ -439,7 +443,6 @@ export async function analyzeProject(projectId: string): Promise<{
       eligibilityCriteria,
       hasAttachmentContent,
     }));
-    const hasExtractedCriteria = Object.keys(eligibilityCriteria).length > 0;
 
     // Memory Optimization: 중간 데이터 해제
     crawledData = null;
