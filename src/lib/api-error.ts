@@ -41,11 +41,6 @@ export function handleAPIError(
   error: unknown,
   path?: string
 ): NextResponse<ErrorResponse> {
-  // Log error in development
-  if (process.env.NODE_ENV === "development") {
-    logger.error("API Error", { error });
-  }
-
   // Validation errors (Zod)
   if (error instanceof ZodError) {
     return NextResponse.json<ErrorResponse>(
@@ -63,11 +58,19 @@ export function handleAPIError(
 
   // Prisma errors
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
-    return handlePrismaError(error, path);
+    const response = handlePrismaError(error, path);
+    if (response.status >= 500) {
+      logger.error("API Error", error, { path, statusCode: response.status });
+    }
+    return response;
   }
 
   // Custom API errors
   if (error instanceof APIError) {
+    if (error.statusCode >= 500) {
+      logger.error("API Error", error, { path, statusCode: error.statusCode });
+    }
+
     return NextResponse.json<ErrorResponse>(
       {
         error: error.name,
@@ -82,6 +85,8 @@ export function handleAPIError(
   }
 
   // Generic errors
+  logger.error("API Error", { error, path, statusCode: 500 });
+
   const message =
     error instanceof Error ? error.message : "알 수 없는 오류가 발생했습니다";
 

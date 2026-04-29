@@ -14,7 +14,7 @@ const logger = createLogger({ lib: "document-parser" });
 
 // Text Parser 서비스 URL (단일 통합 서비스)
 // Repository: https://github.com/Jerome87hyunil/text_parser
-const TEXT_PARSER_URL = process.env.TEXT_PARSER_URL || "https://textparser-production.up.railway.app";
+const TEXT_PARSER_URL = process.env.TEXT_PARSER_URL || "https://worker.jerome87.com";
 
 export type ParserType = "hwp" | "hwpx" | "pdf";
 export type ExtractMode = "full" | "text" | "metadata" | "tables";
@@ -290,11 +290,11 @@ export async function parseDocumentFromUrl(
  */
 export async function isParserServiceAvailable(): Promise<boolean> {
   try {
-    const response = await fetch(`${TEXT_PARSER_URL}/health`, {
+    const response = await fetch(`${TEXT_PARSER_URL}/api/v1/extract/hwp-to-text`, {
       method: "GET",
       signal: AbortSignal.timeout(5000),
     });
-    return response.ok;
+    return response.ok || response.status === 405;
   } catch {
     return false;
   }
@@ -309,22 +309,13 @@ export async function getParserServiceInfo(): Promise<{
   version?: string;
 }> {
   try {
-    const response = await fetch(`${TEXT_PARSER_URL}/`, {
+    const response = await fetch(`${TEXT_PARSER_URL}/api/v1/extract/hwp-to-text`, {
       method: "GET",
       signal: AbortSignal.timeout(5000),
     });
 
-    if (response.ok) {
-      const data = await response.json();
-      return {
-        available: true,
-        url: TEXT_PARSER_URL,
-        version: data.version,
-      };
-    }
-
     return {
-      available: false,
+      available: response.ok || response.status === 405,
       url: TEXT_PARSER_URL,
     };
   } catch {

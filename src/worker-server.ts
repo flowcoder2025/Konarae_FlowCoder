@@ -220,7 +220,7 @@ app.post('/crawl/batch', async (req, res) => {
  */
 app.get('/test-parser', async (req, res) => {
   const startTime = Date.now();
-  const parserUrl = process.env.TEXT_PARSER_URL || 'https://textparser-production.up.railway.app';
+  const parserUrl = process.env.TEXT_PARSER_URL || 'https://worker.jerome87.com';
 
   try {
     const authHeader = req.headers.authorization;
@@ -230,31 +230,23 @@ app.get('/test-parser', async (req, res) => {
 
     logger.info(`Testing parser connection: ${parserUrl}`);
 
-    const healthResponse = await fetch(`${parserUrl}/health`, {
+    const parserResponse = await fetch(`${parserUrl}/api/v1/extract/hwp-to-text`, {
       method: 'GET',
       signal: AbortSignal.timeout(10000),
     });
 
-    const healthData = await healthResponse.json().catch(() => null);
-
-    const rootResponse = await fetch(`${parserUrl}/`, {
-      method: 'GET',
-      signal: AbortSignal.timeout(10000),
-    });
-
-    const rootData = await rootResponse.json().catch(() => null);
-
+    const parserData = await parserResponse.json().catch(() => null);
+    const available = parserResponse.ok || parserResponse.status === 405;
     const duration = Date.now() - startTime;
 
-    return res.json({
-      success: true,
+    return res.status(available ? 200 : 502).json({
+      success: available,
       parserUrl,
-      healthCheck: {
-        status: healthResponse.ok ? 'ok' : 'failed',
-        statusCode: healthResponse.status,
-        data: healthData,
+      parserCheck: {
+        status: available ? 'ok' : 'failed',
+        statusCode: parserResponse.status,
+        data: parserData,
       },
-      serviceInfo: rootData,
       responseTime: `${duration}ms`,
       timestamp: new Date().toISOString(),
     });

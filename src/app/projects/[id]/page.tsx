@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { ProjectShareActions } from "@/components/projects/project-share-actions";
+import { ProjectAnalysisConfidenceWarning } from "@/components/projects/project-analysis-confidence-warning";
 import { getPublicProject } from "@/lib/projects/public-service";
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://mate.flow-coder.com";
@@ -64,6 +65,7 @@ export default async function ProjectDetailPage({ params }: ProjectDetailPagePro
 
         <Card className="p-6">
           <h2 className="mb-4 text-xl font-semibold">AI 요약</h2>
+          <ProjectAnalysisConfidenceWarning confidence={project.trust.confidence} />
           <p className="text-muted-foreground">{project.analysis?.summary.plain ?? project.summary}</p>
         </Card>
 

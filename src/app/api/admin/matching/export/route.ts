@@ -5,6 +5,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth-utils";
+import { handleAPIError } from "@/lib/api-error";
 import { prisma } from "@/lib/prisma";
 import { formatDateKST } from "@/lib/utils";
 import { Prisma } from "@prisma/client";
@@ -162,15 +163,7 @@ export async function GET(request: NextRequest) {
     });
   } catch (error) {
     logger.error("Matching export error", { error });
-
-    if (error instanceof Error && error.message === "Admin access required") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    return NextResponse.json(
-      { error: "Failed to export matching results" },
-      { status: 500 }
-    );
+    return handleAPIError(error, request.url);
   }
 }
 

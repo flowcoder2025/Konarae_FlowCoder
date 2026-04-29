@@ -6,6 +6,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireAdmin } from "@/lib/auth-utils";
+import { handleAPIError } from "@/lib/api-error";
 
 export const dynamic = "force-dynamic";
 
@@ -55,8 +57,10 @@ const DEFAULT_SETTINGS = [
 /**
  * GET - Retrieve all pipeline settings
  */
-export async function GET() {
+export async function GET(_req: NextRequest) {
   try {
+    await requireAdmin();
+
     // Get existing settings
     let settings = await prisma.pipelineSetting.findMany({
       orderBy: { type: "asc" },
@@ -101,13 +105,13 @@ export async function GET() {
       updatedAt: s.updatedAt.toISOString(),
     }));
 
-    return NextResponse.json(response);
+    return NextResponse.json(response, {
+      headers: {
+        "Cache-Control": "private, no-store",
+      },
+    });
   } catch (error) {
-    console.error("Pipeline settings GET error:", error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Unknown error" },
-      { status: 500 }
-    );
+    return handleAPIError(error, _req.url);
   }
 }
 
@@ -116,6 +120,8 @@ export async function GET() {
  */
 export async function PATCH(req: NextRequest) {
   try {
+    await requireAdmin();
+
     const body = await req.json();
     const { type, enabled, schedule, batchSize, maxRetries, timeout, options } = body;
 
@@ -204,11 +210,7 @@ export async function PATCH(req: NextRequest) {
 
     return NextResponse.json(response);
   } catch (error) {
-    console.error("Pipeline settings PATCH error:", error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Unknown error" },
-      { status: 500 }
-    );
+    return handleAPIError(error, req.url);
   }
 }
 

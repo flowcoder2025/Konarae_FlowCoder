@@ -5,6 +5,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth-utils";
+import { handleAPIError } from "@/lib/api-error";
 import { prisma } from "@/lib/prisma";
 
 export async function GET(req: NextRequest) {
@@ -77,9 +78,6 @@ export async function GET(req: NextRequest) {
     });
   } catch (error) {
     console.error("Failed to fetch duplicate groups:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch duplicate groups" },
-      { status: 500 }
-    );
+    return handleAPIError(error, req.url);
   }
 }

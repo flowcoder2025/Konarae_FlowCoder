@@ -5,6 +5,7 @@
 
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { APIErrors } from "@/lib/api-error";
 
 /**
  * Check if user is admin
@@ -25,7 +26,7 @@ export async function requireAuth() {
   const session = await auth();
 
   if (!session?.user?.id) {
-    throw new Error("인증이 필요합니다");
+    throw APIErrors.unauthorized("인증이 필요합니다");
   }
 
   return session;
@@ -40,7 +41,7 @@ export async function requireAdmin() {
   const isUserAdmin = await isAdmin(session.user.id);
 
   if (!isUserAdmin) {
-    throw new Error("관리자 권한이 필요합니다");
+    throw APIErrors.forbidden("관리자 권한이 필요합니다");
   }
 
   return session;

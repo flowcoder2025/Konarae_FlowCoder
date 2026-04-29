@@ -11,6 +11,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireAdmin } from "@/lib/auth-utils";
+import { handleAPIError } from "@/lib/api-error";
 
 export const dynamic = "force-dynamic";
 
@@ -40,6 +42,8 @@ interface JobsListResponse {
 
 export async function GET(req: NextRequest) {
   try {
+    await requireAdmin();
+
     const { searchParams } = new URL(req.url);
     const type = searchParams.get("type");
     const status = searchParams.get("status");
@@ -107,12 +111,12 @@ export async function GET(req: NextRequest) {
       offset,
     };
 
-    return NextResponse.json(response);
+    return NextResponse.json(response, {
+      headers: {
+        "Cache-Control": "private, no-store",
+      },
+    });
   } catch (error) {
-    console.error("Pipeline jobs GET error:", error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Unknown error" },
-      { status: 500 }
-    );
+    return handleAPIError(error, req.url);
   }
 }

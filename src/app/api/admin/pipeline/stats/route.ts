@@ -10,6 +10,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireAdmin } from "@/lib/auth-utils";
+import { handleAPIError } from "@/lib/api-error";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -60,6 +62,8 @@ interface PipelineStatsResponse {
 
 export async function GET(_req: NextRequest) {
   try {
+    await requireAdmin();
+
     // Run all queries in parallel
     const [
       // Parse stats
@@ -172,16 +176,11 @@ export async function GET(_req: NextRequest) {
 
     return NextResponse.json(response, {
       headers: {
-        // 10초 서버 캐시, 30초 stale-while-revalidate
-        "Cache-Control": "public, s-maxage=10, stale-while-revalidate=30",
+        "Cache-Control": "private, no-store",
       },
     });
   } catch (error) {
-    console.error("Pipeline stats error:", error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Unknown error" },
-      { status: 500 }
-    );
+    return handleAPIError(error, _req.url);
   }
 }
 
