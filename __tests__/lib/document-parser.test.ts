@@ -3,10 +3,11 @@
  * Testing text_parser API client
  */
 
-import { describe, it, expect, jest, beforeEach } from "@jest/globals";
+import { describe, it, expect, jest, beforeEach, afterEach } from "@jest/globals";
 
 // Mock axios
 jest.mock("axios", () => ({
+  __esModule: true,
   default: {
     post: jest.fn(),
   },
@@ -15,6 +16,7 @@ jest.mock("axios", () => ({
 // Mock form-data
 jest.mock("form-data", () => {
   return {
+    __esModule: true,
     default: jest.fn().mockImplementation(() => ({
       append: jest.fn(),
       getHeaders: jest.fn().mockReturnValue({
@@ -26,14 +28,27 @@ jest.mock("form-data", () => {
 
 describe("Document Parser - Configuration", () => {
   it("should have TEXT_PARSER_URL configured", () => {
-    const url = process.env.TEXT_PARSER_URL || "http://localhost:8000";
+    const url = process.env.TEXT_PARSER_URL || "https://worker.jerome87.com";
     expect(url).toBeTruthy();
     expect(url).toMatch(/^https?:\/\//);
   });
 
-  it("should use localhost as default URL in development", () => {
-    const defaultUrl = "http://localhost:8000";
-    expect(defaultUrl).toBe("http://localhost:8000");
+  it("should use worker gateway URL for parser requests", async () => {
+    process.env.TEXT_PARSER_URL = "https://worker.jerome87.com";
+
+    const axios = (await import("axios")).default;
+    (axios.post as jest.Mock).mockResolvedValueOnce({
+      data: { status: "success", text: "extracted text" },
+    });
+
+    const { parseDocument } = await import("@/lib/document-parser");
+    await parseDocument(Buffer.from("test"), "hwp", "text");
+
+    expect(axios.post).toHaveBeenCalledWith(
+      "https://worker.jerome87.com/api/v1/extract/hwp-to-text",
+      expect.anything(),
+      expect.anything()
+    );
   });
 });
 
@@ -167,6 +182,34 @@ describe("Document Parser - API Response Handling", () => {
   });
 });
 
+describe("Document Parser - Service Availability", () => {
+  const originalFetch = global.fetch;
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it("treats parser extraction endpoint 405 as available", async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 405,
+    }) as jest.Mock;
+
+    const { isParserServiceAvailable, getParserServiceInfo } = await import("@/lib/document-parser");
+
+    await expect(isParserServiceAvailable()).resolves.toBe(true);
+
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 405,
+    }) as jest.Mock;
+
+    await expect(getParserServiceInfo()).resolves.toMatchObject({
+      available: true,
+    });
+  });
+});
+
 describe("Document Parser - Endpoint Selection", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -269,14 +312,13 @@ describe("Document Parser - Service Health", () => {
 
   it("should get service info", async () => {
     global.fetch = jest.fn().mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve({ version: "0.2.0" }),
+      ok: false,
+      status: 405,
     }) as jest.Mock;
 
     const { getParserServiceInfo } = await import("@/lib/document-parser");
     const info = await getParserServiceInfo();
 
     expect(info.available).toBe(true);
-    expect(info.version).toBe("0.2.0");
   });
 });

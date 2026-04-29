@@ -88,7 +88,7 @@ export async function POST(req: NextRequest) {
           ? RAILWAY_WORKER_URL
           : `https://${RAILWAY_WORKER_URL}`;
 
-        const response = await fetch(`${workerUrl}/api/embed`, {
+        const response = await fetch(`${workerUrl}/generate-embeddings`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
