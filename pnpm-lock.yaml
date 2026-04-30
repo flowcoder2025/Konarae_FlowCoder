@@ -74,6 +74,9 @@ importers:
       '@radix-ui/react-toast':
         specifier: ^1.2.5
         version: 1.2.15(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
+      '@rhwp/core':
+        specifier: 0.7.8
+        version: 0.7.8
       '@sparticuz/chromium':
         specifier: ^143.0.0
         version: 143.0.0
@@ -1791,6 +1794,9 @@ packages:
     peerDependencies:
       react: ^18.0 || ^19.0 || ^19.0.0-rc
       react-dom: ^18.0 || ^19.0 || ^19.0.0-rc
+
+  '@rhwp/core@0.7.8':
+    resolution: {integrity: sha512-WfgmH9ItxSn68YFf0CofrRYdA4rk0HbN7bV2kFc/hdfCk19MdlVWyzQ69modmiCvb/AFTPNUcYg5B3iNSP4e0Q==}
 
   '@rtsao/scc@1.1.0':
     resolution: {integrity: sha512-zt6OdqaDoOnJ1ZYsCYGt9YmWzDXl4vQdKTyJev62gFhRGKdx7mcT54V9KIjg+d2wi9EXsPvAPKe7i7WjfVWB8g==}
@@ -7471,6 +7477,8 @@ snapshots:
       react: 19.2.1
       react-dom: 19.2.1(react@19.2.1)
       react-promise-suspense: 0.3.4
+
+  '@rhwp/core@0.7.8': {}
 
   '@rtsao/scc@1.1.0': {}
 

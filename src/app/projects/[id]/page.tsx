@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { ProjectShareActions } from "@/components/projects/project-share-actions";
 import { ProjectAnalysisConfidenceWarning } from "@/components/projects/project-analysis-confidence-warning";
+import { ProjectDescriptionRenderer } from "@/components/projects/project-description-renderer";
 import { getPublicProject } from "@/lib/projects/public-service";
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://mate.flow-coder.com";
@@ -68,6 +69,17 @@ export default async function ProjectDetailPage({ params }: ProjectDetailPagePro
           <ProjectAnalysisConfidenceWarning confidence={project.trust.confidence} />
           <p className="text-muted-foreground">{project.analysis?.summary.plain ?? project.summary}</p>
         </Card>
+
+        {project.analysisMarkdown ? (
+          <Card className="p-6">
+            <h2 className="mb-4 text-xl font-semibold">공고문 분석 내용</h2>
+            <ProjectDescriptionRenderer
+              markdownContent={project.analysisMarkdown}
+              content={project.summary}
+              collapsedHeight={520}
+            />
+          </Card>
+        ) : null}
 
         <Card className="p-6">
           <h2 className="mb-4 text-xl font-semibold">지원 조건</h2>

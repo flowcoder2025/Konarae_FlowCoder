@@ -19,6 +19,7 @@ type ProjectPublicSource = {
   deadline?: NullableDate;
   isPermanent?: boolean | null;
   summary: string;
+  descriptionMarkdown?: string | null;
   eligibility?: string | null;
   applicationProcess?: string | null;
   evaluationCriteria?: string | null;
@@ -57,6 +58,7 @@ export interface ProjectPublicDto {
   deadline: string | null;
   isPermanent: boolean;
   summary: string;
+  analysisMarkdown: string | null;
   eligibility: string | null;
   applicationProcess: string | null;
   evaluationCriteria: string | null;
@@ -126,6 +128,7 @@ export function serializeProjectPublic(project: ProjectPublicSource): ProjectPub
     deadline: toIso(project.deadline),
     isPermanent: Boolean(project.isPermanent),
     summary: project.summary,
+    analysisMarkdown: project.descriptionMarkdown ?? null,
     eligibility: project.eligibility ?? null,
     applicationProcess: project.applicationProcess ?? null,
     evaluationCriteria: project.evaluationCriteria ?? null,
