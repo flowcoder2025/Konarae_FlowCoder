@@ -33,4 +33,28 @@ describe("project analyzer", () => {
     ]);
     expect(analysis.quality.confidence).toBe("medium");
   });
+
+  it("uses medium confidence when parsed attachment content is available", () => {
+    const analysis = buildProjectAnalysis({
+      project,
+      markdown: "### 사업개요\n첨부 공고문 기반 분석",
+      eligibilityCriteria: {},
+      hasAttachmentContent: true,
+    });
+
+    expect(analysis.quality.confidence).toBe("medium");
+  });
+
+  it("uses generated overview markdown for the public AI summary", () => {
+    const analysis = buildProjectAnalysis({
+      project,
+      markdown: "### 사업개요\n부산 지역 관광 및 마이스 기업의 경쟁력 강화를 위한 일자리 창출 지원사업입니다. 청년 근로자의 직무역량 향상과 기업 성장을 함께 지원합니다.\n\n### 지원내용\n- 지원금",
+      eligibilityCriteria: {},
+      hasAttachmentContent: true,
+    });
+
+    expect(analysis.summary.plain).toBe(
+      "부산 지역 관광 및 마이스 기업의 경쟁력 강화를 위한 일자리 창출 지원사업입니다. 청년 근로자의 직무역량 향상과 기업 성장을 함께 지원합니다."
+    );
+  });
 });

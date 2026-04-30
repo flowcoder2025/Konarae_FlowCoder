@@ -20,6 +20,7 @@ const PUBLIC_PROJECT_SELECT = {
   deadline: true,
   isPermanent: true,
   summary: true,
+  descriptionMarkdown: true,
   eligibility: true,
   applicationProcess: true,
   evaluationCriteria: true,

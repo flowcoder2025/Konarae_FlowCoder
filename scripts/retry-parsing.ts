@@ -13,6 +13,7 @@ import * as dotenv from 'dotenv';
 import path from 'path';
 import http from 'http';
 import https from 'https';
+import { selectParseRetryCandidates } from './retry-parsing-selection';
 
 dotenv.config({ path: path.resolve(__dirname, '../.env.local') });
 
@@ -35,7 +36,8 @@ const httpsAgent = new https.Agent({
 // Configuration
 const CONFIG = {
   BATCH_SIZE: 20,
-  MAX_FILES: 20, // 한 번에 처리할 최대 파일 수 (테스트용)
+  MAX_FILES: Number(process.env.RETRY_PARSE_MAX_FILES ?? 20),
+  MAX_FILE_SIZE_BYTES: Number(process.env.RETRY_PARSE_MAX_FILE_SIZE_BYTES ?? 10 * 1024 * 1024),
   PARSE_TIMEOUT: 120000, // 2분
   DELAY_BETWEEN_FILES: 500, // ms
 };
@@ -70,7 +72,7 @@ async function main() {
   const { createClient } = await import('@supabase/supabase-js');
 
   console.log('=== 파싱 실패 첨부파일 재시도 ===\n');
-  console.log(`설정: BATCH_SIZE=${CONFIG.BATCH_SIZE}, MAX_FILES=${CONFIG.MAX_FILES}`);
+  console.log(`설정: BATCH_SIZE=${CONFIG.BATCH_SIZE}, MAX_FILES=${CONFIG.MAX_FILES}, MAX_FILE_SIZE_BYTES=${CONFIG.MAX_FILE_SIZE_BYTES}`);
   console.log(`시작: ${new Date().toISOString()}\n`);
 
   // Supabase 클라이언트 초기화
@@ -94,6 +96,16 @@ async function main() {
     where: {
       shouldParse: true,
       isParsed: false,
+      fileType: { in: ['pdf', 'hwp', 'hwpx'] },
+      fileSize: { gt: 0, lte: CONFIG.MAX_FILE_SIZE_BYTES },
+      OR: [
+        { parseError: { contains: 'download', mode: 'insensitive' } },
+        { parseError: { contains: 'timeout', mode: 'insensitive' } },
+        { parseError: { contains: 'upload', mode: 'insensitive' } },
+        { parseError: { contains: 'certificate', mode: 'insensitive' } },
+        { parseError: { contains: 'parse failed', mode: 'insensitive' } },
+        { parseError: { contains: 'retry error', mode: 'insensitive' } },
+      ],
     },
     select: {
       id: true,
@@ -112,7 +124,7 @@ async function main() {
       }
     },
     orderBy: [
-      { fileSize: 'desc' }, // 큰 파일 먼저 (더 많은 내용 가능성)
+      { fileSize: 'asc' },
     ],
     take: CONFIG.MAX_FILES,
   });
@@ -143,16 +155,7 @@ async function main() {
   let errorCount = 0;
   let skipCount = 0;
 
-  // 재시도 가능한 에러 유형 우선 처리
-  const retryableErrors = ['timeout', 'Download Failed', 'Other'];
-  const orderedFiles = [
-    ...unparsedFiles.filter(f => retryableErrors.some(e =>
-      categorizeError(f.parseError || '').toLowerCase().includes(e.toLowerCase())
-    )),
-    ...unparsedFiles.filter(f => !retryableErrors.some(e =>
-      categorizeError(f.parseError || '').toLowerCase().includes(e.toLowerCase())
-    ))
-  ];
+  const orderedFiles = selectParseRetryCandidates(unparsedFiles);
 
   for (let i = 0; i < orderedFiles.length; i++) {
     const file = orderedFiles[i];
@@ -242,13 +245,39 @@ async function main() {
         if (result.success && result.text.length > 50) {
           parsedContent = result.text.substring(0, 10000); // 10KB 제한
           console.log(`  ✅ 파싱 성공: ${parsedContent.length.toLocaleString()}자`);
+        } else if (detectedType === 'hwp' || detectedType === 'hwpx') {
+          console.log('  🔁 rhwp 로컬 fallback 시도...');
+          const { parseHwpWithRhwp } = await import('../src/lib/rhwp-parser');
+          const fallbackResult = await parseHwpWithRhwp(buffer);
+
+          if (fallbackResult.success && fallbackResult.text.length > 50) {
+            parsedContent = fallbackResult.text.substring(0, 10000); // 10KB 제한
+            console.log(`  ✅ rhwp fallback 성공: ${parsedContent.length.toLocaleString()}자`);
+          } else {
+            parseError = fallbackResult.error || result.error || 'No text extracted';
+            console.log(`  ⚠️ 텍스트 없음: ${parseError}`);
+          }
         } else {
           parseError = result.error || 'No text extracted';
           console.log(`  ⚠️ 텍스트 없음: ${parseError}`);
         }
       } catch (parserError: any) {
-        parseError = parserError.message || 'Parse failed';
-        console.log(`  ❌ 파싱 실패: ${parseError}`);
+        if (detectedType === 'hwp' || detectedType === 'hwpx') {
+          console.log('  🔁 rhwp 로컬 fallback 시도...');
+          const { parseHwpWithRhwp } = await import('../src/lib/rhwp-parser');
+          const fallbackResult = await parseHwpWithRhwp(buffer);
+
+          if (fallbackResult.success && fallbackResult.text.length > 50) {
+            parsedContent = fallbackResult.text.substring(0, 10000); // 10KB 제한
+            console.log(`  ✅ rhwp fallback 성공: ${parsedContent.length.toLocaleString()}자`);
+          } else {
+            parseError = fallbackResult.error || parserError.message || 'Parse failed';
+            console.log(`  ❌ 파싱 실패: ${parseError}`);
+          }
+        } else {
+          parseError = parserError.message || 'Parse failed';
+          console.log(`  ❌ 파싱 실패: ${parseError}`);
+        }
       }
 
       // DB 업데이트

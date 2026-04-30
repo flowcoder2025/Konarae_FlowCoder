@@ -254,12 +254,33 @@ export async function generateProjectMarkdown(
  */
 function deriveAnalysisConfidence(criteriaCount: number, hasAttachmentContent: boolean): "high" | "medium" | "low" {
   if (criteriaCount > 0 && hasAttachmentContent) return "high";
-  if (criteriaCount > 0) return "medium";
+  if (criteriaCount > 0 || hasAttachmentContent) return "medium";
   return "low";
 }
 
 function normalizeConfidence(value: unknown): "high" | "medium" | "low" {
   return value === "high" || value === "medium" || value === "low" ? value : "low";
+}
+
+function extractMarkdownSection(markdown: string, heading: string): string {
+  const match = markdown.match(new RegExp(`^#{1,6}\\s+${heading}\\s*\\n([\\s\\S]*?)(?=^#{1,6}\\s+|$)`, "m"));
+  return match?.[1]?.trim() ?? "";
+}
+
+function toPlainMarkdownText(markdown: string): string {
+  return markdown
+    .replace(/\[([^\]]+)]\([^)]+\)/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/^\s*[-*+]\s+/gm, "")
+    .replace(/^\s*\d+\.\s+/gm, "")
+    .replace(/[|*_>#]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function deriveSummaryPlain(markdown: string, fallback: string): string {
+  const overview = toPlainMarkdownText(extractMarkdownSection(markdown, "사업개요"));
+  return overview || fallback;
 }
 
 export function buildProjectAnalysis(input: {
@@ -301,7 +322,7 @@ export function buildProjectAnalysis(input: {
 
   return {
     summary: {
-      plain: input.project.summary,
+      plain: deriveSummaryPlain(input.markdown, input.project.summary),
       keyPoints: [input.project.target, input.project.fundingSummary].filter(Boolean) as string[],
     },
     benefits,

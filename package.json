@@ -45,6 +45,7 @@
     "@radix-ui/react-switch": "^1.1.2",
     "@radix-ui/react-tabs": "^1.1.2",
     "@radix-ui/react-toast": "^1.2.5",
+    "@rhwp/core": "0.7.8",
     "@sparticuz/chromium": "^143.0.0",
     "@supabase/supabase-js": "^2.47.10",
     "@tanstack/react-query": "^5.62.8",

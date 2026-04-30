@@ -71,6 +71,7 @@ describe("public project DTO serializers", () => {
 
     expect("eligibilityCriteria" in dto).toBe(false);
     expect("descriptionMarkdown" in dto).toBe(false);
+    expect(dto.analysisMarkdown).toBe("internal markdown");
     expect("needsAnalysis" in dto).toBe(false);
   });
 
@@ -80,6 +81,7 @@ describe("public project DTO serializers", () => {
     expect(Object.keys(dto).sort()).toEqual([
       "amount",
       "analysis",
+      "analysisMarkdown",
       "applicationProcess",
       "category",
       "contactInfo",
