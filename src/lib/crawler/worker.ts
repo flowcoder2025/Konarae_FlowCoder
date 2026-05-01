@@ -25,6 +25,10 @@ import {
   isWafBlockedDomain,
   closeBrowser,
 } from "@/lib/crawler/playwright-browser";
+import {
+  buildContentAgencyPaginatedUrl,
+  parseContentAgencyHtml,
+} from "@/lib/crawler/content-agency-parser";
 
 const logger = createLogger({ lib: "crawler-worker" });
 
@@ -2292,6 +2296,8 @@ async function crawlAndParse(
           pageUrl = buildKStartupPaginatedUrl(url, pageIndex);
         } else if (siteType === 'bizinfo') {
           pageUrl = buildBizinfoPaginatedUrl(url, pageIndex);
+        } else if (siteType === 'contentAgency') {
+          pageUrl = buildContentAgencyPaginatedUrl(url, pageIndex);
         } else if (siteType === 'technopark') {
           // 테크노파크는 페이지네이션 없음 - 첫 페이지만 크롤링
           pageUrl = url;
@@ -2615,10 +2621,11 @@ function parseKStartupHtml(
  * Detect site type from URL
  * 개별 테크노파크 도메인도 인식 (예: btp.or.kr, gtp.or.kr, seoultp.or.kr 등)
  */
-function detectSiteType(url: string): 'bizinfo' | 'kstartup' | 'technopark' | 'unknown' {
+function detectSiteType(url: string): 'bizinfo' | 'kstartup' | 'technopark' | 'contentAgency' | 'unknown' {
   if (url.includes('bizinfo.go.kr')) return 'bizinfo';
   if (url.includes('k-startup.go.kr')) return 'kstartup';
   if (url.includes('technopark.kr')) return 'technopark';
+  if (url.includes('gcon.or.kr')) return 'contentAgency';
 
   // 개별 테크노파크 도메인 인식 (tp.or.kr 패턴)
   // 예: btp.or.kr, gtp.or.kr, seoultp.or.kr, itp.or.kr, gwtp.or.kr 등
@@ -2673,6 +2680,10 @@ function parseHtmlContentWithDateFilter(
   // 테크노파크 전용 파서
   if (siteType === 'technopark') {
     return parseTechnoparkHtml($, sourceUrl, hoursFilter);
+  }
+
+  if (siteType === 'contentAgency') {
+    return parseContentAgencyHtml($, sourceUrl, hoursFilter);
   }
 
   // 기업마당 파서 (기본)
