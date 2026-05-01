@@ -57,4 +57,69 @@ describe("project analyzer", () => {
       "부산 지역 관광 및 마이스 기업의 경쟁력 강화를 위한 일자리 창출 지원사업입니다. 청년 근로자의 직무역량 향상과 기업 성장을 함께 지원합니다."
     );
   });
+
+  it("builds useful summary key points from existing project fields", () => {
+    const analysis = buildProjectAnalysis({
+      project: {
+        ...project,
+        target: "",
+        fundingSummary: null,
+        amountDescription: "총 사업비의 70% 이내 지원",
+        applicationProcess: "온라인 접수 후 서류 제출",
+      },
+      markdown: "### 사업개요\n지원사업 요약",
+      eligibilityCriteria: {},
+      hasAttachmentContent: false,
+    });
+
+    expect(analysis.summary.keyPoints).toEqual([
+      "총 사업비의 70% 이내 지원",
+      "온라인 접수 후 서류 제출",
+    ]);
+  });
+
+  it("builds preparation checklist from required documents and process fields", () => {
+    const analysis = buildProjectAnalysis({
+      project: {
+        ...project,
+        requiredDocuments: ["사업계획서", "사업자등록증"],
+        applicationProcess: "온라인 접수",
+        evaluationCriteria: "사업성 및 수행역량 평가",
+        contactInfo: "부산경제진흥원 051-000-0000",
+      },
+      markdown: "### 사업개요\n준비 팁 테스트",
+      eligibilityCriteria: {},
+      hasAttachmentContent: false,
+    });
+
+    expect(analysis.aiTips.checklist).toEqual([
+      "사업계획서 준비",
+      "사업자등록증 준비",
+      "온라인 접수 절차 확인",
+      "사업성 및 수행역량 평가 기준에 맞춰 신청서 보강",
+      "부산경제진흥원 051-000-0000 문의처 확인",
+    ]);
+  });
+
+  it("keeps summary key points and checklist useful when optional fields are empty", () => {
+    const analysis = buildProjectAnalysis({
+      project: {
+        ...project,
+        summary: "공고 원문 확인이 필요한 지원사업",
+        target: "",
+        fundingSummary: null,
+        amountDescription: null,
+        applicationProcess: null,
+        evaluationCriteria: null,
+        requiredDocuments: [],
+        contactInfo: null,
+      },
+      markdown: "### 사업개요\n공고 원문 확인이 필요한 지원사업",
+      eligibilityCriteria: {},
+      hasAttachmentContent: false,
+    });
+
+    expect(analysis.summary.keyPoints).toEqual(["공고 원문 확인이 필요한 지원사업"]);
+    expect(analysis.aiTips.checklist).toEqual(["공고 원문과 첨부서류의 세부 요건 확인"]);
+  });
 });

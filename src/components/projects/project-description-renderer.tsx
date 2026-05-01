@@ -1,10 +1,8 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
-import { ChevronDown, ChevronUp } from "lucide-react";
 
 // 알려진 라벨 키워드 (볼드로 변환) - AI 분석 전 fallback용
 const KNOWN_LABELS = [
@@ -66,42 +64,24 @@ interface ProjectDescriptionRendererProps {
   /** 원본 크롤링 콘텐츠 (fallback) */
   content: string;
   className?: string;
-  /** 접이식 기능 활성화 (기본: true) */
   collapsible?: boolean;
-  /** 접힌 상태 최대 높이 (px, 기본: 300) */
   collapsedHeight?: number;
 }
 
 /**
  * 지원사업 상세 내용 렌더러
  * - Markdown 렌더링 지원 (테이블, 리스트, 링크 등)
- * - XSS 방지 (rehype-sanitize)
- * - 접이식 UI (긴 콘텐츠용)
  * - 프로젝트 스타일링 적용
  */
 export function ProjectDescriptionRenderer({
   markdownContent,
   content,
   className,
-  collapsible = true,
-  collapsedHeight = 300,
 }: ProjectDescriptionRendererProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
-  const [needsCollapse, setNeedsCollapse] = useState(false);
-  const contentRef = useRef<HTMLDivElement>(null);
-
   // AI 분석된 마크다운 우선 사용, 없으면 원본 콘텐츠 사용
   const displayContent = markdownContent || content;
   // AI 분석이 안된 경우에만 전처리 적용
   const isAIAnalyzed = !!markdownContent;
-
-  // 콘텐츠 높이 체크
-  useEffect(() => {
-    if (contentRef.current && collapsible) {
-      const height = contentRef.current.scrollHeight;
-      setNeedsCollapse(height > collapsedHeight);
-    }
-  }, [displayContent, collapsible, collapsedHeight]);
 
   if (!displayContent) {
     return null;
@@ -141,25 +121,13 @@ export function ProjectDescriptionRenderer({
 
   return (
     <div className="relative">
-      <div
-        ref={contentRef}
-        className={cn(
-          proseClasses,
-          collapsible && needsCollapse && !isExpanded && "overflow-hidden"
-        )}
-        style={{
-          maxHeight:
-            collapsible && needsCollapse && !isExpanded
-              ? `${collapsedHeight}px`
-              : undefined,
-        }}
-      >
+      <div className={proseClasses}>
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           components={{
             // Custom table wrapper for horizontal scroll on mobile
             table: ({ children, ...props }) => (
-              <div className="overflow-x-auto -mx-1">
+              <div className="-mx-1 overflow-x-auto">
                 <table {...props} className="min-w-full">
                   {children}
                 </table>
@@ -184,34 +152,6 @@ export function ProjectDescriptionRenderer({
           {isAIAnalyzed ? displayContent : preprocessContent(displayContent)}
         </ReactMarkdown>
       </div>
-
-      {/* Gradient overlay when collapsed */}
-      {collapsible && needsCollapse && !isExpanded && (
-        <div className="absolute bottom-0 left-0 right-0 h-20 bg-gradient-to-t from-background to-transparent pointer-events-none" />
-      )}
-
-      {/* Expand/Collapse button */}
-      {collapsible && needsCollapse && (
-        <button
-          onClick={() => setIsExpanded(!isExpanded)}
-          className={cn(
-            "flex items-center gap-1 text-sm text-primary hover:text-primary/80 transition-colors mt-2",
-            !isExpanded && "relative z-10"
-          )}
-        >
-          {isExpanded ? (
-            <>
-              <ChevronUp className="h-4 w-4" />
-              접기
-            </>
-          ) : (
-            <>
-              <ChevronDown className="h-4 w-4" />
-              더 보기
-            </>
-          )}
-        </button>
-      )}
     </div>
   );
 }

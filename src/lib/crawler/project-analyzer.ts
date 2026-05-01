@@ -283,6 +283,48 @@ function deriveSummaryPlain(markdown: string, fallback: string): string {
   return overview || fallback;
 }
 
+function compactStrings(values: Array<string | null | undefined>): string[] {
+  return values.map((value) => value?.trim()).filter((value): value is string => Boolean(value));
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values));
+}
+
+function buildSummaryKeyPoints(project: {
+  summary: string;
+  target: string;
+  fundingSummary: string | null;
+  amountDescription: string | null;
+  applicationProcess: string | null;
+}): string[] {
+  const keyPoints = uniqueStrings(compactStrings([
+    project.target,
+    project.fundingSummary,
+    project.amountDescription,
+    project.applicationProcess,
+  ]));
+
+  return (keyPoints.length ? keyPoints : compactStrings([project.summary])).slice(0, 5);
+}
+
+function buildPreparationChecklist(project: {
+  requiredDocuments: string[];
+  applicationProcess: string | null;
+  evaluationCriteria: string | null;
+  contactInfo: string | null;
+}): string[] {
+  const documentItems = project.requiredDocuments.map((document) => `${document} 준비`);
+  const checklist = uniqueStrings(compactStrings([
+    ...documentItems,
+    project.applicationProcess ? `${project.applicationProcess} 절차 확인` : null,
+    project.evaluationCriteria ? `${project.evaluationCriteria} 기준에 맞춰 신청서 보강` : null,
+    project.contactInfo ? `${project.contactInfo} 문의처 확인` : null,
+  ]));
+
+  return (checklist.length ? checklist : ["공고 원문과 첨부서류의 세부 요건 확인"]).slice(0, 8);
+}
+
 export function buildProjectAnalysis(input: {
   project: {
     summary: string;
@@ -323,7 +365,7 @@ export function buildProjectAnalysis(input: {
   return {
     summary: {
       plain: deriveSummaryPlain(input.markdown, input.project.summary),
-      keyPoints: [input.project.target, input.project.fundingSummary].filter(Boolean) as string[],
+      keyPoints: buildSummaryKeyPoints(input.project),
     },
     benefits,
     eligibility: {
@@ -351,11 +393,11 @@ export function buildProjectAnalysis(input: {
       likelyImportantFactors: [],
     },
     aiTips: {
-      whoShouldApply: [input.project.target],
+      whoShouldApply: compactStrings([input.project.target]),
       preparationPriority: input.project.requiredDocuments,
       writingStrategy: [],
       commonRisks: [],
-      checklist: [],
+      checklist: buildPreparationChecklist(input.project),
     },
     evidence: evidenceIds.map((id) => ({ id, source: "ai", label: id, text: id })),
     quality: {

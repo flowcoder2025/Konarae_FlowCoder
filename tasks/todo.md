@@ -70,3 +70,34 @@ Results:
 - Registered `CrawlSource` for `https://www.gcon.or.kr/gcon/business/gconNotice/list.do?menuNo=200061` with `type=web`; left `isActive=false` because the parser code is local/uncommitted and not deployed to OCI yet.
 - Ran one local source-specific crawl job with `TEST_MAX_PROJECTS=3`: `CrawlJob cmoma7yyg0001wwkc0pnyznmb` completed, found 31 projects, saved 3 new GCON rows.
 - Ran AI analysis for the 3 saved GCON rows: 3/3 succeeded; all have `analysisStatus=analyzed`, `analysisConfidence=medium`, `descriptionMarkdown`, and `projectAnalysis`.
+
+---
+
+# Project Detail AI Summary Update
+
+Goal: Show richer public AI analysis on project detail pages and remove expand/collapse from the analysis markdown.
+
+Acceptance criteria:
+- AI summary shows available key points, benefits, and evaluation points from existing public analysis data.
+- Support conditions show required, preferred, excluded, and ambiguous groups when available.
+- Preparation tips show available recommendation, priority, strategy, risk, checklist, document, and evaluation arrays.
+- Project analysis markdown is displayed in full without `더 보기` or `접기` controls.
+- New analysis defaults produce useful `summary.keyPoints` and `aiTips.checklist` from existing project fields.
+
+Working Notes:
+- Public DTO/schema boundaries remain unchanged; internal evidence and warnings are still stripped by existing serializers.
+- Local browser verification used `/projects/cmolqxt6z1guvqq0z6ezsaqnc`.
+- Local dev console showed existing manifest CORS errors from `manifest.webmanifest` redirecting to production login; detail page UI still rendered correctly.
+
+Tasks:
+- [x] Add failing regression tests for analyzer defaults and markdown renderer controls.
+- [x] Remove expand/collapse state, gradient, and buttons from `ProjectDescriptionRenderer`.
+- [x] Expand `/projects/[id]` AI summary, support condition, and preparation tip rendering.
+- [x] Add analyzer helper defaults for key points and checklist fallback.
+- [x] Run focused tests, typecheck, build, and browser verification.
+
+Results:
+- `corepack pnpm test -- __tests__/lib/project-analyzer.test.ts __tests__/components/projects/project-description-renderer.test.tsx __tests__/lib/projects/public-dto.test.ts __tests__/lib/projects/analysis-schema.test.ts` passed: 24 tests.
+- `npx tsc --noEmit` passed.
+- `corepack pnpm build` passed with pre-existing lint warnings outside this change.
+- Browser verification confirmed AI 요약/지원 조건/준비 팁 sections render and no `더 보기`/`접기` text appears.
