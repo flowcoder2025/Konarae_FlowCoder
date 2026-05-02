@@ -19,7 +19,7 @@ export function PublicProjectCard({ project }: { project: ProjectPublicDto }) {
         <div className="mb-3 flex flex-wrap gap-2">
           <Badge>{project.category}</Badge>
           <Badge variant="outline">{project.region}</Badge>
-          {project.trust.analysisStatus === "analyzed" && <Badge variant="outline">AI 분석 완료</Badge>}
+          {project.trust.analysisStatus === "analyzed" && <Badge variant="outline">공고 해석 완료</Badge>}
         </div>
         <h3 className="mb-2 line-clamp-2 text-lg font-semibold">{project.title}</h3>
         <p className="mb-3 text-sm text-muted-foreground">{project.organization}</p>

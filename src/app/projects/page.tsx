@@ -36,9 +36,9 @@ export default async function ProjectsPage({ searchParams }: ProjectsPageProps) 
   return (
     <main className="container mx-auto max-w-6xl px-4 py-10">
       <section className="mb-8">
-        <p className="mb-2 text-sm font-medium text-primary">지원사업 보드</p>
-        <h1 className="mb-3 text-4xl font-bold tracking-tight">로그인 없이 바로 찾는 정부지원사업</h1>
-        <p className="text-muted-foreground">검색, 필터, AI 분석 요약으로 지원 조건과 준비 포인트를 빠르게 확인하세요.</p>
+        <p className="mb-2 text-sm font-medium text-primary">지원사업 전략 보드</p>
+        <h1 className="mb-3 text-4xl font-bold tracking-tight">조건과 전략까지 함께 보는 지원사업 보드</h1>
+        <p className="text-muted-foreground">검색과 필터로 공고를 좁히고, 공고 해석으로 지원 조건과 준비 포인트를 빠르게 확인하세요.</p>
       </section>
 
       <form className="mb-6 grid gap-3 rounded-xl border bg-card p-4 md:grid-cols-4">

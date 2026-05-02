@@ -3,9 +3,57 @@
  * Testing PDF/DOCX/HWP export functionality
  */
 
-import { describe, it, expect } from "@jest/globals";
-import { exportToPDF, exportToDOCX, exportToHWP, exportBusinessPlan } from "@/lib/export";
+import { describe, it, expect, jest } from "@jest/globals";
 import type { BusinessPlanExportData } from "@/lib/export";
+
+jest.doMock("puppeteer-core", () => ({
+  __esModule: true,
+  default: {
+    launch: jest.fn(async () => ({
+      newPage: jest.fn(async () => ({
+        setContent: jest.fn(async () => undefined),
+        evaluate: jest.fn(async () => undefined),
+        pdf: jest.fn(async () => Buffer.from("%PDF-1.4\n")),
+      })),
+      close: jest.fn(async () => undefined),
+    })),
+  },
+}));
+
+jest.doMock("@sparticuz/chromium", () => ({
+  __esModule: true,
+  default: {
+    args: [],
+    executablePath: jest.fn(async () => "/tmp/chromium"),
+  },
+}));
+
+jest.doMock("@/lib/markdown-to-docx", () => {
+  const docx = jest.requireActual<typeof import("docx")>("docx");
+
+  return {
+    markdownToDocxElements: (markdown: string) => ({
+      elements: [new docx.Paragraph({ children: [new docx.TextRun(markdown)] })],
+      mermaidIndex: 0,
+    }),
+    convertSectionsToDocx: (
+      sections: Array<{ title: string; content: string; order: number }>
+    ) =>
+      sections.flatMap((section) => [
+        new docx.Paragraph({ children: [new docx.TextRun(section.title)] }),
+        new docx.Paragraph({ children: [new docx.TextRun(section.content)] }),
+      ]),
+    NUMBERING_CONFIG: { config: [] },
+    STYLES: {
+      font: { heading: "맑은 고딕", body: "맑은 고딕" },
+      size: { title: 48, heading1: 36, heading2: 32, heading3: 28, body: 22, small: 18 },
+      color: { heading: "1a1a1a", body: "333333", blockquote: "555555" },
+    },
+  };
+});
+
+const { exportToPDF, exportToDOCX, exportToHWP, exportBusinessPlan } =
+  require("@/lib/export") as typeof import("@/lib/export");
 
 const sampleData: BusinessPlanExportData = {
   title: "테스트 사업계획서",
