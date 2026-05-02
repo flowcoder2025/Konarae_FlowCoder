@@ -66,7 +66,14 @@ export async function generateMetadata({ params }: ProjectDetailPageProps): Prom
       description: project.summary,
       url: `${SITE_URL}/projects/${project.id}`,
       type: "article",
-      images: ["/opengraph-image.png"],
+      images: [
+        {
+          url: "/opengraph-image.png",
+          width: 1200,
+          height: 630,
+          alt: "FlowMate 지원사업 전략 보드",
+        },
+      ],
     },
   };
 }
@@ -84,7 +91,7 @@ export default async function ProjectDetailPage({ params }: ProjectDetailPagePro
         <div className="mb-4 flex flex-wrap gap-2">
           <Badge>{project.category}</Badge>
           <Badge variant="outline">{project.region}</Badge>
-          <Badge variant="outline">{project.trust.analysisStatus === "analyzed" ? "AI 분석 완료" : "기본 정보"}</Badge>
+          <Badge variant="outline">{project.trust.analysisStatus === "analyzed" ? "공고 해석 완료" : "기본 정보"}</Badge>
         </div>
         <h1 className="mb-3 text-4xl font-bold tracking-tight">{project.title}</h1>
         <p className="mb-5 text-muted-foreground">{project.organization}</p>
@@ -103,7 +110,7 @@ export default async function ProjectDetailPage({ params }: ProjectDetailPagePro
         </Card>
 
         <Card className="p-6">
-          <h2 className="mb-4 text-xl font-semibold">AI 요약</h2>
+          <h2 className="mb-4 text-xl font-semibold">공고 해석</h2>
           <ProjectAnalysisConfidenceWarning confidence={project.trust.confidence} />
           <div className="space-y-4">
             <p className="text-muted-foreground">{project.analysis?.summary.plain ?? project.summary}</p>
@@ -150,7 +157,7 @@ export default async function ProjectDetailPage({ params }: ProjectDetailPagePro
         </Card>
 
         <Card className="p-6">
-          <h2 className="mb-4 text-xl font-semibold">준비 팁</h2>
+          <h2 className="mb-4 text-xl font-semibold">지원 전략</h2>
           {project.analysis && (
             hasItems(project.analysis.aiTips.whoShouldApply) ||
             hasItems(project.analysis.aiTips.preparationPriority) ||

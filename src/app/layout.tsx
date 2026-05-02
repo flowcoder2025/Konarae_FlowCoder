@@ -11,12 +11,12 @@ const inter = Inter({ subsets: ["latin"] });
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://mate.flow-coder.com";
 const SITE_NAME = "FlowMate";
-const SITE_DESCRIPTION = "당신의 업무 흐름을 함께하는 AI 파트너 - 정부 지원사업 자동 매칭 및 사업계획서 AI 작성 서비스";
+const SITE_DESCRIPTION = "정부지원사업 공고의 조건, 혜택, 준비 전략을 한 화면에서 정리하는 FlowMate 지원사업 전략 보드";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: {
-    default: `${SITE_NAME} - 정부 지원사업 매칭 플랫폼`,
+    default: `${SITE_NAME} - 지원사업 전략 보드`,
     template: `%s | ${SITE_NAME}`,
   },
   description: SITE_DESCRIPTION,
@@ -59,20 +59,20 @@ export const metadata: Metadata = {
     locale: "ko_KR",
     url: SITE_URL,
     siteName: SITE_NAME,
-    title: `${SITE_NAME} - 정부 지원사업 매칭 플랫폼`,
+    title: `${SITE_NAME} - 지원사업 전략 보드`,
     description: SITE_DESCRIPTION,
     images: [
       {
         url: "/opengraph-image.png",
         width: 1200,
         height: 630,
-        alt: `${SITE_NAME} - 정부 지원사업 매칭 플랫폼`,
+        alt: `${SITE_NAME} - 지원사업 전략 보드`,
       },
     ],
   },
   twitter: {
     card: "summary_large_image",
-    title: `${SITE_NAME} - 정부 지원사업 매칭 플랫폼`,
+    title: `${SITE_NAME} - 지원사업 전략 보드`,
     description: SITE_DESCRIPTION,
     images: ["/twitter-image.png"],
   },
