@@ -7,6 +7,7 @@
  */
 
 import { prisma } from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
 import http from "http";
 import https from "https";
 import {
@@ -29,6 +30,12 @@ import {
   buildContentAgencyPaginatedUrl,
   parseContentAgencyHtml,
 } from "@/lib/crawler/content-agency-parser";
+import {
+  buildCrawlJobMetrics,
+  type CrawlJobMetrics,
+  type CrawlMetricAttachment,
+} from "@/lib/crawler/crawl-metrics";
+import { classifyAttachmentDocument } from "@/lib/projects/attachment-intelligence";
 
 const logger = createLogger({ lib: "crawler-worker" });
 
@@ -382,9 +389,17 @@ export async function processCrawlJob(jobId: string) {
 
     // Save projects to database (includes file processing)
     logger.info("Step 3+4: Saving projects and processing files");
-    const { newCount, updatedCount, filesProcessed } = await saveProjects(projectsToProcess);
+    const { newCount, updatedCount, filesProcessed, attachmentsForMetrics } = await saveProjects(projectsToProcess);
 
-    logger.info("Crawl Summary", { newCount, updatedCount, filesProcessed });
+    const metrics = buildCrawlJobMetrics({
+      listItemsFound: crawledProjects.length,
+      detailPagesFetched: projectsToProcess.length,
+      projectsCreated: newCount,
+      projectsUpdated: updatedCount,
+      attachments: attachmentsForMetrics,
+    });
+
+    logger.info("Crawl Summary", { newCount, updatedCount, filesProcessed, metrics });
 
     // Update job status to completed
     await prisma.crawlJob.update({
@@ -395,6 +410,7 @@ export async function processCrawlJob(jobId: string) {
         projectsFound: crawledProjects.length,
         projectsNew: newCount,
         projectsUpdated: updatedCount,
+        metrics: toCrawlMetricsJson(metrics),
       },
     });
 
@@ -409,6 +425,7 @@ export async function processCrawlJob(jobId: string) {
       projectsNew: newCount,
       projectsUpdated: updatedCount,
       filesProcessed,
+      metrics,
     };
 
     logger.info(`Crawl job ${jobId} completed successfully`, stats);
@@ -478,6 +495,10 @@ interface CrawledProject {
 /**
  * Supabase에 저장된 첨부파일 정보
  */
+type AttachmentExtractedMetadata = {
+  detectedSections?: string[];
+};
+
 interface SavedAttachment {
   fileName: string;
   fileType: FileType;
@@ -488,6 +509,54 @@ interface SavedAttachment {
   isParsed: boolean;
   parsedContent?: string;
   parseError?: string;
+  // Attachment intelligence metadata (populated by withAttachmentIntelligence)
+  attachmentDocType?: string;
+  documentRole?: string;
+  parseQuality?: string;
+  extractedMetadata?: AttachmentExtractedMetadata;
+}
+
+/**
+ * Enrich a SavedAttachment with document classification and quality metadata.
+ * Does not modify download/parse behavior.
+ */
+function withAttachmentIntelligence(attachment: SavedAttachment): SavedAttachment {
+  const classified = classifyAttachmentDocument({
+    fileName: attachment.fileName,
+    sourceUrl: attachment.sourceUrl,
+    storagePath: attachment.storagePath || null,
+    parsedContent: attachment.parsedContent,
+    isParsed: attachment.isParsed,
+    parseError: attachment.parseError,
+  });
+  return {
+    ...attachment,
+    attachmentDocType: classified.attachmentDocType,
+    documentRole: classified.documentRole,
+    parseQuality: classified.parseQuality,
+    extractedMetadata: classified.extractedMetadata,
+  };
+}
+
+function toAttachmentMetadataJson(
+  metadata?: AttachmentExtractedMetadata
+): Prisma.InputJsonObject | undefined {
+  if (!metadata?.detectedSections?.length) return undefined;
+  return { detectedSections: metadata.detectedSections };
+}
+
+function toCrawlMetricsJson(metrics: CrawlJobMetrics): Prisma.InputJsonObject {
+  return {
+    listItemsFound: metrics.listItemsFound,
+    detailPagesFetched: metrics.detailPagesFetched,
+    projectsCreated: metrics.projectsCreated,
+    projectsUpdated: metrics.projectsUpdated,
+    attachmentLinksFound: metrics.attachmentLinksFound,
+    attachmentsDownloaded: metrics.attachmentsDownloaded,
+    attachmentsParsed: metrics.attachmentsParsed,
+    parseFailures: metrics.parseFailures,
+    analysisReadyProjects: metrics.analysisReadyProjects,
+  };
 }
 
 /**
@@ -1904,7 +1973,7 @@ async function processProjectFiles(
       const downloadResult = await downloadFile(url, cookies);
       if (!downloadResult) {
         logger.warn("Download failed, recording URL only");
-        attachments.push({
+        attachments.push(withAttachmentIntelligence({
           fileName: urlFileName,
           fileType: 'unknown' as FileType,
           fileSize: 0,
@@ -1913,7 +1982,7 @@ async function processProjectFiles(
           shouldParse: false,
           isParsed: false,
           parseError: 'Download failed',
-        });
+        }));
         continue;
       }
 
@@ -1928,7 +1997,7 @@ async function processProjectFiles(
 
       if (!actualShouldParse) {
         // 핵심 문서가 아님 - URL만 저장
-        attachments.push({
+        attachments.push(withAttachmentIntelligence({
           fileName: finalFileName,
           fileType: detectedType as FileType,
           fileSize: fileBuffer.length,
@@ -1936,7 +2005,7 @@ async function processProjectFiles(
           sourceUrl: url,
           shouldParse: false,
           isParsed: false,
-        });
+        }));
         logger.debug("URL recorded (not a key document)");
         continue;
       }
@@ -1951,7 +2020,7 @@ async function processProjectFiles(
 
       if (!uploadResult.success || !uploadResult.storagePath) {
         logger.error(`Upload failed: ${uploadResult.error}`);
-        attachments.push({
+        attachments.push(withAttachmentIntelligence({
           fileName: finalFileName,
           fileType: detectedType as FileType,
           fileSize: fileBuffer.length,
@@ -1960,7 +2029,7 @@ async function processProjectFiles(
           shouldParse: true,
           isParsed: false,
           parseError: `Upload failed: ${uploadResult.error}`,
-        });
+        }));
         continue;
       }
 
@@ -1987,7 +2056,7 @@ async function processProjectFiles(
         logger.error(`Parse error: ${parseError}`);
       }
 
-      attachments.push({
+      attachments.push(withAttachmentIntelligence({
         fileName: finalFileName,
         fileType: detectedType as FileType,
         fileSize: fileBuffer.length,
@@ -1997,7 +2066,7 @@ async function processProjectFiles(
         isParsed,
         parsedContent,
         parseError,
-      });
+      }));
       continue;
     }
 
@@ -2006,7 +2075,7 @@ async function processProjectFiles(
 
     // ===== 비파싱 대상: URL만 저장 (Storage에 저장하지 않음) =====
     if (!preliminaryShouldParse) {
-      attachments.push({
+      attachments.push(withAttachmentIntelligence({
         fileName: urlFileName,
         fileType: fileType as FileType,
         fileSize: 0, // 다운로드하지 않으므로 크기 미확인
@@ -2014,7 +2083,7 @@ async function processProjectFiles(
         sourceUrl: url,
         shouldParse: false,
         isParsed: false,
-      });
+      }));
       logger.debug("URL recorded (no download)");
       continue;
     }
@@ -2026,7 +2095,7 @@ async function processProjectFiles(
     if (!downloadResult) {
       logger.warn("Download failed, recording URL only");
       // 다운로드 실패해도 URL은 기록
-      attachments.push({
+      attachments.push(withAttachmentIntelligence({
         fileName: urlFileName,
         fileType: fileType as FileType,
         fileSize: 0,
@@ -2035,7 +2104,7 @@ async function processProjectFiles(
         shouldParse: true,
         isParsed: false,
         parseError: 'Download failed',
-      });
+      }));
       continue;
     }
 
@@ -2058,7 +2127,7 @@ async function processProjectFiles(
     if (!uploadResult.success || !uploadResult.storagePath) {
       logger.error(`Upload failed: ${uploadResult.error}`);
       // 업로드 실패해도 URL은 기록
-      attachments.push({
+      attachments.push(withAttachmentIntelligence({
         fileName: finalFileName,
         fileType: finalFileType as FileType,
         fileSize: fileBuffer.length,
@@ -2067,7 +2136,7 @@ async function processProjectFiles(
         shouldParse: true,
         isParsed: false,
         parseError: `Upload failed: ${uploadResult.error}`,
-      });
+      }));
       continue;
     }
 
@@ -2099,7 +2168,7 @@ async function processProjectFiles(
     }
 
     // 첨부파일 정보 저장 (Storage에 저장됨)
-    attachments.push({
+    attachments.push(withAttachmentIntelligence({
       fileName: finalFileName,
       fileType: finalFileType as FileType,
       fileSize: fileBuffer.length,
@@ -2109,7 +2178,7 @@ async function processProjectFiles(
       isParsed,
       parsedContent,
       parseError,
-    });
+    }));
   }
 
   // Step 5: 첫 번째 파싱된 파일로 AI 분석
@@ -3582,10 +3651,11 @@ function parseApiResponse(data: any, sourceUrl: string): CrawledProject[] {
  */
 async function saveProjects(
   projects: CrawledProject[]
-): Promise<{ newCount: number; updatedCount: number; filesProcessed: number }> {
+): Promise<{ newCount: number; updatedCount: number; filesProcessed: number; attachmentsForMetrics: CrawlMetricAttachment[] }> {
   let newCount = 0;
   let updatedCount = 0;
   let filesProcessed = 0;
+  const attachmentsForMetrics: CrawlMetricAttachment[] = [];
 
   for (const project of projects) {
     try {
@@ -3684,8 +3754,19 @@ async function saveProjects(
             project.cookies
           );
 
+          attachmentsForMetrics.push(
+            ...attachments.map((attachment) => ({
+              projectId,
+              downloaded: attachment.fileSize > 0,
+              shouldParse: attachment.shouldParse,
+              isParsed: attachment.isParsed,
+              parseError: attachment.parseError ?? null,
+            }))
+          );
+
           // Save attachments to database
           for (const attachment of attachments) {
+            const { shouldParse, isParsed, parseError } = attachment;
             await prisma.projectAttachment.create({
               data: {
                 projectId,
@@ -3695,10 +3776,14 @@ async function saveProjects(
                 // storagePath: 빈 문자열이면 null로 저장 (핵심 문서만 Storage에 저장됨)
                 storagePath: attachment.storagePath || null,
                 sourceUrl: attachment.sourceUrl,
-                shouldParse: attachment.shouldParse,
-                isParsed: attachment.isParsed,
+                shouldParse,
+                isParsed,
                 parsedContent: attachment.parsedContent,
-                parseError: attachment.parseError,
+                parseError,
+                attachmentDocType: attachment.attachmentDocType,
+                documentRole: attachment.documentRole,
+                parseQuality: attachment.parseQuality,
+                extractedMetadata: toAttachmentMetadataJson(attachment.extractedMetadata),
               },
             });
             filesProcessed++;
@@ -3795,7 +3880,7 @@ async function saveProjects(
     }
   }
 
-  return { newCount, updatedCount, filesProcessed };
+  return { newCount, updatedCount, filesProcessed, attachmentsForMetrics };
 }
 
 /**

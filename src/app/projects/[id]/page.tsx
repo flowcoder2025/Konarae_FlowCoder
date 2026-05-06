@@ -17,6 +17,7 @@ interface ProjectDetailPageProps {
 }
 
 type ConditionItems = ProjectAnalysisPublicDto["eligibility"]["required"];
+type ScoreTableItems = NonNullable<ProjectAnalysisPublicDto["selection"]["scoreTable"]>;
 
 function hasItems<T>(items: readonly T[] | undefined): items is readonly T[] {
   return Array.isArray(items) && items.length > 0;
@@ -29,7 +30,7 @@ function ListSection({ title, items }: { title: string; items: readonly string[]
     <div className="space-y-2">
       <h3 className="text-sm font-semibold text-foreground">{title}</h3>
       <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
-        {items.map((item) => <li key={item}>{item}</li>)}
+        {items.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
       </ul>
     </div>
   );
@@ -42,13 +43,48 @@ function ConditionSection({ title, items }: { title: string; items: ConditionIte
     <div className="space-y-2">
       <h3 className="text-sm font-semibold text-foreground">{title}</h3>
       <ul className="space-y-2">
-        {items.map((item) => (
-          <li key={`${title}-${item.label}`} className="rounded-lg border border-border p-3">
+        {items.map((item, index) => (
+          <li key={`${title}-${item.label}-${index}`} className="rounded-lg border border-border p-3">
             <p className="font-medium">{item.label}</p>
             <p className="text-sm text-muted-foreground">{item.description}</p>
           </li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+function SelectionScoreTable({ items }: { items: ScoreTableItems | undefined }) {
+  if (!hasItems(items)) return null;
+
+  return (
+    <div className="space-y-2">
+      <h3 className="text-sm font-semibold text-foreground">평가 배점표</h3>
+      <Card className="overflow-hidden p-0">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[640px] text-sm">
+            <caption className="sr-only">평가 항목별 배점, 설명, 근거 정보</caption>
+            <thead className="border-b border-border text-left text-muted-foreground">
+              <tr>
+                <th scope="col" className="px-4 py-3 font-medium">항목</th>
+                <th scope="col" className="w-24 px-4 py-3 font-medium">배점</th>
+                <th scope="col" className="px-4 py-3 font-medium">설명</th>
+                <th scope="col" className="px-4 py-3 font-medium">근거</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {items.map((item, index) => (
+                <tr key={`${item.item}-${item.evidenceLabel}-${index}`}>
+                  <th scope="row" className="px-4 py-3 text-left font-medium text-foreground">{item.item}</th>
+                  <td className="px-4 py-3 text-muted-foreground">{item.points ?? "확인 필요"}</td>
+                  <td className="px-4 py-3 text-muted-foreground">{item.description}</td>
+                  <td className="px-4 py-3 text-muted-foreground">{item.evidenceLabel}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
     </div>
   );
 }
@@ -166,7 +202,9 @@ export default async function ProjectDetailPage({ params }: ProjectDetailPagePro
             hasItems(project.analysis.aiTips.checklist) ||
             hasItems(project.analysis.application.requiredDocuments) ||
             hasItems(project.analysis.selection.criteria) ||
-            hasItems(project.analysis.selection.scoringHints)
+            hasItems(project.analysis.selection.scoringHints) ||
+            hasItems(project.analysis.selection.scoreTable) ||
+            hasItems(project.analysis.selection.prioritySignals)
           ) ? (
             <div className="space-y-5">
               <ListSection title="추천 대상" items={project.analysis.aiTips.whoShouldApply} />
@@ -177,6 +215,8 @@ export default async function ProjectDetailPage({ params }: ProjectDetailPagePro
               <ListSection title="필요 서류" items={project.analysis.application.requiredDocuments} />
               <ListSection title="평가 기준" items={project.analysis.selection.criteria} />
               <ListSection title="심사 힌트" items={project.analysis.selection.scoringHints} />
+              <SelectionScoreTable items={project.analysis.selection.scoreTable} />
+              <ListSection title="우선순위 신호" items={project.analysis.selection.prioritySignals} />
             </div>
           ) : (
             <p className="text-muted-foreground">공고문, 제출서류, 평가기준을 먼저 확인하세요.</p>

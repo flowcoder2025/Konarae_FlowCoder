@@ -104,6 +104,7 @@ export function serializeProjectAnalysisPublic(value: unknown): ProjectAnalysisP
       confidence: full.data.quality.confidence,
       hasParsedAttachment: full.data.quality.hasParsedAttachment,
       hasSelectionCriteria: full.data.quality.hasSelectionCriteria,
+      hasScoreTable: full.data.quality.hasScoreTable ?? false,
     },
   });
 }

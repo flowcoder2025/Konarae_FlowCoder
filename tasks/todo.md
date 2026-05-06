@@ -101,3 +101,21 @@ Results:
 - `npx tsc --noEmit` passed.
 - `corepack pnpm build` passed with pre-existing lint warnings outside this change.
 - Browser verification confirmed AI 요약/지원 조건/준비 팁 sections render and no `더 보기`/`접기` text appears.
+
+---
+
+# Support Search Analysis Improvement
+
+Results:
+- Added attachment document intelligence metadata and deterministic classification.
+- Added group-aware analysis input for confirmed duplicate groups with pending/rejected group fallback.
+- Strengthened selection criteria with optional score table and priority signal output.
+- Added crawl diagnostics metrics for current source coverage.
+- Rendered public detail score tables and priority signals when available.
+- Verification: focused Jest passed (62 tests), full Jest passed (183 tests), `npx tsc --noEmit` passed.
+- Final review fixes: low-quality evaluation documents no longer drive score table extraction, and pending/rejected duplicate groups use current-project-only attachments.
+- Final regression verification: `npx pnpm@9.15.3 test -- __tests__/lib/projects/attachment-intelligence.test.ts __tests__/lib/project-analyzer.test.ts` passed (35 tests), `npx tsc --noEmit` passed, final re-review approved.
+- Browser verification: existing public detail page rendered normally; no current public DB record has score table rows, so the score table branch is covered by fixture render test.
+- DB rollout: `npx prisma db push` completed successfully after explicit approval and regenerated Prisma Client.
+- Build after DB rollout: `npx pnpm@9.15.3 build` completed route generation successfully; the previous `/admin/crawler` prerender failure from missing `CrawlJob.metrics` is resolved. Build output still reports the pre-existing Next ESLint plugin conflict warning.
+- Post-rollout verification: full Jest passed (`npx pnpm@9.15.3 test`, 185 tests) and `npx tsc --noEmit` passed.

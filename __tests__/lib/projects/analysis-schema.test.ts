@@ -85,6 +85,52 @@ describe("ProjectAnalysisSchema", () => {
       })
     ).toThrow();
   });
+
+  it("accepts selection.scoreTable and selection.prioritySignals", () => {
+    const parsed = ProjectAnalysisSchema.parse({
+      summary: { plain: "요약", keyPoints: [] },
+      benefits: { nonCashBenefits: [], notes: [] },
+      eligibility: { required: [], preferred: [], excluded: [], ambiguous: [] },
+      period: { isOpenEnded: false, status: "open" },
+      application: { method: [], channels: [], requiredDocuments: [], contact: [] },
+      selection: {
+        criteria: ["사업성"],
+        scoringHints: [],
+        likelyImportantFactors: [],
+        scoreTable: [
+          { item: "기술성", points: 30, description: "기술 혁신성 평가", evidenceLabel: "평가표 p.3" },
+          { item: "시장성", description: "시장 규모 및 성장성", evidenceLabel: "평가표 p.4" },
+        ],
+        prioritySignals: ["기술성 비중 최대", "정량 지표 선호"],
+      },
+      aiTips: { whoShouldApply: [], preparationPriority: [], writingStrategy: [], commonRisks: [], checklist: [] },
+      evidence: [],
+      quality: { confidence: "high", hasParsedAttachment: true, hasSelectionCriteria: true, missingFields: [], warnings: [], hasScoreTable: true },
+    });
+
+    expect(parsed.selection.scoreTable).toHaveLength(2);
+    expect(parsed.selection.scoreTable![0].item).toBe("기술성");
+    expect(parsed.selection.scoreTable![0].points).toBe(30);
+    expect(parsed.selection.scoreTable![1].points).toBeUndefined();
+    expect(parsed.selection.prioritySignals).toEqual(["기술성 비중 최대", "정량 지표 선호"]);
+    expect(parsed.quality.hasScoreTable).toBe(true);
+  });
+
+  it("defaults hasScoreTable to false when not provided", () => {
+    const parsed = ProjectAnalysisSchema.parse({
+      summary: { plain: "요약", keyPoints: [] },
+      benefits: { nonCashBenefits: [], notes: [] },
+      eligibility: { required: [], preferred: [], excluded: [], ambiguous: [] },
+      period: { isOpenEnded: false, status: "open" },
+      application: { method: [], channels: [], requiredDocuments: [], contact: [] },
+      selection: { criteria: [], scoringHints: [], likelyImportantFactors: [] },
+      aiTips: { whoShouldApply: [], preparationPriority: [], writingStrategy: [], commonRisks: [], checklist: [] },
+      evidence: [],
+      quality: { confidence: "medium", hasParsedAttachment: false, hasSelectionCriteria: false, missingFields: [], warnings: [] },
+    });
+
+    expect(parsed.quality.hasScoreTable).toBe(false);
+  });
 });
 
 describe("ProjectAnalysisPublicSchema", () => {
@@ -108,6 +154,32 @@ describe("ProjectAnalysisPublicSchema", () => {
 
     expect("evidence" in publicShape).toBe(false);
     expect("evidenceIds" in publicShape.eligibility.required[0]).toBe(false);
+    expect("warnings" in publicShape.quality).toBe(false);
+  });
+
+  it("exposes scoreTable, prioritySignals, and quality.hasScoreTable while stripping evidence and warnings", () => {
+    const publicShape = ProjectAnalysisPublicSchema.parse({
+      summary: { plain: "요약", keyPoints: [] },
+      benefits: { nonCashBenefits: [], notes: [] },
+      eligibility: { required: [], preferred: [], excluded: [], ambiguous: [] },
+      period: { isOpenEnded: false, status: "open" },
+      application: { method: [], channels: [], requiredDocuments: [], contact: [] },
+      selection: {
+        criteria: ["사업성"],
+        scoringHints: [],
+        likelyImportantFactors: [],
+        scoreTable: [{ item: "기술성", points: 30, description: "기술성 평가", evidenceLabel: "p.3" }],
+        prioritySignals: ["기술성 비중 최대"],
+      },
+      aiTips: { whoShouldApply: [], preparationPriority: [], writingStrategy: [], commonRisks: [], checklist: [] },
+      evidence: [{ id: "e1", source: "page", label: "내부 근거", text: "공개하면 안 되는 원문" }],
+      quality: { confidence: "high", hasParsedAttachment: true, hasSelectionCriteria: true, missingFields: [], warnings: ["내부 경고"], hasScoreTable: true },
+    });
+
+    expect(publicShape.selection.scoreTable).toHaveLength(1);
+    expect(publicShape.selection.prioritySignals).toEqual(["기술성 비중 최대"]);
+    expect(publicShape.quality.hasScoreTable).toBe(true);
+    expect("evidence" in publicShape).toBe(false);
     expect("warnings" in publicShape.quality).toBe(false);
   });
 });

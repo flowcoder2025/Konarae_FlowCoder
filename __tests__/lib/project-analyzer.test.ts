@@ -1,4 +1,27 @@
-import { buildProjectAnalysis } from "@/lib/crawler/project-analyzer";
+/**
+ * @jest-environment node
+ */
+import { buildProjectAnalysis, collectProjectAnalysisDocuments } from "@/lib/crawler/project-analyzer";
+import type { SelectionInsights } from "@/lib/projects/attachment-intelligence";
+
+jest.mock("@/lib/prisma", () => ({
+  prisma: {
+    supportProject: {
+      findUnique: jest.fn(),
+    },
+    projectAttachment: {
+      findMany: jest.fn(),
+    },
+  },
+}));
+
+import { prisma } from "@/lib/prisma";
+const mockSupportProject = prisma.supportProject.findUnique as jest.MockedFunction<
+  typeof prisma.supportProject.findUnique
+>;
+const mockProjectAttachment = prisma.projectAttachment.findMany as jest.MockedFunction<
+  typeof prisma.projectAttachment.findMany
+>;
 
 const project = {
   summary: "폐업소상공인 목돈 마련 지원",
@@ -121,5 +144,232 @@ describe("project analyzer", () => {
 
     expect(analysis.summary.keyPoints).toEqual(["공고 원문 확인이 필요한 지원사업"]);
     expect(analysis.aiTips.checklist).toEqual(["공고 원문과 첨부서류의 세부 요건 확인"]);
+  });
+
+  it("merges selectionInsights.criteria into selection.criteria", () => {
+    const insights: SelectionInsights = {
+      criteria: ["사업화 가능성", "수행 역량"],
+      scoringHints: ["배점 상위 항목: 사업화 가능성(40점)에 집중하세요."],
+      likelyImportantFactors: ["사업화 가능성"],
+      writingStrategy: ["정량 지표를 중심으로 서술하세요."],
+      preparationPriority: ["사업화 가능성 관련 증빙 준비"],
+      commonRisks: ["서류 누락"],
+    };
+
+    const analysis = buildProjectAnalysis({
+      project: { ...project, evaluationCriteria: "평가위원회 심사" },
+      markdown: "### 사업개요\n평가기준 테스트",
+      eligibilityCriteria: {},
+      hasAttachmentContent: true,
+      selectionInsights: insights,
+    });
+
+    // criteria must include both project.evaluationCriteria and insights.criteria
+    expect(analysis.selection.criteria).toContain("평가위원회 심사");
+    expect(analysis.selection.criteria).toContain("사업화 가능성");
+    expect(analysis.selection.criteria).toContain("수행 역량");
+    // scoringHints and likelyImportantFactors come from insights
+    expect(analysis.selection.scoringHints).toEqual(insights.scoringHints);
+    expect(analysis.selection.likelyImportantFactors).toEqual(insights.likelyImportantFactors);
+    // aiTips.writingStrategy and commonRisks come from insights
+    expect(analysis.aiTips.writingStrategy).toEqual(insights.writingStrategy);
+    expect(analysis.aiTips.commonRisks).toEqual(insights.commonRisks);
+    // aiTips.preparationPriority merges project required docs + insights.preparationPriority
+    expect(analysis.aiTips.preparationPriority).toEqual(
+      expect.arrayContaining(insights.preparationPriority)
+    );
+    // quality.hasSelectionCriteria must be true since criteria is non-empty
+    expect(analysis.quality.hasSelectionCriteria).toBe(true);
+  });
+
+  it("populates scoreTable and hasScoreTable=true when selectionInsights.scoreTable exists", () => {
+    const insights: SelectionInsights = {
+      criteria: ["사업화 가능성"],
+      scoringHints: [],
+      likelyImportantFactors: [],
+      scoreTable: [
+        { item: "사업화 가능성", points: 40, description: "사업화 가능성 40점", evidenceLabel: "평가표.hwp" },
+        { item: "수행 역량", points: 30, description: "수행 역량 30점", evidenceLabel: "평가표.hwp" },
+      ],
+      writingStrategy: [],
+      preparationPriority: [],
+      commonRisks: [],
+    };
+
+    const analysis = buildProjectAnalysis({
+      project: { ...project, evaluationCriteria: null },
+      markdown: "### 사업개요\n점수 테이블 테스트",
+      eligibilityCriteria: {},
+      hasAttachmentContent: true,
+      selectionInsights: insights,
+    });
+
+    expect(analysis.selection.scoreTable).toBeDefined();
+    expect(analysis.selection.scoreTable![0].points).toBe(40);
+    expect(analysis.quality.hasScoreTable).toBe(true);
+  });
+
+  it("sets hasScoreTable=false when no score rows are available", () => {
+    const insights: SelectionInsights = {
+      criteria: [],
+      scoringHints: [],
+      likelyImportantFactors: [],
+      scoreTable: undefined,
+      writingStrategy: [],
+      preparationPriority: [],
+      commonRisks: [],
+    };
+
+    const analysis = buildProjectAnalysis({
+      project: { ...project, evaluationCriteria: null },
+      markdown: "### 사업개요\n점수 없음 테스트",
+      eligibilityCriteria: {},
+      hasAttachmentContent: false,
+      selectionInsights: insights,
+    });
+
+    expect(analysis.quality.hasScoreTable).toBe(false);
+    expect(analysis.selection.scoreTable).toBeUndefined();
+  });
+
+  it("works without selectionInsights (backwards-compatible)", () => {
+    const analysis = buildProjectAnalysis({
+      project,
+      markdown: "### 사업개요\n기존 호환성 테스트",
+      eligibilityCriteria: {},
+      hasAttachmentContent: false,
+    });
+
+    expect(analysis.selection.scoringHints).toEqual([]);
+    expect(analysis.aiTips.writingStrategy).toEqual([]);
+    expect(analysis.quality.hasScoreTable).toBe(false);
+  });
+});
+
+describe("collectProjectAnalysisDocuments group routing", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockProjectAttachment.mockResolvedValue([]);
+  });
+
+  it("auto/confirmed group uses all non-deleted group project ids", async () => {
+    mockSupportProject.mockResolvedValue({
+      id: "proj-1",
+      groupId: "grp-1",
+      group: {
+        reviewStatus: "confirmed",
+        canonicalProjectId: "proj-1",
+        projects: [{ id: "proj-1" }, { id: "proj-2" }],
+      },
+    } as never);
+
+    await collectProjectAnalysisDocuments("proj-1");
+
+    expect(mockSupportProject).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "proj-1" },
+        select: expect.objectContaining({
+          group: expect.objectContaining({
+            select: expect.objectContaining({
+              projects: expect.objectContaining({
+                where: { deletedAt: null },
+              }),
+            }),
+          }),
+        }),
+      })
+    );
+
+    expect(mockProjectAttachment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          projectId: { in: expect.arrayContaining(["proj-1", "proj-2"]) },
+        }),
+      })
+    );
+  });
+
+  it("pending_review canonical project uses current project id only", async () => {
+    mockSupportProject.mockResolvedValue({
+      id: "proj-1",
+      groupId: "grp-2",
+      group: {
+        reviewStatus: "pending_review",
+        canonicalProjectId: "proj-1",
+        projects: [{ id: "proj-1" }, { id: "proj-3" }],
+      },
+    } as never);
+
+    await collectProjectAnalysisDocuments("proj-1");
+
+    expect(mockProjectAttachment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          projectId: { in: ["proj-1"] },
+        }),
+      })
+    );
+  });
+
+  it("pending_review non-canonical project uses current project id only", async () => {
+    mockSupportProject.mockResolvedValue({
+      id: "proj-3",
+      groupId: "grp-2",
+      group: {
+        reviewStatus: "pending_review",
+        canonicalProjectId: "proj-1",
+        projects: [{ id: "proj-1" }, { id: "proj-3" }],
+      },
+    } as never);
+
+    await collectProjectAnalysisDocuments("proj-3");
+
+    expect(mockProjectAttachment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          projectId: { in: ["proj-3"] },
+        }),
+      })
+    );
+  });
+
+  it("rejected non-canonical project uses current project id only", async () => {
+    mockSupportProject.mockResolvedValue({
+      id: "proj-4",
+      groupId: "grp-3",
+      group: {
+        reviewStatus: "rejected",
+        canonicalProjectId: "proj-1",
+        projects: [{ id: "proj-1" }, { id: "proj-4" }],
+      },
+    } as never);
+
+    await collectProjectAnalysisDocuments("proj-4");
+
+    expect(mockProjectAttachment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          projectId: { in: ["proj-4"] },
+        }),
+      })
+    );
+  });
+
+  it("no group uses current project id only", async () => {
+    mockSupportProject.mockResolvedValue({
+      id: "proj-5",
+      groupId: null,
+      group: null,
+    } as never);
+
+    await collectProjectAnalysisDocuments("proj-5");
+
+    expect(mockProjectAttachment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          projectId: { in: ["proj-5"] },
+        }),
+      })
+    );
   });
 });

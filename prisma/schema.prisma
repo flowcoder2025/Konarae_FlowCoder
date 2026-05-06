@@ -422,6 +422,12 @@ model ProjectAttachment {
   parsedContent String? @db.Text // 파싱된 텍스트 내용
   parseError    String? // 파싱 실패 시 에러 메시지
 
+  // Document intelligence metadata (additive, nullable)
+  attachmentDocType String? // announcement | application_form | evaluation_criteria | required_documents | guideline | other
+  documentRole      String? // primary | supporting | low_signal
+  parseQuality      String? // high | medium | low | failed
+  extractedMetadata Json? // structured metadata extracted during parsing
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -442,6 +448,7 @@ model CrawlJob {
   projectsFound   Int       @default(0)
   projectsNew     Int       @default(0)
   projectsUpdated Int       @default(0)
+  metrics         Json? // structured crawl metrics (e.g. parse stats, timing, attachment counts)
 
   createdAt DateTime @default(now())
 
