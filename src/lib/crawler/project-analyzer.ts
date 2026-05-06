@@ -13,6 +13,14 @@ import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { createLogger } from "@/lib/logger";
 import { ProjectAnalysisSchema, type ProjectAnalysis } from "@/lib/projects/analysis-schema";
+import {
+  buildTypedAttachmentContent,
+  classifyAttachmentDocument,
+  dedupeAttachmentDocuments,
+  extractSelectionInsights,
+  type ClassifiedAttachmentDocument,
+  type SelectionInsights,
+} from "@/lib/projects/attachment-intelligence";
 
 const logger = createLogger({ lib: "project-analyzer" });
 
@@ -129,36 +137,81 @@ const PROJECT_ANALYSIS_PROMPT = `당신은 정부 지원사업 공고를 분석�
 - 원본에 명시된 정확한 수치와 날짜를 사용하세요.`;
 
 /**
- * 프로젝트의 첨부파일 파싱 결과 통합
+ * Collect and classify all analysis-relevant attachments for a project,
+ * respecting group membership and review status.
  */
-export async function integrateAttachmentContent(
+export async function collectProjectAnalysisDocuments(
   projectId: string
-): Promise<string | null> {
+): Promise<ClassifiedAttachmentDocument[]> {
+  const project = await prisma.supportProject.findUnique({
+    where: { id: projectId },
+    select: {
+      id: true,
+      groupId: true,
+      group: {
+        select: {
+          reviewStatus: true,
+          canonicalProjectId: true,
+          projects: {
+            where: { deletedAt: null },
+            select: { id: true },
+          },
+        },
+      },
+    },
+  });
+
+  if (!project) return [];
+
+  let projectIds: string[];
+
+  if (project.group) {
+    const { reviewStatus } = project.group;
+    if (reviewStatus === "pending_review" || reviewStatus === "rejected") {
+      projectIds = [project.id];
+    } else {
+      projectIds = project.group.projects.map((p) => p.id);
+    }
+  } else {
+    projectIds = [project.id];
+  }
+
   const attachments = await prisma.projectAttachment.findMany({
     where: {
-      projectId,
+      projectId: { in: projectIds },
       isParsed: true,
       parsedContent: { not: null },
     },
     select: {
       fileName: true,
+      sourceUrl: true,
+      storagePath: true,
       parsedContent: true,
+      isParsed: true,
+      parseError: true,
+      attachmentDocType: true,
+      documentRole: true,
+      parseQuality: true,
+      extractedMetadata: true,
     },
     orderBy: {
       createdAt: "asc",
     },
   });
 
-  if (attachments.length === 0) {
-    return null;
-  }
+  const deduped = dedupeAttachmentDocuments(attachments);
+  return deduped.map(classifyAttachmentDocument);
+}
 
-  const contents = attachments
-    .filter((a) => a.parsedContent && a.parsedContent.trim().length > 0)
-    .map((a) => `[${a.fileName}]\n${a.parsedContent}`)
-    .join("\n\n---\n\n");
-
-  return contents.length > 0 ? contents : null;
+/**
+ * 프로젝트의 첨부파일 파싱 결과 통합
+ * Delegates to collectProjectAnalysisDocuments for group-aware collection.
+ */
+export async function integrateAttachmentContent(
+  projectId: string
+): Promise<string | null> {
+  const documents = await collectProjectAnalysisDocuments(projectId);
+  return buildTypedAttachmentContent(documents);
 }
 
 /**
@@ -343,10 +396,13 @@ export function buildProjectAnalysis(input: {
   markdown: string;
   eligibilityCriteria: EligibilityCriteria;
   hasAttachmentContent: boolean;
+  selectionInsights?: SelectionInsights;
 }): ProjectAnalysis {
   const criteriaEntries = Object.entries(input.eligibilityCriteria);
   const confidence = deriveAnalysisConfidence(criteriaEntries.length, input.hasAttachmentContent);
   const evidenceIds = criteriaEntries.map(([key]) => key);
+
+  const insights = input.selectionInsights;
 
   const benefits: ProjectAnalysis["benefits"] = {
     maxAmount: null,
@@ -361,6 +417,27 @@ export function buildProjectAnalysis(input: {
   };
   if (input.project.startDate) period.startDate = input.project.startDate.toISOString();
   if (input.project.endDate) period.endDate = input.project.endDate.toISOString();
+
+  // Merge selection criteria: project.evaluationCriteria + insights.criteria (unique)
+  const selectionCriteria = uniqueStrings([
+    ...compactStrings([input.project.evaluationCriteria]),
+    ...(insights?.criteria ?? []),
+  ]);
+
+  const scoringHints = insights?.scoringHints ?? [];
+  const likelyImportantFactors = insights?.likelyImportantFactors ?? [];
+
+  const scoreTable = insights?.scoreTable?.length ? insights.scoreTable : undefined;
+  const prioritySignals = insights?.prioritySignals?.length ? insights.prioritySignals : undefined;
+
+  // Merge preparationPriority: existing required docs + insights.preparationPriority (unique)
+  const preparationPriority = uniqueStrings([
+    ...input.project.requiredDocuments,
+    ...(insights?.preparationPriority ?? []),
+  ]);
+
+  const writingStrategy = insights?.writingStrategy ?? [];
+  const commonRisks = insights?.commonRisks ?? [];
 
   return {
     summary: {
@@ -388,22 +465,25 @@ export function buildProjectAnalysis(input: {
       contact: input.project.contactInfo ? [input.project.contactInfo] : [],
     },
     selection: {
-      criteria: input.project.evaluationCriteria ? [input.project.evaluationCriteria] : [],
-      scoringHints: [],
-      likelyImportantFactors: [],
+      criteria: selectionCriteria,
+      scoringHints,
+      likelyImportantFactors,
+      ...(scoreTable ? { scoreTable } : {}),
+      ...(prioritySignals ? { prioritySignals } : {}),
     },
     aiTips: {
       whoShouldApply: compactStrings([input.project.target]),
-      preparationPriority: input.project.requiredDocuments,
-      writingStrategy: [],
-      commonRisks: [],
+      preparationPriority,
+      writingStrategy,
+      commonRisks,
       checklist: buildPreparationChecklist(input.project),
     },
     evidence: evidenceIds.map((id) => ({ id, source: "ai", label: id, text: id })),
     quality: {
       confidence,
       hasParsedAttachment: input.hasAttachmentContent,
-      hasSelectionCriteria: Boolean(input.project.evaluationCriteria),
+      hasSelectionCriteria: selectionCriteria.length > 0,
+      hasScoreTable: Boolean(scoreTable?.length),
       missingFields: [],
       warnings: [],
     },
@@ -488,8 +568,10 @@ export async function analyzeProject(projectId: string): Promise<{
     // 크롤링 데이터 포맷팅
     let crawledData: string | null = formatCrawledData(project);
 
-    // 첨부파일 파싱 결과 통합
-    let attachmentContent: string | null = await integrateAttachmentContent(projectId);
+    // 그룹 인식 첨부파일 수집 (한 번만)
+    const analysisDocuments = await collectProjectAnalysisDocuments(projectId);
+    let attachmentContent: string | null = buildTypedAttachmentContent(analysisDocuments);
+    const selectionInsights = extractSelectionInsights(analysisDocuments);
 
     const hasAttachmentContent = Boolean(attachmentContent?.trim());
 
@@ -505,6 +587,7 @@ export async function analyzeProject(projectId: string): Promise<{
       markdown,
       eligibilityCriteria,
       hasAttachmentContent,
+      selectionInsights,
     }));
 
     // Memory Optimization: 중간 데이터 해제

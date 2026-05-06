@@ -17,6 +17,16 @@ export type PeriodStatus = z.infer<typeof PeriodStatusSchema>;
 export const EvidenceSourceSchema = z.enum(["page", "attachment", "ai"]);
 export type EvidenceSource = z.infer<typeof EvidenceSourceSchema>;
 
+// ─── Score table item (selection scoring breakdown) ──────────────────────────
+
+export const ScoreTableItemSchema = z.object({
+  item: z.string(),
+  points: z.number().optional(),
+  description: z.string(),
+  evidenceLabel: z.string(),
+});
+export type ScoreTableItem = z.infer<typeof ScoreTableItemSchema>;
+
 // ─── Condition item (eligibility rows) ───────────────────────────────────────
 
 export const ConditionItemSchema = z.object({
@@ -77,6 +87,8 @@ const SelectionSchema = z.object({
   criteria: z.array(z.string()),
   scoringHints: z.array(z.string()),
   likelyImportantFactors: z.array(z.string()),
+  scoreTable: z.array(ScoreTableItemSchema).optional(),
+  prioritySignals: z.array(z.string()).optional(),
 });
 
 const AiTipsSchema = z.object({
@@ -99,6 +111,7 @@ const QualitySchema = z.object({
   confidence: ConfidenceSchema,
   hasParsedAttachment: z.boolean(),
   hasSelectionCriteria: z.boolean(),
+  hasScoreTable: z.boolean().default(false),
   missingFields: z.array(z.string()),
   warnings: z.array(z.string()),
 });
@@ -125,6 +138,7 @@ const QualityPublicSchema = z.object({
   confidence: ConfidenceSchema,
   hasParsedAttachment: z.boolean(),
   hasSelectionCriteria: z.boolean(),
+  hasScoreTable: z.boolean().default(false),
 });
 
 export const ProjectAnalysisPublicSchema = z.object({

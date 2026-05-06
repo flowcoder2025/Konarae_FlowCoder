@@ -169,4 +169,47 @@ describe("public project DTO serializers", () => {
     expect(serializeProjectAnalysisPublic(null)).toBeNull();
     expect(serializeProjectAnalysisPublic({ period: { status: "bad" } })).toBeNull();
   });
+
+  it("preserves analysis.quality.hasScoreTable and selection.scoreTable in public DTO", () => {
+    const dto = serializeProjectAnalysisPublic({
+      summary: { plain: "요약", keyPoints: [] },
+      benefits: { maxAmount: null, nonCashBenefits: [], notes: [] },
+      eligibility: { required: [], preferred: [], excluded: [], ambiguous: [] },
+      period: { isOpenEnded: false, status: "open" },
+      application: { method: [], channels: [], requiredDocuments: [], contact: [] },
+      selection: {
+        criteria: ["사업성"],
+        scoringHints: [],
+        likelyImportantFactors: [],
+        scoreTable: [{ item: "기술성", points: 30, description: "기술성 평가", evidenceLabel: "p.3" }],
+        prioritySignals: ["기술성 비중 최대"],
+      },
+      aiTips: { whoShouldApply: [], preparationPriority: [], writingStrategy: [], commonRisks: [], checklist: [] },
+      evidence: [],
+      quality: { confidence: "high", hasParsedAttachment: true, hasSelectionCriteria: true, missingFields: [], warnings: [], hasScoreTable: true },
+    });
+
+    expect(dto).not.toBeNull();
+    expect(dto!.quality.hasScoreTable).toBe(true);
+    expect(dto!.selection.scoreTable).toHaveLength(1);
+    expect(dto!.selection.scoreTable![0].item).toBe("기술성");
+    expect(dto!.selection.prioritySignals).toEqual(["기술성 비중 최대"]);
+  });
+
+  it("defaults hasScoreTable to false when not in source quality", () => {
+    const dto = serializeProjectAnalysisPublic({
+      summary: { plain: "요약", keyPoints: [] },
+      benefits: { maxAmount: null, nonCashBenefits: [], notes: [] },
+      eligibility: { required: [], preferred: [], excluded: [], ambiguous: [] },
+      period: { isOpenEnded: false, status: "open" },
+      application: { method: [], channels: [], requiredDocuments: [], contact: [] },
+      selection: { criteria: [], scoringHints: [], likelyImportantFactors: [] },
+      aiTips: { whoShouldApply: [], preparationPriority: [], writingStrategy: [], commonRisks: [], checklist: [] },
+      evidence: [],
+      quality: { confidence: "medium", hasParsedAttachment: false, hasSelectionCriteria: false, missingFields: [], warnings: [] },
+    });
+
+    expect(dto).not.toBeNull();
+    expect(dto!.quality.hasScoreTable).toBe(false);
+  });
 });
