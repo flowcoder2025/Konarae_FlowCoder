@@ -14,6 +14,7 @@ import { prisma } from "@/lib/prisma";
 import { createLogger } from "@/lib/logger";
 
 const logger = createLogger({ api: "cron-analyze-projects" });
+const ANALYSIS_BATCH_SIZE = 100;
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -110,7 +111,7 @@ async function executeProjectAnalysis(source: string): Promise<NextResponse> {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        batchSize: 50, // Process 50 projects at a time
+        batchSize: ANALYSIS_BATCH_SIZE,
       }),
     });
 

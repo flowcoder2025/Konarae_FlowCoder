@@ -14,6 +14,7 @@ import { prisma } from "@/lib/prisma";
 import { createLogger } from "@/lib/logger";
 
 const logger = createLogger({ api: "cron-generate-embeddings" });
+const EMBEDDING_BATCH_SIZE = 500;
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -102,7 +103,7 @@ async function executeEmbeddingGeneration(source: string): Promise<NextResponse>
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        batchSize: 50, // Process 50 projects at a time
+        batchSize: EMBEDDING_BATCH_SIZE,
       }),
     });
 
