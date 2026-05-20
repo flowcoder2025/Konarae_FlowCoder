@@ -119,3 +119,42 @@ Results:
 - DB rollout: `npx prisma db push` completed successfully after explicit approval and regenerated Prisma Client.
 - Build after DB rollout: `npx pnpm@9.15.3 build` completed route generation successfully; the previous `/admin/crawler` prerender failure from missing `CrawlJob.metrics` is resolved. Build output still reports the pre-existing Next ESLint plugin conflict warning.
 - Post-rollout verification: full Jest passed (`npx pnpm@9.15.3 test`, 185 tests) and `npx tsc --noEmit` passed.
+
+---
+
+# Operations Stabilization Plan
+
+Goal: Safely clean stale operational crawl state, reduce recurrence risk, and align worker observability after the production health check.
+
+Acceptance criteria:
+- Only stale `CrawlJob.status=running` rows with clear age evidence are mutated.
+- No active crawler work is interrupted before confirming process state.
+- Add source-level protection so cron does not enqueue duplicate active crawl jobs for the same source.
+- Verify changed TypeScript with focused tests/typecheck where practical.
+- Record what was changed and how it was verified.
+
+Working Notes:
+- Public app and `/api/v1/*` are healthy.
+- Embedding, analysis, and matching workers are processing successfully; backlog is throughput mismatch, not worker failure.
+- Crawler has seven stale `running` jobs aged 10.6h–154.6h with zero project counters.
+- Crawler container has a 6+ day old Playwright `headless_shell`, contributing to high RSS.
+- Host nginx is missing repo-configured stats routes, while container-local authenticated stats endpoints work.
+
+Tasks:
+- [x] Re-check current running crawl jobs and crawler process state.
+- [x] Mark clearly stale running crawl jobs as failed with an operational cleanup message.
+- [x] Add duplicate active crawl-job skip logic to cron crawl dispatch.
+- [x] Verify source-level lock behavior with tests or typecheck.
+- [x] Restart crawler only after DB state cleanup and active-process check.
+- [x] Decide and apply nginx stats route alignment if safe.
+- [x] Increase analysis and embedding batch sizes conservatively.
+- [x] Summarize changes and verification story.
+
+Results:
+- Production DB cleanup marked 7 stale `running` crawl jobs as `failed`; remaining running crawl jobs: 0.
+- Restarted `flowmate-crawler`; health returned `ok` and RSS dropped to about 153MB.
+- Added crawl scheduling helper to clean stale running jobs over 12h and skip sources with existing `pending/running` jobs before enqueue.
+- Increased cron dispatch batch sizes: analysis 50→100 and embeddings 50→500.
+- Aligned repo nginx config with current safer operation by keeping stats routes internal-only externally (`/embedding-stats` and `/analysis-stats` return 404).
+- Verification passed: `npm test -- __tests__/lib/crawler/job-scheduler.test.ts`, `npx tsc --noEmit`, and `npm run build`.
+- Build still reports pre-existing lint warnings unrelated to this change.

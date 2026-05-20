@@ -12,6 +12,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyQStashSignature } from "@/lib/qstash";
 import { createLogger } from "@/lib/logger";
+import {
+  createCrawlJobsForAvailableSources,
+  markStaleRunningCrawlJobs,
+} from "@/lib/crawler/job-scheduler";
 
 const logger = createLogger({ api: "cron-crawl-all" });
 
@@ -72,27 +76,14 @@ async function executeCrawlAll(source: string): Promise<NextResponse> {
 
     logger.info(`Found ${activeSources.length} active source(s)`);
 
-    // Create jobs for all active sources
-    const jobs = await Promise.all(
-      activeSources.map(async (crawlSource) => {
-        const job = await prisma.crawlJob.create({
-          data: {
-            sourceId: crawlSource.id,
-            status: "pending",
-          },
-        });
+    const staleJobsCleaned = await markStaleRunningCrawlJobs(prisma);
+    if (staleJobsCleaned > 0) {
+      logger.warn(`Marked ${staleJobsCleaned} stale running crawl job(s) as failed`);
+    }
 
-        // Update source lastCrawled
-        await prisma.crawlSource.update({
-          where: { id: crawlSource.id },
-          data: { lastCrawled: new Date() },
-        });
+    const { jobs, skippedSources } = await createCrawlJobsForAvailableSources(prisma, activeSources);
 
-        return { jobId: job.id, sourceName: crawlSource.name };
-      })
-    );
-
-    logger.info(`Created ${jobs.length} crawl job(s)`);
+    logger.info(`Created ${jobs.length} crawl job(s), skipped ${skippedSources.length} source(s) with active jobs`);
 
     // Delegate jobs to Railway worker
     // Railway has no time limit, can process all jobs in background
@@ -150,7 +141,13 @@ async function executeCrawlAll(source: string): Promise<NextResponse> {
       success: true,
       message: `Started ${jobs.length} crawl job(s)`,
       jobsCreated: jobs.length,
+      jobsSkipped: skippedSources.length,
+      staleJobsCleaned,
       sources: jobs.map((j) => j.sourceName),
+      skippedSources: skippedSources.map((j) => ({
+        sourceName: j.sourceName,
+        activeJobStatus: j.activeJobStatus,
+      })),
       triggeredBy: source,
       timestamp: new Date().toISOString(),
     });
