@@ -1,11 +1,13 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ProjectShareActions } from "@/components/projects/project-share-actions";
 import { ProjectAnalysisConfidenceWarning } from "@/components/projects/project-analysis-confidence-warning";
 import { ProjectDescriptionRenderer } from "@/components/projects/project-description-renderer";
 import type { ProjectAnalysisPublicDto } from "@/lib/projects/analysis-schema";
+import type { ProjectPublicAttachmentDto, ProjectPublicDto } from "@/lib/projects/public-dto";
 import { getPublicProject } from "@/lib/projects/public-service";
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://mate.flow-coder.com";
@@ -21,6 +23,51 @@ type ScoreTableItems = NonNullable<ProjectAnalysisPublicDto["selection"]["scoreT
 
 function hasItems<T>(items: readonly T[] | undefined): items is readonly T[] {
   return Array.isArray(items) && items.length > 0;
+}
+
+function formatDate(value: string | null) {
+  if (!value) return "기한 미정";
+  return new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium" }).format(new Date(value));
+}
+
+function getFreshness(project: ProjectPublicDto) {
+  if (project.crawledAt) return { label: "수집일", value: formatDate(project.crawledAt) };
+  return { label: "갱신일", value: formatDate(project.updatedAt) };
+}
+
+function getSafeUrl(value: string | null | undefined) {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function getSourceLink(project: ProjectPublicDto) {
+  const sourceUrl = getSafeUrl(project.sourceUrl);
+  if (sourceUrl) return { label: "원문 바로가기", url: sourceUrl };
+
+  const websiteUrl = getSafeUrl(project.websiteUrl);
+  return websiteUrl ? { label: "기관 페이지 보기", url: websiteUrl } : null;
+}
+
+function getSafeAttachments(attachments: ProjectPublicAttachmentDto[]) {
+  const seen = new Set<string>();
+  return attachments.filter((attachment) => {
+    const url = getSafeUrl(attachment.url);
+    if (!url || seen.has(url)) return false;
+    seen.add(url);
+    return true;
+  });
+}
+
+function formatFileSize(value: number | null) {
+  if (!value) return null;
+  if (value < 1024) return `${value}B`;
+  if (value < 1024 * 1024) return `${Math.round(value / 1024)}KB`;
+  return `${(value / 1024 / 1024).toFixed(1)}MB`;
 }
 
 function ListSection({ title, items }: { title: string; items: readonly string[] | undefined }) {
@@ -120,6 +167,9 @@ export default async function ProjectDetailPage({ params }: ProjectDetailPagePro
   if (!project) notFound();
 
   const pageUrl = `${SITE_URL}/projects/${project.id}`;
+  const freshness = getFreshness(project);
+  const sourceLink = getSourceLink(project);
+  const attachments = getSafeAttachments(project.attachments);
 
   return (
     <main className="container mx-auto max-w-5xl px-4 py-10">
@@ -140,9 +190,52 @@ export default async function ProjectDetailPage({ params }: ProjectDetailPagePro
           <dl className="grid gap-4 md:grid-cols-2">
             <div><dt className="text-sm text-muted-foreground">지원대상</dt><dd className="font-medium">{project.target}</dd></div>
             <div><dt className="text-sm text-muted-foreground">지원금액</dt><dd className="font-medium">{project.amount.summary ?? "확인 필요"}</dd></div>
-            <div><dt className="text-sm text-muted-foreground">신청 마감</dt><dd className="font-medium">{project.isPermanent ? "상시모집" : project.deadline ?? "기한 미정"}</dd></div>
+            <div><dt className="text-sm text-muted-foreground">신청 마감</dt><dd className="font-medium">{project.isPermanent ? "상시모집" : formatDate(project.deadline)}</dd></div>
             <div><dt className="text-sm text-muted-foreground">신청방법</dt><dd className="font-medium">{project.applicationProcess ?? "원문 확인"}</dd></div>
+            <div><dt className="text-sm text-muted-foreground">{freshness.label}</dt><dd className="font-medium">{freshness.value}</dd></div>
           </dl>
+        </Card>
+
+        <Card className="p-6">
+          <h2 className="mb-4 text-xl font-semibold">원문 및 첨부파일</h2>
+          <div className="space-y-5">
+            <div className="space-y-2">
+              <h3 className="text-sm font-semibold text-foreground">공고 원문</h3>
+              {sourceLink ? (
+                <Button asChild variant="outline" rounded="lg">
+                  <a href={sourceLink.url} target="_blank" rel="noopener noreferrer">{sourceLink.label}</a>
+                </Button>
+              ) : (
+                <p className="text-sm text-muted-foreground">원문 링크 확인 필요</p>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <h3 className="text-sm font-semibold text-foreground">첨부파일</h3>
+              {attachments.length > 0 ? (
+                <ul className="space-y-2">
+                  {attachments.map((attachment) => {
+                    const fileSize = formatFileSize(attachment.fileSize);
+                    return (
+                      <li key={attachment.id}>
+                        <a
+                          className="block rounded-lg border border-border p-3 text-sm transition-colors hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                          href={attachment.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          <span className="font-medium text-foreground">{attachment.fileName}</span>
+                          <span className="ml-2 text-muted-foreground">{[attachment.fileType, fileSize].filter(Boolean).join(" · ")}</span>
+                        </a>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : (
+                <p className="text-sm text-muted-foreground">첨부파일은 원문에서 확인하세요.</p>
+              )}
+            </div>
+          </div>
         </Card>
 
         <Card className="p-6">

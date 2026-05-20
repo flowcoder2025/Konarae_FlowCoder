@@ -1,3 +1,51 @@
+# Public Project Freshness and Links Implementation Plan
+
+Goal: Make public project cards and detail pages show freshness dates, original links, and attachment links without broad schema changes.
+
+Architecture:
+- Keep the public API boundary in `src/lib/projects/public-dto.ts` and `src/lib/projects/public-service.ts`.
+- Add public-safe attachment metadata to `ProjectPublicDto` from `ProjectAttachment`, plus fallback links from `attachmentUrls` and `originalFileUrl`.
+- Render date/link metadata in `PublicProjectCard` and `src/app/projects/[id]/page.tsx` using small local helpers.
+
+Tech Stack: Next.js App Router, React Server Components, Prisma select DTO serialization, Jest + Testing Library.
+
+Acceptance criteria:
+- Summary cards show a freshness date using the currently available `crawledAt → updatedAt` fallback, with clear `수집일` or `갱신일` labels. Do not treat `startDate` as 게시일.
+- Detail page shows the same freshness metadata and formats deadline/date values for Korean users.
+- Detail page shows original link from `project.sourceUrl ?? project.websiteUrl` with label distinguishing `원문 바로가기` from fallback `기관 페이지 보기`.
+- Detail page shows deduped, safe attachment links from detail-only `ProjectAttachment.sourceUrl`, `attachmentUrls`, and `originalFileUrl` without exposing parsed content or internal analysis evidence.
+- Public URL rendering only allows `http:` and `https:` hrefs and uses `rel="noopener noreferrer"` for new tabs.
+- Existing public DTO stripping remains intact.
+
+Working Notes:
+- Untracked `.agents/skills/flow-ui/` and `.claude/scheduled_tasks.lock` are unrelated local harness artifacts; do not include them in this change.
+- Existing DTO already maps `sourceUrl` from `detailUrl ?? sourceUrl`; UI should use that before `websiteUrl`.
+- Keep list and detail Prisma selects separate so list cards do not fetch attachment relations.
+- `SupportProject` has `attachmentUrls`, `originalFileUrl`, `originalFileType`, and `attachments ProjectAttachment[]`.
+- `ProjectAttachment` public-safe fields are `id`, `fileName`, `fileType`, `fileSize`, `sourceUrl`, `createdAt`.
+
+Tasks:
+- [x] Add failing DTO tests in `__tests__/lib/projects/public-dto.test.ts` for public attachment serialization, URL dedupe/safety, missing attachment defaults, and DTO key list update.
+- [x] Add failing detail page test in `__tests__/app/project-detail-page.test.tsx` for freshness label, original link, website fallback label, safe URL filtering, and attachment links.
+- [x] Add `attachments` and fallback attachment source fields to `ProjectPublicDto` in `src/lib/projects/public-dto.ts`.
+- [x] Split `PUBLIC_PROJECT_SELECT` into list/detail selects in `src/lib/projects/public-service.ts`; include attachment fields only in the detail select used by `getPublicProject()`.
+- [x] Update `src/components/projects/public-project-card.tsx` to render a labeled `수집일`/`갱신일` date and keep deadline display intact.
+- [x] Update `src/app/projects/[id]/page.tsx` to format dates, show safe source link, show deduped safe attachment link card, and use `outline` style only for link CTA buttons.
+- [x] Run focused tests: `npm test -- __tests__/lib/projects/public-dto.test.ts __tests__/app/project-detail-page.test.tsx`.
+- [x] Run typecheck: `npx tsc --noEmit`.
+- [x] Run build: `npm run build`.
+- [x] If build passes, run local browser verification for `/projects` and one `/projects/[id]` page.
+- [x] Summarize changed files and verification results; do not commit unless explicitly requested.
+
+Results:
+- Added public attachment DTO serialization with safe `http/https` filtering and URL dedupe.
+- Split public project list/detail selects so attachment relation data is fetched only by `getPublicProject()`.
+- Cards now show `수집일` or `갱신일`; detail pages show formatted deadline/freshness, source link, and attachment links or fallback copy.
+- Verification passed: focused Jest (18 tests), `npx tsc --noEmit`, `npm run build`, and browser checks for `/projects` plus one `/projects/[id]` page.
+- Build still reports pre-existing lint warnings outside this change; local browser console still reports the existing manifest CORS redirect issue.
+
+---
+
 # RHWP Parser PoC Plan
 
 Goal: Verify whether rhwp can improve FlowMate HWP/HWPX text extraction before wiring it into operational retry parsing.
