@@ -12,7 +12,14 @@ function formatDeadline(project: ProjectPublicDto) {
   return project.isPermanent ? "상시모집" : formatDate(project.deadline);
 }
 
+function getFreshness(project: ProjectPublicDto) {
+  if (project.crawledAt) return { label: "수집일", value: formatDate(project.crawledAt) };
+  return { label: "갱신일", value: formatDate(project.updatedAt) };
+}
+
 export function PublicProjectCard({ project }: { project: ProjectPublicDto }) {
+  const freshness = getFreshness(project);
+
   return (
     <Link className="block h-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" href={`/projects/${project.id}`}>
       <Card className="flex h-full flex-col p-5 transition-colors hover:border-primary">
@@ -24,6 +31,7 @@ export function PublicProjectCard({ project }: { project: ProjectPublicDto }) {
         <h3 className="mb-2 line-clamp-2 text-lg font-semibold">{project.title}</h3>
         <p className="mb-3 text-sm text-muted-foreground">{project.organization}</p>
         <p className="mb-4 line-clamp-3 text-sm text-muted-foreground">{project.summary}</p>
+        <p className="mb-3 text-xs text-muted-foreground">{freshness.label} {freshness.value}</p>
         <div className="mt-auto flex items-center justify-between border-t pt-3 text-sm">
           <span className="font-medium text-primary">{project.amount.summary ?? "지원금액 확인 필요"}</span>
           <span className="text-muted-foreground">{formatDeadline(project)}</span>

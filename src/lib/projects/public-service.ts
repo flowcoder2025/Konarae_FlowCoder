@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { serializeProjectPublic } from "./public-dto";
 import type { PublicProjectQuery } from "./public-query";
 
-const PUBLIC_PROJECT_SELECT = {
+const PUBLIC_PROJECT_LIST_SELECT = {
   id: true,
   name: true,
   organization: true,
@@ -39,6 +39,24 @@ const PUBLIC_PROJECT_SELECT = {
   hasSelectionCriteria: true,
   publicationStatus: true,
   projectAnalysis: true,
+} satisfies Prisma.SupportProjectSelect;
+
+const PUBLIC_PROJECT_DETAIL_SELECT = {
+  ...PUBLIC_PROJECT_LIST_SELECT,
+  attachmentUrls: true,
+  originalFileUrl: true,
+  originalFileType: true,
+  attachments: {
+    orderBy: { createdAt: "asc" },
+    select: {
+      id: true,
+      fileName: true,
+      fileType: true,
+      fileSize: true,
+      sourceUrl: true,
+      createdAt: true,
+    },
+  },
 } satisfies Prisma.SupportProjectSelect;
 
 const PUBLIC_PROJECT_VISIBILITY_WHERE = {
@@ -97,7 +115,7 @@ export async function listPublicProjects(query: PublicProjectQuery) {
       skip,
       take: query.limit,
       orderBy: buildOrderBy(query.sort),
-      select: PUBLIC_PROJECT_SELECT,
+      select: PUBLIC_PROJECT_LIST_SELECT,
     }),
     prisma.supportProject.count({ where }),
   ]);
@@ -116,7 +134,7 @@ export async function listPublicProjects(query: PublicProjectQuery) {
 export async function getPublicProject(id: string) {
   const project = await prisma.supportProject.findFirst({
     where: { ...PUBLIC_PROJECT_VISIBILITY_WHERE, id },
-    select: PUBLIC_PROJECT_SELECT,
+    select: PUBLIC_PROJECT_DETAIL_SELECT,
   });
 
   return project ? serializeProjectPublic(project) : null;

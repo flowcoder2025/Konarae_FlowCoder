@@ -36,6 +36,7 @@ function buildProject(overrides: Partial<ProjectPublicDto> = {}): ProjectPublicD
     contactInfo: null,
     websiteUrl: null,
     sourceUrl: null,
+    attachments: [],
     status: "active",
     viewCount: 0,
     crawledAt: null,
@@ -86,5 +87,68 @@ describe("ProjectDetailPage", () => {
     expect(screen.getByText("30")).toBeTruthy();
     expect(screen.getAllByText("확인 필요").length).toBeGreaterThan(0);
     expect(screen.getByText("기술성 고배점")).toBeTruthy();
+  });
+
+  it("renders crawled freshness, original link, and attachment links", async () => {
+    mockGetPublicProject.mockResolvedValue(buildProject({
+      sourceUrl: "https://example.com/original",
+      crawledAt: "2026-04-20T00:00:00.000Z",
+      updatedAt: "2026-05-06T00:00:00.000Z",
+      attachments: [
+        {
+          id: "att-1",
+          fileName: "공고문.hwp",
+          fileType: "hwp",
+          fileSize: 2048,
+          url: "https://example.com/files/announcement.hwp",
+          createdAt: "2026-04-20T00:00:00.000Z",
+        },
+      ],
+    }));
+
+    render(await ProjectDetailPage({ params: Promise.resolve({ id: "project-1" }) }));
+
+    expect(screen.getByText("수집일")).toBeTruthy();
+    expect(screen.getByText(/2026.*4.*20/)).toBeTruthy();
+    const originalLink = screen.getByRole("link", { name: "원문 바로가기" });
+    expect(originalLink.getAttribute("href")).toBe("https://example.com/original");
+    expect(originalLink.getAttribute("rel")).toBe("noopener noreferrer");
+    expect(screen.getByRole("heading", { name: "원문 및 첨부파일" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: /공고문\.hwp/ }).getAttribute("href")).toBe("https://example.com/files/announcement.hwp");
+  });
+
+  it("falls back to website link and filters unsafe attachment URLs", async () => {
+    mockGetPublicProject.mockResolvedValue(buildProject({
+      sourceUrl: "javascript:alert(1)",
+      websiteUrl: "https://example.com/site",
+      crawledAt: null,
+      updatedAt: "2026-05-06T00:00:00.000Z",
+      attachments: [
+        {
+          id: "att-unsafe",
+          fileName: "위험.url",
+          fileType: "unknown",
+          fileSize: 0,
+          url: "javascript:alert(1)",
+          createdAt: null,
+        },
+        {
+          id: "att-safe",
+          fileName: "신청서.pdf",
+          fileType: "pdf",
+          fileSize: null,
+          url: "https://example.com/files/apply.pdf",
+          createdAt: null,
+        },
+      ],
+    }));
+
+    render(await ProjectDetailPage({ params: Promise.resolve({ id: "project-1" }) }));
+
+    expect(screen.getByText("갱신일")).toBeTruthy();
+    const websiteLink = screen.getByRole("link", { name: "기관 페이지 보기" });
+    expect(websiteLink.getAttribute("href")).toBe("https://example.com/site");
+    expect(screen.queryByRole("link", { name: /위험\.url/ })).toBeNull();
+    expect(screen.getByRole("link", { name: /신청서\.pdf/ }).getAttribute("href")).toBe("https://example.com/files/apply.pdf");
   });
 });

@@ -2,6 +2,15 @@ import { ProjectAnalysisPublicSchema, ProjectAnalysisSchema, type ProjectAnalysi
 
 type NullableDate = Date | string | null | undefined;
 
+type ProjectPublicAttachmentSource = {
+  id: string;
+  fileName: string;
+  fileType: string;
+  fileSize: number;
+  sourceUrl: string;
+  createdAt?: NullableDate;
+};
+
 type ProjectPublicSource = {
   id: string;
   name: string;
@@ -28,6 +37,10 @@ type ProjectPublicSource = {
   websiteUrl?: string | null;
   detailUrl?: string | null;
   sourceUrl?: string | null;
+  attachmentUrls?: unknown;
+  originalFileUrl?: string | null;
+  originalFileType?: string | null;
+  attachments?: ProjectPublicAttachmentSource[] | null;
   status: string;
   viewCount: number;
   crawledAt?: NullableDate;
@@ -38,6 +51,15 @@ type ProjectPublicSource = {
   hasSelectionCriteria?: boolean | null;
   projectAnalysis?: unknown;
 };
+
+export interface ProjectPublicAttachmentDto {
+  id: string;
+  fileName: string;
+  fileType: string | null;
+  fileSize: number | null;
+  url: string;
+  createdAt: string | null;
+}
 
 export interface ProjectPublicDto {
   id: string;
@@ -66,6 +88,7 @@ export interface ProjectPublicDto {
   contactInfo: string | null;
   websiteUrl: string | null;
   sourceUrl: string | null;
+  attachments: ProjectPublicAttachmentDto[];
   status: string;
   viewCount: number;
   crawledAt: string | null;
@@ -92,6 +115,71 @@ function toIso(value: NullableDate): string | null {
 
 function toStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function isSafePublicUrl(value: string | null | undefined): value is string {
+  if (!value) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function fileNameFromUrl(url: string, fallback: string) {
+  try {
+    const fileName = new URL(url).pathname.split("/").filter(Boolean).at(-1);
+    return fileName ? decodeURIComponent(fileName) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function serializeProjectAttachments(project: ProjectPublicSource): ProjectPublicAttachmentDto[] {
+  const seen = new Set<string>();
+  const attachments: ProjectPublicAttachmentDto[] = [];
+
+  const append = (attachment: ProjectPublicAttachmentDto) => {
+    if (!isSafePublicUrl(attachment.url) || seen.has(attachment.url)) return;
+    seen.add(attachment.url);
+    attachments.push(attachment);
+  };
+
+  for (const attachment of project.attachments ?? []) {
+    append({
+      id: attachment.id,
+      fileName: attachment.fileName || fileNameFromUrl(attachment.sourceUrl, "첨부파일"),
+      fileType: attachment.fileType || null,
+      fileSize: attachment.fileSize || null,
+      url: attachment.sourceUrl,
+      createdAt: toIso(attachment.createdAt),
+    });
+  }
+
+  toStringArray(project.attachmentUrls).forEach((url, index) => {
+    append({
+      id: `attachment-url-${index}`,
+      fileName: fileNameFromUrl(url, `첨부파일 ${index + 1}`),
+      fileType: null,
+      fileSize: null,
+      url,
+      createdAt: null,
+    });
+  });
+
+  if (project.originalFileUrl) {
+    append({
+      id: "original-file",
+      fileName: fileNameFromUrl(project.originalFileUrl, "원문 첨부파일"),
+      fileType: project.originalFileType ?? null,
+      fileSize: null,
+      url: project.originalFileUrl,
+      createdAt: null,
+    });
+  }
+
+  return attachments;
 }
 
 export function serializeProjectAnalysisPublic(value: unknown): ProjectAnalysisPublicDto | null {
@@ -137,6 +225,7 @@ export function serializeProjectPublic(project: ProjectPublicSource): ProjectPub
     contactInfo: project.contactInfo ?? null,
     websiteUrl: project.websiteUrl ?? null,
     sourceUrl: project.detailUrl ?? project.sourceUrl ?? null,
+    attachments: serializeProjectAttachments(project),
     status: project.status,
     viewCount: project.viewCount,
     crawledAt: toIso(project.crawledAt),

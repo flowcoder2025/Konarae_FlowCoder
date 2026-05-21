@@ -25,6 +25,10 @@ describe("public project DTO serializers", () => {
     contactInfo: "1357",
     websiteUrl: "https://example.com",
     detailUrl: "https://example.com/detail",
+    attachmentUrls: [],
+    originalFileUrl: null,
+    originalFileType: null,
+    attachments: [],
     status: "active",
     viewCount: 7,
     crawledAt: new Date("2026-04-20T00:00:00.000Z"),
@@ -83,6 +87,7 @@ describe("public project DTO serializers", () => {
       "analysis",
       "analysisMarkdown",
       "applicationProcess",
+      "attachments",
       "category",
       "contactInfo",
       "crawledAt",
@@ -138,6 +143,76 @@ describe("public project DTO serializers", () => {
     const dto = serializeProjectPublic({ ...project, detailUrl: null, sourceUrl: "https://example.com/source" });
 
     expect(dto.sourceUrl).toBe("https://example.com/source");
+  });
+
+  it("serializes public attachment links with dedupe and URL safety", () => {
+    const dto = serializeProjectPublic({
+      ...project,
+      attachmentUrls: [
+        "https://example.com/files/announcement.hwp",
+        "https://example.com/files/form.pdf",
+        "javascript:alert(1)",
+      ],
+      originalFileUrl: "https://example.com/files/original.pdf",
+      originalFileType: "pdf",
+      attachments: [
+        {
+          id: "att-1",
+          fileName: "공고문.hwp",
+          fileType: "hwp",
+          fileSize: 1234,
+          sourceUrl: "https://example.com/files/announcement.hwp",
+          createdAt: new Date("2026-04-19T00:00:00.000Z"),
+        },
+        {
+          id: "att-2",
+          fileName: "위험.url",
+          fileType: "unknown",
+          fileSize: 0,
+          sourceUrl: "javascript:alert(1)",
+          createdAt: new Date("2026-04-19T00:00:00.000Z"),
+        },
+      ],
+    });
+
+    expect(dto.attachments).toEqual([
+      {
+        id: "att-1",
+        fileName: "공고문.hwp",
+        fileType: "hwp",
+        fileSize: 1234,
+        url: "https://example.com/files/announcement.hwp",
+        createdAt: "2026-04-19T00:00:00.000Z",
+      },
+      {
+        id: "attachment-url-1",
+        fileName: "form.pdf",
+        fileType: null,
+        fileSize: null,
+        url: "https://example.com/files/form.pdf",
+        createdAt: null,
+      },
+      {
+        id: "original-file",
+        fileName: "original.pdf",
+        fileType: "pdf",
+        fileSize: null,
+        url: "https://example.com/files/original.pdf",
+        createdAt: null,
+      },
+    ]);
+  });
+
+  it("uses an empty attachment list when attachment fields are missing", () => {
+    const dto = serializeProjectPublic({
+      ...project,
+      attachmentUrls: undefined,
+      originalFileUrl: undefined,
+      originalFileType: undefined,
+      attachments: undefined,
+    });
+
+    expect(dto.attachments).toEqual([]);
   });
 
   it("uses public defaults when optional project fields are missing", () => {
