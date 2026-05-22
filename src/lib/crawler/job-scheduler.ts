@@ -1,5 +1,6 @@
 export const ACTIVE_CRAWL_JOB_STATUSES = ["pending", "running"] as const;
 export const STALE_RUNNING_CRAWL_JOB_HOURS = 12;
+export const STALE_PENDING_CRAWL_JOB_HOURS = 12;
 
 export interface CrawlSourceForScheduling {
   id: string;
@@ -46,6 +47,26 @@ export async function markStaleRunningCrawlJobs(
       status: "failed",
       completedAt: now,
       errorMessage: `Operational cleanup: stale running crawl job exceeded ${STALE_RUNNING_CRAWL_JOB_HOURS}h runtime threshold.`,
+    },
+  });
+
+  return result.count;
+}
+
+export async function markStalePendingCrawlJobs(
+  prisma: CrawlJobSchedulerClient,
+  now = new Date()
+): Promise<number> {
+  const staleBefore = new Date(now.getTime() - STALE_PENDING_CRAWL_JOB_HOURS * 60 * 60 * 1000);
+  const result = await prisma.crawlJob.updateMany({
+    where: {
+      status: "pending",
+      createdAt: { lt: staleBefore },
+    },
+    data: {
+      status: "failed",
+      completedAt: now,
+      errorMessage: `Operational cleanup: stale pending crawl job exceeded ${STALE_PENDING_CRAWL_JOB_HOURS}h queue threshold and was blocking source rescheduling.`,
     },
   });
 
