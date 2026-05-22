@@ -206,3 +206,14 @@ Results:
 - Aligned repo nginx config with current safer operation by keeping stats routes internal-only externally (`/embedding-stats` and `/analysis-stats` return 404).
 - Verification passed: `npm test -- __tests__/lib/crawler/job-scheduler.test.ts`, `npx tsc --noEmit`, and `npm run build`.
 - Build still reports pre-existing lint warnings unrelated to this change.
+
+---
+
+# Stale Pending Crawl Job Cleanup Results
+
+- Added automatic cleanup for crawl jobs stuck in `pending` for more than 12 hours.
+- Wired cleanup into `/api/cron/crawl-all` before source scheduling so old queue items cannot block active sources.
+- Verification:
+  - `npm test -- __tests__/lib/crawler/job-scheduler.test.ts`: PASS
+  - `npx tsc --noEmit`: PASS
+  - Production read-only blocker check: PASS (`activeSources=24`, `activeJobBlockers=0`)

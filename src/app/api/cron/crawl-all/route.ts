@@ -14,6 +14,7 @@ import { verifyQStashSignature } from "@/lib/qstash";
 import { createLogger } from "@/lib/logger";
 import {
   createCrawlJobsForAvailableSources,
+  markStalePendingCrawlJobs,
   markStaleRunningCrawlJobs,
 } from "@/lib/crawler/job-scheduler";
 
@@ -76,17 +77,22 @@ async function executeCrawlAll(source: string): Promise<NextResponse> {
 
     logger.info(`Found ${activeSources.length} active source(s)`);
 
-    const staleJobsCleaned = await markStaleRunningCrawlJobs(prisma);
-    if (staleJobsCleaned > 0) {
-      logger.warn(`Marked ${staleJobsCleaned} stale running crawl job(s) as failed`);
+    const staleRunningJobsCleaned = await markStaleRunningCrawlJobs(prisma);
+    if (staleRunningJobsCleaned > 0) {
+      logger.warn(`Marked ${staleRunningJobsCleaned} stale running crawl job(s) as failed`);
+    }
+
+    const stalePendingJobsCleaned = await markStalePendingCrawlJobs(prisma);
+    if (stalePendingJobsCleaned > 0) {
+      logger.warn(`Marked ${stalePendingJobsCleaned} stale pending crawl job(s) as failed`);
     }
 
     const { jobs, skippedSources } = await createCrawlJobsForAvailableSources(prisma, activeSources);
 
     logger.info(`Created ${jobs.length} crawl job(s), skipped ${skippedSources.length} source(s) with active jobs`);
 
-    // Delegate jobs to Railway worker
-    // Railway has no time limit, can process all jobs in background
+    // Delegate jobs to the external crawler worker
+    // The worker has no serverless timeout and can process jobs in background
     let RAILWAY_URL = process.env.RAILWAY_CRAWLER_URL;
     const WORKER_API_KEY = process.env.WORKER_API_KEY;
 
@@ -142,7 +148,8 @@ async function executeCrawlAll(source: string): Promise<NextResponse> {
       message: `Started ${jobs.length} crawl job(s)`,
       jobsCreated: jobs.length,
       jobsSkipped: skippedSources.length,
-      staleJobsCleaned,
+      staleRunningJobsCleaned,
+      stalePendingJobsCleaned,
       sources: jobs.map((j) => j.sourceName),
       skippedSources: skippedSources.map((j) => ({
         sourceName: j.sourceName,

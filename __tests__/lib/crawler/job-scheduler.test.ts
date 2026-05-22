@@ -1,5 +1,6 @@
 import {
   createCrawlJobsForAvailableSources,
+  markStalePendingCrawlJobs,
   markStaleRunningCrawlJobs,
 } from "@/lib/crawler/job-scheduler";
 
@@ -31,6 +32,35 @@ describe("crawler job scheduler", () => {
         status: "failed",
         completedAt: now,
         errorMessage: "Operational cleanup: stale running crawl job exceeded 12h runtime threshold.",
+      },
+    });
+  });
+
+  it("marks stale pending jobs using the configured queue threshold", async () => {
+    const prisma = {
+      crawlJob: {
+        updateMany: jest.fn().mockResolvedValue({ count: 3 }),
+        findFirst: jest.fn(),
+        create: jest.fn(),
+      },
+      crawlSource: {
+        update: jest.fn(),
+      },
+    };
+    const now = new Date("2026-05-22T12:00:00.000Z");
+
+    await expect(markStalePendingCrawlJobs(prisma, now)).resolves.toBe(3);
+
+    expect(prisma.crawlJob.updateMany).toHaveBeenCalledWith({
+      where: {
+        status: "pending",
+        createdAt: { lt: new Date("2026-05-22T00:00:00.000Z") },
+      },
+      data: {
+        status: "failed",
+        completedAt: now,
+        errorMessage:
+          "Operational cleanup: stale pending crawl job exceeded 12h queue threshold and was blocking source rescheduling.",
       },
     });
   });
