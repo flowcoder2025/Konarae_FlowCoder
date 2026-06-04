@@ -217,3 +217,46 @@ Results:
   - `npm test -- __tests__/lib/crawler/job-scheduler.test.ts`: PASS
   - `npx tsc --noEmit`: PASS
   - Production read-only blocker check: PASS (`activeSources=24`, `activeJobBlockers=0`)
+
+---
+
+# Document Parsing Backlog Improvement Plan
+
+Goal: Improve parsing backlog recovery by centralizing retry candidate classification and adding a read-only dry-run report before any parse retry mutation.
+
+Acceptance criteria:
+- Shared helper classifies parse retry errors into retryable, terminal, and unknown dispositions.
+- Retry candidates exclude terminal no-text, empty-file, unsupported-file, zero-byte, and unsupported type failures by default.
+- `scripts/retry-parsing.ts` defaults to dry-run and requires `--execute` or `RETRY_PARSE_EXECUTE=true` for DB mutation.
+- Admin parse API uses the same helper for automatic batch selection while preserving explicit `fileIds` behavior.
+- Pipeline stats error labels use the shared categorizer.
+- No schema changes or production DB mutation during implementation.
+
+Working Notes:
+- `src/lib/document-parse-retry.ts` is the SSOT for parse retry classification and selection.
+- Dry-run should exit before Supabase client initialization.
+- `--execute` must remain a separate operational decision after dry-run output is reviewed.
+
+Tasks:
+- [x] Add failing tests for parse retry classification, selection, and report generation.
+- [x] Implement side-effect-free shared parse retry helper.
+- [x] Preserve `scripts/retry-parsing-selection.ts` compatibility with wrapper exports.
+- [x] Update `scripts/retry-parsing.ts` to default to dry-run with explicit execute mode.
+- [x] Align admin parse and stats API categorization with shared helper.
+- [x] Run focused helper/selector tests.
+- [x] Run related parser/intelligence/metrics regression tests.
+- [x] Run TypeScript typecheck.
+- [x] Run read-only dry-run verification.
+- [x] Summarize final results and verification story.
+
+Results:
+- Added `src/lib/document-parse-retry.ts` as the shared retry classification, selection, and dry-run report helper.
+- Kept `scripts/retry-parsing-selection.ts` as a compatibility wrapper around the shared helper.
+- Updated `scripts/retry-parsing.ts` to default to read-only dry-run and require `--execute` or `RETRY_PARSE_EXECUTE=true` for mutation.
+- Updated admin parse automatic batch selection to exclude terminal retry failures by default while preserving explicit `fileIds` behavior.
+- Updated pipeline stats error labels to use the shared categorizer.
+- Verification:
+  - `npm test -- __tests__/lib/document-parse-retry.test.ts __tests__/scripts/retry-parsing-selection.test.ts`: PASS (11 tests)
+  - `npm test -- __tests__/lib/document-parser.test.ts __tests__/lib/projects/attachment-intelligence.test.ts __tests__/lib/crawler/crawl-metrics.test.ts`: PASS (43 tests)
+  - `npx tsc --noEmit`: PASS
+  - `set -a && source .env.local && set +a && npx tsx scripts/retry-parsing.ts --dry-run --limit=20 --scan-limit=1000`: PASS, read-only report printed (`retryable=767`, `terminal=233`, `unknown=0` in scanned 1,000 rows)

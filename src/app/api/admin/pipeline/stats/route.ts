@@ -1,4 +1,4 @@
-/**
+/*
  * Pipeline Stats API
  * GET /api/admin/pipeline/stats
  *
@@ -10,6 +10,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { classifyParseRetryError } from "@/lib/document-parse-retry";
 import { requireAdmin } from "@/lib/auth-utils";
 import { handleAPIError } from "@/lib/api-error";
 
@@ -128,7 +129,7 @@ export async function GET(_req: NextRequest) {
     // Process error types
     const errorTypes: Record<string, number> = {};
     errorFiles.forEach((f) => {
-      const errorType = categorizeError(f.parseError!);
+      const errorType = classifyParseRetryError(f.parseError!).label;
       errorTypes[errorType] = (errorTypes[errorType] || 0) + 1;
     });
 
@@ -182,24 +183,4 @@ export async function GET(_req: NextRequest) {
   } catch (error) {
     return handleAPIError(error, _req.url);
   }
-}
-
-/**
- * Categorize error messages
- */
-function categorizeError(error: string): string {
-  const lower = error.toLowerCase();
-
-  if (lower.includes("download") || lower.includes("다운로드")) return "Download Failed";
-  if (lower.includes("upload") || lower.includes("업로드")) return "Upload Failed";
-  if (lower.includes("timeout") || lower.includes("시간")) return "Timeout";
-  if (lower.includes("parse") || lower.includes("파싱")) return "Parse Failed";
-  if (lower.includes("hwp") || lower.includes("한글")) return "HWP Parse Error";
-  if (lower.includes("pdf")) return "PDF Parse Error";
-  if (lower.includes("empty") || lower.includes("비어") || lower.includes("0 bytes"))
-    return "Empty File";
-  if (lower.includes("network") || lower.includes("connect")) return "Network Error";
-  if (lower.includes("no text")) return "No Text Extracted";
-
-  return "Other";
 }
