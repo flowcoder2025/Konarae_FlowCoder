@@ -1,14 +1,19 @@
-/**
+/*
  * Pipeline Parse API
  * POST /api/admin/pipeline/parse
  *
- * Triggers parsing retry for failed attachments
- * Can specify batch size and filter by error type
+ * Triggers parsing retry for failed attachments.
+ * Automatic batches use shared retry classification so terminal failures are not retried.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { parseDocument } from "@/lib/document-parser";
+import {
+  classifyParseRetryError,
+  isParseableFileType,
+  selectParseRetryCandidates,
+} from "@/lib/document-parse-retry";
 import { createClient } from "@supabase/supabase-js";
 import { requireAdmin } from "@/lib/auth-utils";
 import { handleAPIError } from "@/lib/api-error";
@@ -65,6 +70,8 @@ export async function POST(req: NextRequest) {
 
     const body: ParseRequest = await req.json();
     const { batchSize = 20, errorType, fileIds } = body;
+    const safeBatchSize = Math.max(1, Math.min(batchSize, 100));
+    const hasExplicitFileIds = Array.isArray(fileIds) && fileIds.length > 0;
 
     // Initialize Supabase client
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -87,7 +94,7 @@ export async function POST(req: NextRequest) {
         type: "parse",
         status: "running",
         triggeredBy: "manual",
-        params: { batchSize, errorType, fileIds },
+        params: { batchSize: safeBatchSize, errorType, fileIds },
         startedAt: new Date(),
       },
     });
@@ -99,11 +106,15 @@ export async function POST(req: NextRequest) {
       isParsed: false,
     };
 
-    if (fileIds && fileIds.length > 0) {
+    if (hasExplicitFileIds) {
       whereClause.id = { in: fileIds };
+    } else {
+      whereClause.fileType = { in: ["pdf", "hwp", "hwpx"] };
+      whereClause.fileSize = { gt: 0 };
+      whereClause.parseError = { not: null };
     }
 
-    // Get files to process
+    // Get files to process. Automatic mode scans wider, then uses the shared selector in memory.
     const unparsedFiles = await prisma.projectAttachment.findMany({
       where: whereClause,
       select: {
@@ -118,18 +129,19 @@ export async function POST(req: NextRequest) {
           select: { id: true, name: true, detailUrl: true },
         },
       },
-      orderBy: { fileSize: "desc" },
-      take: batchSize,
+      orderBy: hasExplicitFileIds ? { fileSize: "desc" } : { updatedAt: "asc" },
+      take: hasExplicitFileIds ? safeBatchSize : Math.max(safeBatchSize * 5, 100),
     });
 
-    // Filter by error type if specified
-    let filesToProcess = unparsedFiles;
-    if (errorType) {
-      filesToProcess = unparsedFiles.filter((f) => {
-        if (!f.parseError) return errorType === "No Error";
-        return categorizeError(f.parseError) === errorType;
-      });
-    }
+    const errorFilteredFiles = errorType
+      ? unparsedFiles.filter((f) => {
+          if (!f.parseError) return errorType === "No Error";
+          return classifyParseRetryError(f.parseError).label === errorType;
+        })
+      : unparsedFiles;
+    const filesToProcess = hasExplicitFileIds
+      ? errorFilteredFiles.slice(0, safeBatchSize)
+      : selectParseRetryCandidates(errorFilteredFiles).slice(0, safeBatchSize);
 
     // Update job target count
     await prisma.pipelineJob.update({
@@ -144,6 +156,26 @@ export async function POST(req: NextRequest) {
     // Process each file
     for (const file of filesToProcess) {
       try {
+        if (file.fileSize <= 0) {
+          results.push({
+            id: file.id,
+            fileName: file.fileName,
+            status: "skipped",
+            message: "Empty file",
+          });
+          continue;
+        }
+
+        if (!isParseableFileType(file.fileType)) {
+          results.push({
+            id: file.id,
+            fileName: file.fileName,
+            status: "skipped",
+            message: "Unsupported file type",
+          });
+          continue;
+        }
+
         let buffer: Buffer | null = null;
 
         // Try storage first
@@ -290,17 +322,4 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     return handleAPIError(error, req.url);
   }
-}
-
-function categorizeError(error: string): string {
-  const lower = error.toLowerCase();
-
-  if (lower.includes("download") || lower.includes("다운로드")) return "Download Failed";
-  if (lower.includes("timeout") || lower.includes("시간")) return "Timeout";
-  if (lower.includes("upload") || lower.includes("업로드")) return "Upload Failed";
-  if (lower.includes("no text") || lower.includes("empty")) return "No Text";
-  if (lower.includes("certificate")) return "SSL Error";
-  if (lower.includes("parse") || lower.includes("파싱")) return "Parse Error";
-
-  return "Other";
 }

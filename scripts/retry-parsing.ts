@@ -1,19 +1,24 @@
-/**
+/*
  * 파싱 실패한 첨부파일 재시도 스크립트
  *
- * shouldParse=true, isParsed=false인 첨부파일에 대해:
- * 1. Storage에서 파일 다운로드 (storagePath 있는 경우)
- * 2. 또는 sourceUrl에서 다시 다운로드
- * 3. 텍스트 파싱 재시도
+ * 기본 동작은 dry-run입니다. 실제 DB 업데이트/파싱 실행은 --execute 또는
+ * RETRY_PARSE_EXECUTE=true를 명시했을 때만 수행합니다.
  *
- * Run: set -a && source .env.local && set +a && npx tsx scripts/retry-parsing.ts
+ * Dry run:
+ *   set -a && source .env.local && set +a && npx tsx scripts/retry-parsing.ts --dry-run --limit=20 --scan-limit=1000
+ *
+ * Execute:
+ *   set -a && source .env.local && set +a && npx tsx scripts/retry-parsing.ts --execute --limit=5 --scan-limit=500
  */
 
 import * as dotenv from 'dotenv';
 import path from 'path';
 import http from 'http';
 import https from 'https';
-import { selectParseRetryCandidates } from './retry-parsing-selection';
+import {
+  buildParseRetryReport,
+  classifyParseRetryError,
+} from './retry-parsing-selection';
 
 dotenv.config({ path: path.resolve(__dirname, '../.env.local') });
 
@@ -33,13 +38,34 @@ const httpsAgent = new https.Agent({
   rejectUnauthorized: false,
 });
 
+const args = process.argv.slice(2);
+const hasFlag = (name: string) => args.includes(name);
+const getNumberArg = (name: string, fallback: number) => {
+  const prefix = `${name}=`;
+  const raw = args.find((arg) => arg.startsWith(prefix))?.slice(prefix.length);
+  const parsed = raw ? Number(raw) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+const getPositiveEnvNumber = (name: string, fallback: number) => {
+  const parsed = Number(process.env[name]);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
 // Configuration
 const CONFIG = {
   BATCH_SIZE: 20,
-  MAX_FILES: Number(process.env.RETRY_PARSE_MAX_FILES ?? 20),
-  MAX_FILE_SIZE_BYTES: Number(process.env.RETRY_PARSE_MAX_FILE_SIZE_BYTES ?? 10 * 1024 * 1024),
+  MAX_FILES: getNumberArg('--limit', getPositiveEnvNumber('RETRY_PARSE_MAX_FILES', 20)),
+  SCAN_LIMIT: getNumberArg('--scan-limit', getPositiveEnvNumber('RETRY_PARSE_SCAN_LIMIT', 1000)),
+  MAX_FILE_SIZE_BYTES: getNumberArg(
+    '--max-file-size-bytes',
+    getPositiveEnvNumber('RETRY_PARSE_MAX_FILE_SIZE_BYTES', 10 * 1024 * 1024)
+  ),
   PARSE_TIMEOUT: 120000, // 2분
   DELAY_BETWEEN_FILES: 500, // ms
+  INCLUDE_UNKNOWN_ERRORS: hasFlag('--include-unknown-errors'),
+  DRY_RUN:
+    hasFlag('--dry-run') ||
+    (!hasFlag('--execute') && process.env.RETRY_PARSE_EXECUTE !== 'true'),
 };
 
 /**
@@ -68,44 +94,21 @@ function detectFileType(buffer: Buffer): 'pdf' | 'hwp' | 'hwpx' | 'unknown' {
 
 async function main() {
   const { prisma } = await import('../src/lib/prisma');
-  const axios = (await import('axios')).default;
-  const { createClient } = await import('@supabase/supabase-js');
 
   console.log('=== 파싱 실패 첨부파일 재시도 ===\n');
-  console.log(`설정: BATCH_SIZE=${CONFIG.BATCH_SIZE}, MAX_FILES=${CONFIG.MAX_FILES}, MAX_FILE_SIZE_BYTES=${CONFIG.MAX_FILE_SIZE_BYTES}`);
+  console.log(
+    `설정: MODE=${CONFIG.DRY_RUN ? 'DRY_RUN' : 'EXECUTE'}, BATCH_SIZE=${CONFIG.BATCH_SIZE}, MAX_FILES=${CONFIG.MAX_FILES}, SCAN_LIMIT=${CONFIG.SCAN_LIMIT}, MAX_FILE_SIZE_BYTES=${CONFIG.MAX_FILE_SIZE_BYTES}, INCLUDE_UNKNOWN_ERRORS=${CONFIG.INCLUDE_UNKNOWN_ERRORS}`
+  );
   console.log(`시작: ${new Date().toISOString()}\n`);
 
-  // Supabase 클라이언트 초기화
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
-
-  if (!supabaseUrl || !supabaseKey) {
-    console.error('❌ Supabase 환경 변수가 설정되지 않았습니다.');
-    process.exit(1);
-  }
-
-  const supabase = createClient(supabaseUrl, supabaseKey, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-    },
-  });
-
-  // 파싱 실패한 첨부파일 조회 (에러 유형별로 우선순위 지정)
+  // 파싱 실패한 첨부파일 조회. 실제 retry 가능 여부는 shared helper에서 분류한다.
   const unparsedFiles = await prisma.projectAttachment.findMany({
     where: {
       shouldParse: true,
       isParsed: false,
       fileType: { in: ['pdf', 'hwp', 'hwpx'] },
       fileSize: { gt: 0, lte: CONFIG.MAX_FILE_SIZE_BYTES },
-      OR: [
-        { parseError: { contains: 'download', mode: 'insensitive' } },
-        { parseError: { contains: 'timeout', mode: 'insensitive' } },
-        { parseError: { contains: 'upload', mode: 'insensitive' } },
-        { parseError: { contains: 'certificate', mode: 'insensitive' } },
-        { parseError: { contains: 'parse failed', mode: 'insensitive' } },
-        { parseError: { contains: 'retry error', mode: 'insensitive' } },
-      ],
+      parseError: { not: null },
     },
     select: {
       id: true,
@@ -124,43 +127,61 @@ async function main() {
       }
     },
     orderBy: [
-      { fileSize: 'asc' },
+      { updatedAt: 'asc' },
     ],
-    take: CONFIG.MAX_FILES,
+    take: CONFIG.SCAN_LIMIT,
   });
 
-  console.log(`파싱 재시도 대상: ${unparsedFiles.length}개 파일\n`);
+  const report = buildParseRetryReport(unparsedFiles, {
+    maxFileSizeBytes: CONFIG.MAX_FILE_SIZE_BYTES,
+    includeUnknownErrors: CONFIG.INCLUDE_UNKNOWN_ERRORS,
+  });
+  const orderedFiles = report.candidates.slice(0, CONFIG.MAX_FILES);
 
-  if (unparsedFiles.length === 0) {
+  printDryRunReport(report, orderedFiles);
+
+  if (CONFIG.DRY_RUN) {
+    console.log('\nDRY_RUN 모드입니다. Supabase 초기화, 파일 다운로드, 파싱, DB 업데이트를 수행하지 않습니다.');
+    console.log('실행하려면 --execute를 명시하세요. 예: npx tsx scripts/retry-parsing.ts --execute --limit=5');
+    await prisma.$disconnect();
+    return;
+  }
+
+  if (orderedFiles.length === 0) {
     console.log('재시도할 파일이 없습니다.');
     await prisma.$disconnect();
     return;
   }
 
-  // 에러 유형별 분류
-  const errorGroups: Record<string, typeof unparsedFiles> = {};
-  unparsedFiles.forEach(f => {
-    const errorType = categorizeError(f.parseError || 'Unknown');
-    if (!errorGroups[errorType]) errorGroups[errorType] = [];
-    errorGroups[errorType].push(f);
-  });
+  const axios = (await import('axios')).default;
+  const { createClient } = await import('@supabase/supabase-js');
 
-  console.log('📊 에러 유형별 분포:');
-  Object.entries(errorGroups).forEach(([type, files]) => {
-    console.log(`  ${type}: ${files.length}개`);
+  // Supabase 클라이언트 초기화
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
+
+  if (!supabaseUrl || !supabaseKey) {
+    console.error('❌ Supabase 환경 변수가 설정되지 않았습니다.');
+    await prisma.$disconnect();
+    process.exit(1);
+  }
+
+  const supabase = createClient(supabaseUrl, supabaseKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
   });
-  console.log('');
 
   let successCount = 0;
   let errorCount = 0;
   let skipCount = 0;
 
-  const orderedFiles = selectParseRetryCandidates(unparsedFiles);
-
   for (let i = 0; i < orderedFiles.length; i++) {
     const file = orderedFiles[i];
+    const classification = classifyParseRetryError(file.parseError);
     console.log(`\n[${i + 1}/${orderedFiles.length}] ${file.fileName.substring(0, 50)}...`);
-    console.log(`  Type: ${file.fileType} | Size: ${file.fileSize} bytes`);
+    console.log(`  Type: ${file.fileType} | Size: ${file.fileSize} bytes | Category: ${classification.label}`);
     console.log(`  Previous Error: ${file.parseError?.substring(0, 60) || 'None'}`);
 
     try {
@@ -346,20 +367,55 @@ async function main() {
   await prisma.$disconnect();
 }
 
-/**
- * 에러 메시지를 카테고리화
- */
-function categorizeError(error: string): string {
-  const lower = error.toLowerCase();
+function printDryRunReport<T extends {
+  fileName: string;
+  fileType: string;
+  fileSize: number;
+  parseError: string | null;
+  storagePath: string | null;
+  sourceUrl: string | null;
+}>(
+  report: ReturnType<typeof buildParseRetryReport<T>>,
+  selectedFiles: T[]
+): void {
+  console.log('📊 파싱 retry 후보 리포트');
+  console.log(`  스캔한 파일: ${report.totalScanned}개`);
+  console.log(`  Retry 가능: ${report.retryableCount}개`);
+  console.log(`  Terminal 제외: ${report.terminalCount}개`);
+  console.log(`  Unknown 제외: ${report.unknownCount}개${CONFIG.INCLUDE_UNKNOWN_ERRORS ? ' (실행 후보 포함)' : ''}`);
 
-  if (lower.includes('download') || lower.includes('다운로드')) return 'Download Failed';
-  if (lower.includes('timeout') || lower.includes('시간')) return 'Timeout';
-  if (lower.includes('upload') || lower.includes('업로드')) return 'Upload Failed';
-  if (lower.includes('no text') || lower.includes('empty')) return 'No Text';
-  if (lower.includes('certificate')) return 'SSL Error';
-  if (lower.includes('parse') || lower.includes('파싱')) return 'Parse Error';
+  printCounts('Retry 가능 카테고리', report.retryableByCategory);
+  printCounts('Terminal 카테고리', report.terminalByCategory);
+  printCounts('Unknown 카테고리', report.unknownByCategory);
 
-  return 'Other';
+  console.log(`\n🎯 이번 실행 후보: ${selectedFiles.length}개 / 전체 후보 ${report.candidates.length}개`);
+  selectedFiles.slice(0, 20).forEach((file, index) => {
+    const classification = classifyParseRetryError(file.parseError);
+    console.log(
+      `  ${index + 1}. ${file.fileName.substring(0, 80)} | ${file.fileType} | ${file.fileSize} bytes | ${classification.label} | storage=${Boolean(file.storagePath)} | source=${Boolean(file.sourceUrl)} | error=${preview(file.parseError)}`
+    );
+  });
+}
+
+function printCounts(title: string, counts: Record<string, number>): void {
+  console.log(`\n${title}:`);
+  const entries = Object.entries(counts);
+  if (entries.length === 0) {
+    console.log('  없음');
+    return;
+  }
+
+  entries.forEach(([category, count]) => {
+    console.log(`  ${category}: ${count}개`);
+  });
+}
+
+function preview(value: string | null): string {
+  if (!value) {
+    return 'None';
+  }
+
+  return value.replace(/\s+/g, ' ').substring(0, 80);
 }
 
 /**
