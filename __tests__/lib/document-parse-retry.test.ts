@@ -108,6 +108,52 @@ describe("document parse retry helper", () => {
     ]);
   });
 
+  it("excludes archive or spreadsheet filename mismatches even when fileType is parseable", () => {
+    const candidates = selectParseRetryCandidates([
+      {
+        ...file("2. 신청서 서식 모음_2025년 원포인트 신속지원.zip", 310_161, "unable to verify the first certificate"),
+        fileType: "hwpx",
+      },
+      {
+        ...file("3. (제출서류 서식3) 참여기업 및 품목 정보(국문 영문).xlsx", 19_911, "Upload failed"),
+        fileType: "hwpx",
+      },
+      file("recoverable.hwp", 40_000, "unable to verify the first certificate"),
+    ]);
+
+    expect(candidates.map((candidate) => candidate.fileName)).toEqual(["recoverable.hwp"]);
+  });
+
+  it("treats rhwp parse failed and restricted Supabase upload errors as terminal", () => {
+    expect(classifyParseRetryError("rhwp parse failed")).toMatchObject({
+      category: "terminal_parse",
+      disposition: "terminal",
+      label: "Terminal Parse Failed",
+    });
+
+    expect(
+      classifyParseRetryError(
+        "Upload failed: Service for this project is restricted due to the following violations: exceed_storage_size_quota."
+      )
+    ).toMatchObject({
+      category: "restricted_upload",
+      disposition: "terminal",
+      label: "Restricted Upload",
+    });
+
+    const candidates = selectParseRetryCandidates([
+      file("failed.hwpx", 310_161, "rhwp parse failed"),
+      file(
+        "restricted.hwp",
+        15_872,
+        "Upload failed: Service for this project is restricted due to the following violations: exceed_storage_size_quota."
+      ),
+      file("recoverable.hwp", 40_000, "Upload failed"),
+    ]);
+
+    expect(candidates.map((candidate) => candidate.fileName)).toEqual(["recoverable.hwp"]);
+  });
+
   it("can include unknown errors only when explicitly requested", () => {
     const candidates = selectParseRetryCandidates(
       [file("unknown.hwpx", 400_000, "Some new parser error")],
