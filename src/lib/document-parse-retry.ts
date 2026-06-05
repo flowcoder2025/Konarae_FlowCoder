@@ -9,6 +9,8 @@ export type ParseRetryCategory =
   | "ssl"
   | "upload"
   | "transient_parse"
+  | "terminal_parse"
+  | "restricted_upload"
   | "no_text"
   | "empty_file"
   | "unsupported"
@@ -85,6 +87,18 @@ const CLASSIFICATIONS: Record<ParseRetryCategory, ParseRetryClassification> = {
     disposition: "retryable",
     priority: 60,
   },
+  terminal_parse: {
+    category: "terminal_parse",
+    label: "Terminal Parse Failed",
+    disposition: "terminal",
+    priority: 890,
+  },
+  restricted_upload: {
+    category: "restricted_upload",
+    label: "Restricted Upload",
+    disposition: "terminal",
+    priority: 895,
+  },
   no_text: {
     category: "no_text",
     label: "No Text Extracted",
@@ -150,6 +164,17 @@ export function classifyParseRetryError(
     return CLASSIFICATIONS.unsupported;
   }
 
+  if (
+    normalized.includes("service for this project is restricted") ||
+    normalized.includes("exceed_storage_size_quota")
+  ) {
+    return CLASSIFICATIONS.restricted_upload;
+  }
+
+  if (normalized.includes("rhwp parse failed")) {
+    return CLASSIFICATIONS.terminal_parse;
+  }
+
   if (normalized.includes("download") || normalized.includes("다운로드")) {
     return CLASSIFICATIONS.download;
   }
@@ -199,13 +224,23 @@ export function classifyParseRetryError(
   return CLASSIFICATIONS.unknown;
 }
 
+export function classifyParseRetryCandidate(
+  file: ParseRetryCandidateInput
+): ParseRetryClassification {
+  if (hasTerminalFileNameMismatch(file.fileName)) {
+    return CLASSIFICATIONS.unsupported;
+  }
+
+  return classifyParseRetryError(file.parseError);
+}
+
 export function selectParseRetryCandidates<T extends ParseRetryCandidateInput>(
   files: T[],
   options: SelectParseRetryCandidatesOptions = {}
 ): T[] {
   return files
     .filter((file) => {
-      const classification = classifyParseRetryError(file.parseError);
+      const classification = classifyParseRetryCandidate(file);
 
       if (file.fileSize <= 0) {
         return false;
@@ -226,8 +261,8 @@ export function selectParseRetryCandidates<T extends ParseRetryCandidateInput>(
       return options.includeUnknownErrors === true && classification.disposition === "unknown";
     })
     .sort((a, b) => {
-      const aClassification = classifyParseRetryError(a.parseError);
-      const bClassification = classifyParseRetryError(b.parseError);
+      const aClassification = classifyParseRetryCandidate(a);
+      const bClassification = classifyParseRetryCandidate(b);
       const priorityDiff = aClassification.priority - bClassification.priority;
 
       if (priorityDiff !== 0) {
@@ -255,7 +290,7 @@ export function buildParseRetryReport<T extends ParseRetryCandidateInput>(
   let unknownCount = 0;
 
   for (const file of files) {
-    const classification = classifyParseRetryError(file.parseError);
+    const classification = classifyParseRetryCandidate(file);
 
     if (classification.disposition === "retryable") {
       retryableCount++;
@@ -283,4 +318,8 @@ export function buildParseRetryReport<T extends ParseRetryCandidateInput>(
 
 function increment(counts: Record<string, number>, key: string): void {
   counts[key] = (counts[key] ?? 0) + 1;
+}
+
+function hasTerminalFileNameMismatch(fileName: string): boolean {
+  return /\.(zip|7z|rar|xlsx?|xlsm|csv)$/i.test(fileName.trim());
 }

@@ -260,3 +260,28 @@ Results:
   - `npm test -- __tests__/lib/document-parser.test.ts __tests__/lib/projects/attachment-intelligence.test.ts __tests__/lib/crawler/crawl-metrics.test.ts`: PASS (43 tests)
   - `npx tsc --noEmit`: PASS
   - `set -a && source .env.local && set +a && npx tsx scripts/retry-parsing.ts --dry-run --limit=20 --scan-limit=1000`: PASS, read-only report printed (`retryable=767`, `terminal=233`, `unknown=0` in scanned 1,000 rows)
+
+---
+
+# Parse Retry Terminal Classification Follow-up
+
+Goal: Stop repeated low-value retry batches by excluding observed terminal candidates from parse retry selection.
+
+Root cause evidence:
+- Actual ZIP archives were stored with `fileType=hwpx` because ZIP and HWPX share the `PK` signature, so `.zip` filenames kept entering HWPX retry flow.
+- `rhwp parse failed` became a repeated terminal parse failure for ZIP/HWPX bundle files.
+- Supabase restricted upload quota errors were environmental/storage terminal failures, not parser retry candidates.
+
+Results:
+- Added regression tests for archive/spreadsheet filename mismatch, `rhwp parse failed`, and restricted upload errors.
+- Updated `src/lib/document-parse-retry.ts` to classify these as terminal/excluded candidates.
+- Verification:
+  - RED: `npm test -- __tests__/lib/document-parse-retry.test.ts` failed before fix for the new regression cases.
+  - GREEN: `npm test -- __tests__/lib/document-parse-retry.test.ts`: PASS (10 tests)
+  - `npm test -- __tests__/lib/document-parse-retry.test.ts __tests__/scripts/retry-parsing-selection.test.ts`: PASS (13 tests)
+  - `npx tsc --noEmit`: PASS
+  - `npm test`: PASS (27 suites, 202 tests)
+  - Dry-run after fix: PASS, scanned 500 rows with `retryable=0`, `terminal=500`, `unknown=0` after the final filtered batch.
+- Operational result after applying the local fix:
+  - Filtered remaining 8 retry candidates and executed `--execute --limit=8 --scan-limit=500`.
+  - Result: 8/8 parsed successfully, 0 failed, 0 skipped.
