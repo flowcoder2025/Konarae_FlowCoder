@@ -448,9 +448,10 @@ sudo docker stop flowmate-crawler flowmate-embedding
 sudo docker rm flowmate-crawler flowmate-embedding
 sudo docker build -f deploy/oci/crawler/Dockerfile -t flowmate-crawler .
 sudo docker build -f deploy/oci/embedding/Dockerfile -t flowmate-embedding .
-sudo docker run -d --name flowmate-crawler --env-file .env.production -p 3001:3001 --restart unless-stopped flowmate-crawler
-sudo docker run -d --name flowmate-embedding --env-file .env.production -p 3002:3002 --restart unless-stopped flowmate-embedding
+sudo docker run -d --name flowmate-crawler --network flowmate --cap-drop NET_RAW --env-file .env.production -p 3001:3001 --restart unless-stopped flowmate-crawler
+sudo docker run -d --name flowmate-embedding --network flowmate --cap-drop NET_RAW --env-file .env.production -p 3002:3002 --restart unless-stopped flowmate-embedding
 ```
+- `--network flowmate`는 빠뜨리면 안 된다. DB 전환 뒤 워커는 `flowmate-db:5432`로 붙으므로, 빠지면 재배포 직후 DB 연결이 조용히 끊긴다. `--cap-drop NET_RAW`는 워커가 그 브리지에서 다른 주소를 흉내 내지 못하게 막는다.
 
 **Vercel 환경변수**:
 - `RAILWAY_CRAWLER_URL=https://worker.jerome87.com`

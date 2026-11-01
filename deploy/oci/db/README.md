@@ -19,13 +19,15 @@ Admin (Mini/MBP) ── ssh -L 5433:127.0.0.1:5433 oci ──▶ 127.0.0.1:5433 
 | `postgres/pg_hba.conf` | who may connect from where (see below) |
 | `pgbouncer.ini.template`, `pgbouncer_hba.conf` | PgBouncer config (rendered by `install.sh`) and client HBA |
 | `roles.sql` | roles, privileges, `pgbouncer.get_auth()` (no table DDL) |
+| `privileges-check.sql` | privilege self-check; any row = violation (run by `install.sh` / `restore.sh`) |
 | `row-counts.sql` | exact row count per `public` table; shared by the shell scripts and `scripts/db/compare-row-counts.ts` |
-| `common.sh` | shared shell helpers (env/secret reading, Telegram alert, `apply_roles`) |
+| `common.sh` | shared shell helpers (env/secret reading, Telegram alert, `apply_roles`, `check_privileges`) |
 | `install.sh` | idempotent install / re-apply |
-| `restore.sh` | restore a dump into `flowmate` |
-| `backup.sh` | daily dump + row-count manifest + sha256 |
+| `restore.sh` | validate → restore into a staging db → (confirmed) swap |
+| `backup.sh` | daily dump + row-count manifest + sha256, offsite-freshness alert |
 | `verify-restore.sh` | restore a backup into a throwaway container and compare counts |
-| `renew-cert.sh` | Let's Encrypt cert for `db.jerome87.com` via Cloudflare DNS-01 |
+| `renew-cert.sh` | Let's Encrypt cert for `db.jerome87.com` via Cloudflare DNS-01, served-cert check |
+| `tests/restore-guard.test.sh` | stub-docker test: nothing touches the live db without confirmation |
 | `mini/` | Mini-side pull of backups (launchd) |
 | `.env.example` | secret names (values only in `/home/ubuntu/flowmate-db/.env`, 600) |
 
@@ -35,7 +37,7 @@ Pinned images (tag + multi-arch index digest, see `docker-compose.yml` / `renew-
   **Must stay on trixie.** A restore of the Supabase dump showed `ORDER BY name` on
   `"SupportProject"` is byte-identical to Supabase only with ICU 76 (bookworm/ICU 72 orders
   U+2018 vs U+0027 differently). Supabase reports `datcollversion=153.120`; this cluster
-  records `153.128`. The behaviour matches; the version string does not.
+  records `153.128`. The behaviour matches on the tested orderings; the version string does not.
 - `edoburu/pgbouncer:v1.26.1-p0` — PgBouncer 1.26.1 (runs as uid 70).
 - `certbot/dns-cloudflare:v5.8.0`.
 
@@ -45,25 +47,43 @@ Pinned images (tag + multi-arch index digest, see `docker-compose.yml` / `renew-
   Docker-published ports bypass ufw, so the DB itself is published only on `127.0.0.1:5433`.
 - PgBouncer `auth_type = hba` + `pgbouncer_hba.conf`: only `flowmate_app` → `flowmate` over
   `hostssl` with SCRAM; everything else is rejected. (Without it, `pgbouncer_auth`, which must be in
-  `userlist.txt` in plaintext for its own server login, could log in on 6432.)
+  `userlist.txt` in plaintext for its own server login, could log in on 6432.) PgBouncer looks a user
+  up before applying the HBA, so an unknown user still costs one `auth_query` round trip.
 - `flowmate_app`'s SCRAM verifier comes from `auth_query` → `pgbouncer.get_auth()`
   (SECURITY DEFINER, `search_path=pg_catalog`, own schema, EXECUTE only for `pgbouncer_auth`), which
   returns a row **only** for `flowmate_app`. `postgres` / `flowmate_owner` are unknown to PgBouncer.
 - `pg_hba.conf`: `postgres` = local socket (peer) only; `pgbouncer_auth` only from 172.21.0.3;
-  `flowmate_owner` only from 172.21.0.1 (the docker gateway — how `127.0.0.1:5433` connections
-  arrive through docker-proxy, verified with `inet_client_addr()`); `flowmate_app` from 172.21.0.0/24;
-  everything else rejected (v4 and v6). All TCP lines `scram-sha-256`.
+  `flowmate_owner` only from 172.21.0.1; `flowmate_app` from 172.21.0.0/24; everything else rejected
+  (v4 and v6). All TCP lines `scram-sha-256`.
+  - **The `flowmate_owner` rule is host trust, not tunnel trust.** 172.21.0.1 is the docker gateway:
+    every connection to `127.0.0.1:5433` arrives from it through docker-proxy (verified with
+    `inet_client_addr()`), whether it came through your SSH tunnel or from any process or user on the
+    OCI host. The password is the only thing separating them.
+  - **Inside the `flowmate` bridge the protocol is plaintext** (pgbouncer → db and, after cutover,
+    workers → db). SCRAM never sends the password, but query data is visible to anything that can
+    sniff or spoof on that bridge. Mitigation: worker containers run with `--cap-drop NET_RAW`
+    (`deploy/oci/deploy.sh`), so they cannot open raw sockets to spoof or sniff.
 - `flowmate_app`: CONNECT, USAGE on `public`, SELECT/INSERT/UPDATE/DELETE on tables,
-  USAGE/SELECT/UPDATE on sequences, default privileges for future `flowmate_owner` objects. No
+  USAGE/SELECT/UPDATE on sequences, EXECUTE on `flowmate_owner`'s functions (e.g. `hybrid_search`,
+  used by `src/lib/rag.ts`), default privileges for future `flowmate_owner` objects. No
   CREATE/TEMP/TRUNCATE/REFERENCES/TRIGGER/MAINTAIN, not an owner (no DROP/ALTER).
-  `statement_timeout=120s` (same as Supabase).
-- Logging: `log_statement=none`; `roles.sql` additionally switches off error/duration statement
-  logging for its own session, so a failing `ALTER ROLE ... PASSWORD` is never logged.
+  `statement_timeout=120s` (same as Supabase). PUBLIC has no EXECUTE on non-extension functions
+  (global default privilege revoked for `flowmate_owner`; per-schema defaults cannot revoke) and no
+  CONNECT on `postgres` / `template1`. `privileges-check.sql` enforces this after every install/restore.
+- Logging: `log_statement=none`, `log_parameter_max_length=0`, `log_parameter_max_length_on_error=0`
+  (slow-statement / error logs never contain bind values such as OAuth tokens); `roles.sql`
+  additionally switches off error/duration statement logging for its own session, so a failing
+  `ALTER ROLE ... PASSWORD` is never logged.
 - Secrets: generated once by `install.sh` (`openssl rand -hex 32`, URL-safe) into
   `/home/ubuntu/flowmate-db/.env` (600). Scripts pass them via environment, never argv, and never
   print them. Other secret files: `secrets/postgres_password` (uid 999, 600; initdb only),
-  `pgbouncer/userlist.txt` (uid 70, 600).
-- Backups contain member PII: dirs 700, files 600 on OCI and on the Mini.
+  `pgbouncer/userlist.txt` (uid 70, 600). `install.sh` refuses to run unless `~/healthcheck.env`
+  (Telegram bot token) is mode 600.
+- Backups contain member PII: dirs 700, files 600 on OCI and on the Mini. `verify-restore.sh`
+  removes its throwaway container together with the anonymous data volume.
+
+Follow-ups (not done here): fail2ban (or a PgBouncer-side rate limit) for 6432; encryption at rest
+for the data directory / backups (user decision).
 
 ## Connection strings (no values here)
 
@@ -82,16 +102,18 @@ root). Vercel never runs migrations; `DIRECT_URL` = `DATABASE_URL` is fine becau
 
 ```bash
 # from a checkout on the Mini (never use --delete: the target holds .env, data/, certs)
-rsync -a --exclude mini/ deploy/oci/db/ oci:flowmate-db/
+rsync -a --exclude mini/ --exclude tests/ deploy/oci/db/ oci:flowmate-db/
 ssh oci ~/flowmate-db/install.sh
 ```
 
-`install.sh` (idempotent): dirs/perms → `.env` (generated if missing) → superuser password file →
-certificate (`renew-cert.sh` if none) → render `pgbouncer.ini` / `pgbouncer_hba.conf` /
-`userlist.txt` (uid 70, 600; restart PgBouncer when changed) → `docker compose up -d --wait` →
-`roles.sql` → locale check (`i|en-US|en_US.UTF-8|en_US.UTF-8|153.128|UTF8`) →
-`ufw allow 6432/tcp` → cron lines (marker `# flowmate-db:`) → login self-test
-(`flowmate_owner` via 127.0.0.1:5433, `flowmate_app` via 6432 with `sslmode=verify-full`).
+`install.sh` (idempotent, `flock` shared with `restore.sh`): `~/healthcheck.env` must be 600 →
+dirs/perms → `.env` (generated if missing) → superuser password file → certificate (`renew-cert.sh`
+if none) → render `pgbouncer.ini` / `pgbouncer_hba.conf` / `userlist.txt` (uid 70, 600; restart
+PgBouncer when changed) → `docker compose up -d --wait` → `pg_reload_conf()` + check the logging
+settings → `roles.sql` → `privileges-check.sql` → locale check
+(`i|en-US|en_US.UTF-8|en_US.UTF-8|153.128|UTF8`) → `ufw allow 6432/tcp` → cron lines (marker
+`# flowmate-db:`) → login self-test (`flowmate_owner` via 127.0.0.1:5433, `flowmate_app` via 6432
+with `sslmode=verify-full`).
 
 Password rotation: edit `.env`, then `FLOWMATE_ROTATE_PASSWORDS=1 ~/flowmate-db/install.sh`
 (re-sets all three passwords, restarts PgBouncer), then update Vercel / worker env.
@@ -109,11 +131,12 @@ Cron (host TZ Asia/Seoul):
 
 `renew-cert.sh [--dry-run|--force]`: certbot (pinned container, runs as `ubuntu`, state in
 `~/flowmate-db/letsencrypt/`) with DNS-01 via `~/.secrets/cloudflare.ini` (600, read-only mount).
-Renews when < 30 days remain. When the cert changed it installs cert+key into `pgbouncer/tls/`
-(uid 70, 600), sends SIGHUP and checks the served fingerprint with
-`openssl s_client -starttls postgres`; if the old cert is still served it restarts PgBouncer.
-Verified 2026-11-02: SIGHUP alone switches the served certificate on PgBouncer 1.26.1.
-ACME account has no email (expiry is covered by the daily job + Telegram alert).
+Renews when < 30 days remain; installs changed cert+key into `pgbouncer/tls/` (uid 70, 600).
+Then **every run** it reads the certificate actually served on 6432
+(`openssl s_client -starttls postgres`): if it differs from the current one it sends SIGHUP, then
+restarts PgBouncer if needed; it alerts when the served certificate expires in < 14 days
+(`FLOWMATE_CERT_MIN_DAYS`) or PgBouncer is not running. Verified 2026-11-02: SIGHUP alone switches
+the served certificate on PgBouncer 1.26.1. ACME account has no email.
 
 ## Backups
 
@@ -122,46 +145,87 @@ ACME account has no email (expiry is covered by the daily job + Telegram alert).
   from the **same exported snapshot**: a held REPEATABLE READ session runs `row-counts.sql`, pg_dump
   uses `--snapshot`) and `.sha256` (written last). Atomic (tmp + mv), `flock`, keeps 7 sets, checks
   that the archive has one TABLE DATA entry per counted table. Any failure → Telegram (bot from
-  `~/healthcheck.env`, token passed to curl via stdin config). Alert-path test:
-  `FLOWMATE_BACKUP_DB=does_not_exist ~/flowmate-db/backup.sh`.
+  `~/healthcheck.env`, token passed to curl via stdin config). It also alerts when the Mini's pull
+  marker `~/backup/flowmate-db/.mini-pulled` is older than 48h (or has not appeared 48h after the
+  first backup) — the offsite job is watched from the side that already alerts.
+  Alert-path test: `FLOWMATE_BACKUP_DB=does_not_exist ~/flowmate-db/backup.sh`.
+  Manifest assumption: `row-counts.sql` counts ordinary and partitioned parents but skips partitions
+  (`NOT relispartition`); the schema has no partitioned tables today. Revisit if one is added.
 - `verify-restore.sh <dump>|--latest` (monthly): throwaway container from the running db image with
-  the same initdb args, `--network none`, no ports, always removed; restores, runs
-  `row-counts.sql`, diffs with `<dump>.counts.tsv`; result line in `~/backup/flowmate-db/verify.log`;
-  exit 0 only on exact match; Telegram on failure.
+  the same initdb args, `--network none`, no ports, removed with `docker rm -f -v` (its anonymous
+  data volume holds PII); fails if the dangling-volume count grew; restores, runs `row-counts.sql`,
+  diffs with `<dump>.counts.tsv`; result line in `~/backup/flowmate-db/verify.log` (best effort, the
+  Telegram alert is sent first); exit 0 only on exact match.
   *Deviation from the plan:* the plan says verify-restore calls `compare-row-counts`; OCI has no
   `node_modules`, so it compares manifests produced by the same `row-counts.sql`.
 - Mini (`mini/`): `install-launchd.sh` installs `~/.local/bin/flowmate-db-pull-backups.sh` and
   `~/Library/LaunchAgents/com.flowcoder.flowmate-db-backup.plist` (05:30 daily). It rsyncs over
-  `ssh oci` into `/Volumes/포터블/Backups/FlowMate/daily/` (700/600), verifies every set's sha256,
-  keeps 30 sets, and exits non-zero with an `ERROR` line in `~/Library/Logs/flowmate-db-backup.log`
-  when the volume is not mounted, rsync fails, or a checksum mismatches.
-  **One-time macOS permission:** under launchd, TCC denies access to the removable volume
-  (`Operation not permitted`). Grant Full Disk Access (or Files and Folders → Removable Volumes) to
-  `/bin/bash` and `/usr/bin/rsync`, then test with
-  `launchctl kickstart gui/$(id -u)/com.flowcoder.flowmate-db-backup`.
+  `ssh oci` (Apple `/usr/bin/rsync`) into `/Volumes/포터블/Backups/FlowMate/daily/` (700/600),
+  verifies every set's sha256, fails when the newest dump is older than 36h, prunes to 30 sets only
+  after every check passed, then touches `oci:~/backup/flowmate-db/.mini-pulled`. Failures exit
+  non-zero with an `ERROR` line in `~/Library/Logs/flowmate-db-backup.log` (and, via the missing
+  marker, a Telegram alert from OCI within 48h).
+  **One-time macOS permission (user action):** under launchd, TCC denies the removable volume
+  (`Operation not permitted`). In System Settings → Privacy & Security → Full Disk Access add
+  `/bin/bash` (the job's program, i.e. the responsible process) and `/usr/bin/rsync` (the binary TCC
+  denied in testing). Then test with `launchctl kickstart gui/$(id -u)/com.flowcoder.flowmate-db-backup`
+  and check the log for `pull ok`.
 
 ## Restore
 
 ```bash
-ssh oci ~/flowmate-db/restore.sh <dump> [--recreate]
+ssh oci ~/flowmate-db/restore.sh <dump>                                   # stage (+ swap if live is empty)
+ssh oci 'FLOWMATE_CONFIRM_SWAP=flowmate ~/flowmate-db/restore.sh <dump>'   # replace a non-empty live db
 ```
 
-Restores only schema `public` (`pg_restore -n public`), so it accepts both a Supabase `-n public`
-dump and a whole-db dump from `backup.sh`. Creates `vector` in `public` first (as postgres),
-restores with `--no-owner --no-acl --role=flowmate_owner --single-transaction --exit-on-error`,
-re-applies `roles.sql` (grants + auth function, which lives inside the db), runs `ANALYZE`, prints
-row counts. Refuses a non-empty target unless `--recreate` (drops `flowmate` WITH FORCE, recreates
-it owned by `flowmate_owner` with ICU `en-US`).
+1. **Validate, touching no database:** `<dump>.sha256` must exist and match; `pg_restore -l` must read
+   the archive; free disk ≥ 10 × dump size + 1 GiB.
+2. **Stage** into `flowmate_restore_<YYYYmmdd_HHMMSS>` (owner `flowmate_owner`, ICU `en-US`):
+   `CREATE EXTENSION vector` (as postgres), `pg_restore -n public --no-owner --no-acl
+   --role=flowmate_owner --single-transaction --exit-on-error`, `roles.sql` (grants and the pgbouncer
+   auth function live inside the db), `privileges-check.sql`, `ANALYZE`, and if `<dump>.counts.tsv`
+   exists (backup.sh dumps) exact row counts must match it. `-n public` makes both a Supabase
+   `-n public` dump and a whole-db backup.sh dump work.
+3. **Swap**, only after 1 and 2 passed. Live db missing or empty (first restore): no confirmation.
+   Otherwise `FLOWMATE_CONFIRM_SWAP=flowmate` is required; without it the script stops, leaves the
+   staging db for inspection and prints what it would do. Confirmed: fresh `backup.sh` of the live
+   db → `ALLOW_CONNECTIONS false` + terminate its sessions → one transaction:
+   `flowmate → flowmate_prev_<ts>`, `staging → flowmate`. PgBouncer reconnects by name (a few
+   seconds of client errors). **The previous db is never dropped by the script**; it stays as
+   `flowmate_prev_<ts>` (connections disabled). Drop it by hand once the new one is verified:
+   `docker exec -u postgres flowmate-db psql -c 'DROP DATABASE flowmate_prev_<ts>'`.
+
+`tests/restore-guard.test.sh` (stub `docker`, run on any Linux with bash ≥ 4.4) proves that without
+the confirmation nothing renames, terminates, blocks or drops anything, and that a bad checksum,
+missing `.sha256`, unreadable archive, low disk, failed restore, failed privilege check or manifest
+mismatch stops before any swap.
 
 ## Cutover runbook (plan 1A.3 — run only with the user's go)
 
-0. Pick a window away from the Vercel crons (14·17·20·21·00 UTC). Crawl + digest must still be paused (Phase 0).
-1. Supabase pre-check (`.env.local` loaded): no running/pending jobs; mark the 10-30 hung crawl jobs failed (write — confirm first).
+0. Pick a window away from the Vercel crons (14·17·20·21·00 UTC). Crawl + digest must still be
+   paused (Phase 0). Note the `/projects` TTFB before the switch.
+1. **Supabase pre-check** (`.env.local` loaded, `PG*` env as in step 3): no running/pending jobs;
+   mark the 10-30 hung crawl jobs failed now (it is a write — confirm first; after step 2 writes fail).
    ```sql
    SELECT 'CrawlJob', status, count(*) FROM "CrawlJob" WHERE status IN ('running','pending') GROUP BY 2
    UNION ALL SELECT 'pipeline_jobs', status, count(*) FROM pipeline_jobs WHERE status IN ('running','pending') GROUP BY 2;
    ```
-2. Dumps on the Mini (client `postgres:17` ≥ 17.6; connection from `DIRECT_URL` via PG* env, never argv):
+2. **Write fence on Supabase** (app + workers connect as role `postgres` to db `postgres`). From here
+   the public site still serves reads; logins and any other writes fail until the switch.
+   ```sql
+   ALTER ROLE postgres IN DATABASE postgres SET default_transaction_read_only = on;
+   -- existing sessions keep their old default: end them (pooled server conns reconnect read-only)
+   SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+   WHERE usename = 'postgres' AND datname = 'postgres' AND pid <> pg_backend_pid() AND backend_type = 'client backend';
+   ```
+   Check from a **new** session (the setting applies at session start):
+   ```sql
+   SHOW default_transaction_read_only;                              -- on
+   UPDATE "CrawlSource" SET "updatedAt" = "updatedAt" WHERE false;  -- must fail: read-only transaction
+   SELECT count(*) FROM "SupportProject";                           -- reads still work
+   ```
+3. **Final dumps on the Mini** (client `postgres:17` ≥ 17.6; connection from `DIRECT_URL` via PG* env,
+   never argv) + a `.sha256` next to each dump (`restore.sh` requires it):
    ```bash
    cd /Volumes/포터블/Production/FlowMate && set -a && source .env.local && set +a
    eval "$(node -e 'const u=new URL(process.env.DIRECT_URL);const q=s=>"\x27"+String(s).replace(/\x27/g,"\x27\\\x27\x27")+"\x27";console.log(`export PGHOST=${q(u.hostname)} PGPORT=${q(u.port||5432)} PGUSER=${q(decodeURIComponent(u.username))} PGPASSWORD=${q(decodeURIComponent(u.password))} PGDATABASE=${q(u.pathname.slice(1))} PGSSLMODE=require`)')"
@@ -170,14 +234,16 @@ it owned by `flowmate_owner` with ICU `en-US`).
    D() { docker run --rm -i -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD -e PGDATABASE -e PGSSLMODE postgres:17 pg_dump "$@"; }
    D "${F[@]}" > "$OUT/flowmate-public-full-$STAMP.dump"
    D "${F[@]}" --exclude-table-data=document_embeddings > "$OUT/flowmate-public-migrate-$STAMP.dump"
-   (cd "$OUT" && shasum -a 256 flowmate-public-*-$STAMP.dump >> SHA256SUMS-$STAMP.txt)
+   cd "$OUT"
+   shasum -a 256 flowmate-public-*-$STAMP.dump >> SHA256SUMS-$STAMP.txt
+   shasum -a 256 flowmate-public-migrate-$STAMP.dump > flowmate-public-migrate-$STAMP.dump.sha256
    ```
-3. Copy + restore:
+4. **Copy + restore** (live `flowmate` holds the rehearsal data → confirmation needed):
    ```bash
-   rsync -t --chmod=F600 "$OUT/flowmate-public-migrate-$STAMP.dump" oci:backup/flowmate-migrate/
-   ssh oci "~/flowmate-db/restore.sh ~/backup/flowmate-migrate/flowmate-public-migrate-$STAMP.dump --recreate"
+   rsync -t --chmod=F600 "$OUT/flowmate-public-migrate-$STAMP.dump" "$OUT/flowmate-public-migrate-$STAMP.dump.sha256" oci:backup/flowmate-migrate/
+   ssh oci "FLOWMATE_CONFIRM_SWAP=flowmate ~/flowmate-db/restore.sh ~/backup/flowmate-migrate/flowmate-public-migrate-$STAMP.dump"
    ```
-4. Verify (tunnel open: `ssh -f -N -L 5433:127.0.0.1:5433 oci`; `OCI_OWNER_URL` = admin URL above):
+5. **Verify** (tunnel open: `ssh -f -N -L 5433:127.0.0.1:5433 oci`; `OCI_OWNER_URL` = admin URL):
    ```bash
    npx tsx scripts/db/compare-row-counts.ts --source-env DIRECT_URL --target-env OCI_OWNER_URL --exclude document_embeddings   # exit 0
    DATABASE_URL=$OCI_OWNER_URL DIRECT_URL=$OCI_OWNER_URL npx prisma migrate diff \
@@ -185,28 +251,45 @@ it owned by `flowmate_owner` with ICU `en-US`).
    # collation: sha256 of `SELECT id FROM "SupportProject" ORDER BY name, id` equal on both sides
    # sequences: SELECT count(*) FROM pg_sequences WHERE schemaname='public'  -> 0 on both sides (nothing to sync)
    ```
-5. Vercel (load the `vercel-account` skill first: flowcoder25 ↔ flowcoder25-1055): set **Preview**
-   `DATABASE_URL` and `DIRECT_URL` to the Vercel URL above, deploy a preview, check `/projects`,
-   `/projects/[id]`, `/admin`. Then Production env + redeploy.
-6. Workers: set `DATABASE_URL` (and `DIRECT_URL` if present) in `~/flowmate/.env.production` to the
-   worker URL, then
+6. **Switch the OCI workers first** (idle while crawl/digest are paused): set `DATABASE_URL` (and
+   `DIRECT_URL` if present) in `~/flowmate/.env.production` to the worker URL, then recreate them
+   with `deploy/oci/deploy.sh` (now runs them with `--network flowmate --cap-drop NET_RAW`;
+   `--env-file` is only read at `docker run`, a restart keeps old values). For a container that is
+   not recreated, `docker network connect flowmate <name>` attaches it (persists across restarts,
+   not across `docker rm`). Check `/health` of each worker.
+7. **Vercel** (load the `vercel-account` skill first: flowcoder25 ↔ flowcoder25-1055): set **Preview**
+   `DATABASE_URL` and `DIRECT_URL` to the Vercel URL, deploy a preview, check `/projects`,
+   `/projects/[id]`, `/admin`. Then Production env + redeploy. Update the Mini `.env.local` too.
+8. **Mandatory delta gate** (right after the switch; Supabase is still read-only, so it must match):
    ```bash
-   for c in flowmate-crawler flowmate-embedding flowmate-parser; do docker network connect flowmate $c; done
+   npx tsx scripts/db/compare-row-counts.ts --source-env DIRECT_URL --target-env OCI_OWNER_URL --exclude document_embeddings   # exit 0
    ```
-   and recreate/restart the containers so they read the new env (`--env-file` is read at
-   `docker run`; a plain restart keeps the old values). `docker network connect` persists across
-   restarts but not across `docker rm` + `deploy.sh start`: run it again after any redeploy.
-   Update the Mini `.env.local` too.
-7. After: `/projects` TTFB within +100ms of before (~0.7s), worker `/health` OK, `/admin` opens,
-   watch logs for 24h (`docker logs flowmate-pgbouncer`, `docker logs flowmate-db`, Vercel).
+   ```sql
+   -- run on Supabase and on OCI; every row must be equal (a newer/larger value on Supabase = a lost write).
+   -- Only User and SupportProject have "updatedAt"; the others use their latest timestamp column.
+   SELECT 'User.updatedAt' AS k, max("updatedAt")::text AS v FROM "User"
+   UNION ALL SELECT 'Account.expires_at+count', max(expires_at)::text || '/' || count(*) FROM "Account"
+   UNION ALL SELECT 'Session.expires+count', max(expires)::text || '/' || count(*) FROM "Session"
+   UNION ALL SELECT 'CrawlJob.createdAt/completedAt', max("createdAt")::text || '/' || max("completedAt")::text FROM "CrawlJob"
+   UNION ALL SELECT 'SupportProject.updatedAt', max("updatedAt")::text FROM "SupportProject";
+   ```
+9. After: `/projects` TTFB within +100ms of before (~0.7s), worker `/health` OK, `/admin` opens,
+   logins work (writes now go to OCI), watch logs for 24h (`docker logs flowmate-pgbouncer`,
+   `docker logs flowmate-db`, Vercel).
 
 ### Rollback
 
-Put the Supabase `DATABASE_URL`/`DIRECT_URL` back in Vercel (Production, then Preview) and
-redeploy; restore the old `~/flowmate/.env.production` and recreate the workers. Supabase is left
-exactly as it was at cutover. Anything written to OCI after cutover is not in Supabase — before
-rolling back, take `~/flowmate-db/backup.sh` so it can be reconciled by hand. Keep the observation
-window short.
+1. **Dump OCI first** — it holds every write since the switch: `ssh oci ~/flowmate-db/backup.sh`
+   (keep that file; reconcile those writes into Supabase by hand if they matter).
+2. Revert the env: Vercel Production (then Preview) back to the Supabase `DATABASE_URL`/`DIRECT_URL`
+   and redeploy; restore the old `~/flowmate/.env.production` and recreate the workers.
+3. Lift the fence on Supabase (only now, so nothing writes to both sides):
+   ```sql
+   ALTER ROLE postgres IN DATABASE postgres RESET default_transaction_read_only;
+   ```
+   New sessions are writable again; terminate old pooled sessions as in step 2 if any stay read-only.
+
+Keep the observation window short: every hour on OCI is an hour of writes to reconcile on rollback.
 
 ## Ops quick reference
 
