@@ -468,7 +468,7 @@ sudo docker run -d --name flowmate-embedding --network flowmate --cap-drop NET_R
 | flowmate-db | `pgvector/pgvector:0.8.7-pg17-trixie` | `127.0.0.1:5433` → 5432 (공개 안 함) | Postgres 17 + pgvector, ICU en-US |
 | flowmate-pgbouncer | `edoburu/pgbouncer:v1.26.1-p0` | `6432` (공개, TLS 필수) | transaction pooling, `flowmate_app`만 허용 |
 
-- 네트워크: docker `flowmate` (172.21.0.0/24, db .2, pgbouncer .3, gateway .1). 워커는 전환 때 이 네트워크에 붙인다.
+- 네트워크: docker `flowmate` (172.21.0.0/24, db .2, pgbouncer .3, gateway .1). 전환 때 워커는 `deploy/oci/db/switch-workers.sh`로 다시 만든다(실행 중인 이미지·env 그대로, DB URL만 교체, `--rollback` 있음). `docker network connect`는 쓰지 않는다(NET_RAW가 남는다).
 - 연결 문자열: OCI 워커 `postgresql://flowmate_app:<pw>@flowmate-db:5432/flowmate`, 관리자 `ssh -L 5433:127.0.0.1:5433 oci` 후 `flowmate_owner@127.0.0.1:5433/flowmate` (복원·`prisma db push`는 이 경로로만).
 - 시크릿: `/home/ubuntu/flowmate-db/.env`(600). 백업: 04:00 KST `~/backup/flowmate-db/`(7개) → Mini 05:30 `/Volumes/포터블/Backups/FlowMate/daily/`(30개).
 - 이미지는 trixie(ICU 76)를 유지한다. bookworm(ICU 72)은 Supabase와 한글·따옴표 정렬 결과가 다르다.

@@ -9,18 +9,22 @@
 ## Setup
 1. Clone repo: `git clone <repo> /home/ubuntu/flowmate`
 2. Copy env: `cp .env.example .env.production` and fill values
-3. Build: `./deploy/oci/deploy.sh build`
-4. Start: `./deploy/oci/deploy.sh start`
+3. Build: `./deploy/oci/deploy.sh build` (tags images with the git short SHA and prints the start command)
+4. Start: `CRAWLER_IMAGE=flowmate-crawler:<tag> EMBEDDING_IMAGE=flowmate-embedding:<tag> PARSER_IMAGE=flowmate-parser:<tag> ./deploy/oci/deploy.sh start`
+   (explicit refs are required; there is no implicit `:latest`. Currently running refs:
+   `docker inspect -f '{{.Config.Image}}' flowmate-crawler`, etc.)
 5. Verify: `./deploy/oci/deploy.sh status`
 
 ## Services
 
 | Container | Port | Role |
 |-----------|------|------|
-| flowmate-nginx | 80 | Reverse proxy (SSL via Cloudflare) |
 | flowmate-crawler | 3001 | Crawl job processing |
 | flowmate-embedding | 3002 | Embedding generation + RAG matching |
 | flowmate-parser | 8000 | HWP/HWPX/PDF text extraction |
+
+Port 80 is served by the **host** nginx (systemd, `/etc/nginx/sites-available/worker`), which proxies to
+the worker ports; there is no nginx container (`deploy/oci/nginx/` is only a reference config).
 
 ## Database (Phase 1A)
 
@@ -33,12 +37,14 @@ the cutover runbook.
 | flowmate-db | 127.0.0.1:5433 only (admin via SSH tunnel) | Postgres 17 + pgvector, docker network `flowmate` |
 | flowmate-pgbouncer | 6432 (public, TLS required) | Pooler for Vercel; only `flowmate_app` |
 
-Workers reach the DB as `flowmate-db:5432` after being attached to the `flowmate` network
-(`docker network connect flowmate <container>`, part of the cutover).
+Workers reach the DB as `flowmate-db:5432` on the `flowmate` network. At the cutover they are
+recreated by `deploy/oci/db/switch-workers.sh` (running image + env, DB URL swapped, `--network
+flowmate --cap-drop NET_RAW`, `--rollback` available). Later redeploys use `deploy.sh start`, which
+also runs the workers with `--network flowmate --cap-drop NET_RAW`.
 
 ## Commands
 - `./deploy.sh build` - Build all Docker images
-- `./deploy.sh start` - Start all services
+- `CRAWLER_IMAGE=... EMBEDDING_IMAGE=... PARSER_IMAGE=... ./deploy.sh start` - Start all services
 - `./deploy.sh stop` - Stop all services
 - `./deploy.sh restart` - Restart all services
 - `./deploy.sh status` - Health check all services
