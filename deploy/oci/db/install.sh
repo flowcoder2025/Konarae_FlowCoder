@@ -23,6 +23,9 @@ command -v docker >/dev/null || die "docker missing"
 cd "$FLOWMATE_DB_HOME"
 exec 8>"$FLOWMATE_DB_HOME/.admin.lock"
 flock -n 8 || die "another install.sh/restore.sh is running"
+# Private scratch dir (holds the rendered userlist.txt with the pgbouncer_auth password).
+INSTALL_TMP=$(mktemp -d)
+trap 'rm -rf -- "$INSTALL_TMP"' EXIT
 # The Telegram bot token used by every alert must not be readable by other local accounts.
 require_private_file "$TELEGRAM_ENV_FILE"
 
@@ -81,15 +84,14 @@ pgb_changed=0
 # Must run in THIS shell (redirect, not a pipe): a pipeline would run it in a subshell and
 # lose pgb_changed=1, leaving PgBouncer on its old config.
 write_if_changed() { # DEST (content on stdin)
-  local dest=$1 tmp
-  tmp=$(mktemp)
+  local dest=$1 tmp="$INSTALL_TMP/write_if_changed"
   cat >"$tmp"
   if sudo -n cmp -s "$tmp" "$dest" 2>/dev/null; then
-    rm -f "$tmp"
+    rm -f -- "$tmp"
     return 0
   fi
   sudo_write_file "$PGB_UID" 600 "$dest" <"$tmp"
-  rm -f "$tmp"
+  rm -f -- "$tmp"
   pgb_changed=1
   log "updated $dest"
 }
@@ -134,17 +136,36 @@ log "flowmate locale: $locale_row"
 # Docker-published ports bypass ufw anyway; the rule documents intent. 5432/5433 stay closed.
 sudo -n ufw allow 6432/tcp comment 'flowmate pgbouncer TLS' >/dev/null
 
-# --- 9. cron (host TZ is Asia/Seoul) ---------------------------------------------
-cron_lines=(
-  "0 4 * * * $FLOWMATE_DB_HOME/backup.sh >> $FLOWMATE_BACKUP_DIR/backup.log 2>&1 # flowmate-db:backup"
-  "30 4 1 * * $FLOWMATE_DB_HOME/verify-restore.sh --latest >> $FLOWMATE_BACKUP_DIR/verify-cron.log 2>&1 # flowmate-db:verify-restore"
-  "17 3 * * * $FLOWMATE_DB_HOME/renew-cert.sh >> $FLOWMATE_DB_HOME/letsencrypt/renew.log 2>&1 # flowmate-db:renew-cert"
-)
-{
-  crontab -l 2>/dev/null | grep -v '# flowmate-db:' || true
-  printf '%s\n' "${cron_lines[@]}"
-} | crontab -
-log "cron installed: $(crontab -l | grep -c '# flowmate-db:') flowmate-db lines"
+# --- 9. cron: /etc/cron.d/flowmate-db (host TZ is Asia/Seoul) ------------------------
+# A system cron file instead of the user crontab: rewriting the user crontab after a
+# transient `crontab -l` failure could drop unrelated jobs (healthcheck.sh).
+cron_file=/etc/cron.d/flowmate-db
+cat >"$INSTALL_TMP/cron" <<CRON
+# FlowMate DB jobs. Managed by $FLOWMATE_DB_HOME/install.sh, do not edit by hand.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+HOME=$HOME
+0 4 * * * ubuntu $FLOWMATE_DB_HOME/backup.sh >> $FLOWMATE_BACKUP_DIR/backup.log 2>&1
+30 4 1 * * ubuntu $FLOWMATE_DB_HOME/verify-restore.sh --latest >> $FLOWMATE_BACKUP_DIR/verify-cron.log 2>&1
+17 3 * * * ubuntu $FLOWMATE_DB_HOME/renew-cert.sh >> $FLOWMATE_DB_HOME/letsencrypt/renew.log 2>&1
+CRON
+if ! sudo -n cmp -s "$INSTALL_TMP/cron" "$cron_file" 2>/dev/null; then
+  sudo_write_file 0 644 "$cron_file" <"$INSTALL_TMP/cron"
+  log "installed $cron_file"
+fi
+# One-time migration: drop our tagged lines from the user crontab, keep everything else.
+if user_cron=$(crontab -l 2>"$INSTALL_TMP/crontab.err"); then
+  if grep -q '# flowmate-db:' <<<"$user_cron"; then
+    keep=$(grep -v '# flowmate-db:' <<<"$user_cron" || true)
+    printf '%s\n' "$keep" | crontab -
+    [ "$(crontab -l | grep -vc '# flowmate-db:')" = "$(grep -vc '# flowmate-db:' <<<"$user_cron")" ] ||
+      die "user crontab changed unexpectedly while removing flowmate-db lines; check crontab -l"
+    log "removed flowmate-db lines from the user crontab ($(grep -c . <<<"$keep") other lines kept)"
+  fi
+else
+  grep -q 'no crontab for' "$INSTALL_TMP/crontab.err" || die "crontab -l failed: $(head -c 200 "$INSTALL_TMP/crontab.err")"
+fi
+log "cron: $(grep -cE '^[0-9*]' "$INSTALL_TMP/cron") jobs in $cron_file"
 
 # --- 10. self-test: owner via loopback 5433, app via PgBouncer TLS (verify-full) -----
 image=$(db_image)

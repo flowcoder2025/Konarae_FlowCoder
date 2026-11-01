@@ -7,10 +7,13 @@
  *
  * - Connection URLs are read from the NAMED environment variables and are never printed;
  *   connection errors are reported as a sanitized one-line message.
- * - Exit codes: 0 all equal, 1 at least one mismatch, 2 usage or connection/query error.
+ * - Exit codes: 0 all equal, 1 at least one mismatch, 2 usage or connection/query error, or
+ *   source and target resolving to the same host:port/database (a database compared with
+ *   itself always "matches"; e.g. after .env.local was repointed to OCI).
  * - The SQL is shared with deploy/oci/db/row-counts.sql (also used by backup.sh and
  *   verify-restore.sh on the OCI host).
  */
+import { promises as dnsPromises } from "dns";
 import { readFileSync } from "fs";
 import path from "path";
 
@@ -220,7 +223,52 @@ export function formatRowCountTable(rows: readonly RowCountRow[]): string {
   return [line(header), widths.map((w) => "-".repeat(w)).join("  "), ...body.map(line)].join("\n");
 }
 
-export async function main(argv: readonly string[], env: NodeJS.ProcessEnv): Promise<number> {
+export type DatabaseTarget = { host: string; port: string; database: string };
+export type HostLookup = (host: string) => Promise<string[]>;
+
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "::1", "0:0:0:0:0:0:0:1"]);
+
+/** host (lower-case, loopback folded), port (default 5432), database (default: user, like libpq). */
+export function databaseTarget(url: string): DatabaseTarget | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  const rawHost = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  const host = LOOPBACK.has(rawHost) ? "localhost" : rawHost;
+  const database = decodeURIComponent(parsed.pathname.replace(/^\//, "")) || decodeURIComponent(parsed.username);
+  return { host, port: parsed.port || "5432", database };
+}
+
+/** Same host:port/database by URL alone (passwords, users and query params are ignored). */
+export function sameDatabaseTarget(a: string, b: string): boolean {
+  const x = databaseTarget(a);
+  const y = databaseTarget(b);
+  return !!x && !!y && x.host === y.host && x.port === y.port && x.database === y.database;
+}
+
+const defaultLookup: HostLookup = async (host) =>
+  (await dnsPromises.lookup(host, { all: true })).map((r) => r.address);
+
+/** Like sameDatabaseTarget, but two different host names that resolve to a shared address also count. */
+export async function resolvesToSameTarget(a: string, b: string, lookup: HostLookup = defaultLookup): Promise<boolean> {
+  if (sameDatabaseTarget(a, b)) return true;
+  const x = databaseTarget(a);
+  const y = databaseTarget(b);
+  if (!x || !y || x.port !== y.port || x.database !== y.database) return false;
+  const resolve = async (host: string) =>
+    host === "localhost" ? ["127.0.0.1", "::1"] : await lookup(host).catch(() => [] as string[]);
+  const [ax, ay] = await Promise.all([resolve(x.host), resolve(y.host)]);
+  return ax.some((addr) => ay.includes(addr));
+}
+
+export async function main(
+  argv: readonly string[],
+  env: NodeJS.ProcessEnv,
+  lookup: HostLookup = defaultLookup,
+): Promise<number> {
   let opts: CliOptions;
   try {
     opts = parseCliArgs(argv, env);
@@ -230,6 +278,14 @@ export async function main(argv: readonly string[], env: NodeJS.ProcessEnv): Pro
       return 2;
     }
     throw err;
+  }
+
+  if (await resolvesToSameTarget(opts.sourceUrl, opts.targetUrl, lookup)) {
+    console.error(
+      `error: ${opts.sourceEnv} and ${opts.targetEnv} resolve to the same host:port/database; ` +
+        "refusing to compare a database with itself",
+    );
+    return 2;
   }
 
   let rows: RowCountRow[];

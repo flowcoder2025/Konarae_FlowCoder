@@ -8,7 +8,10 @@ import {
   compareRowCounts,
   findMismatches,
   loadRowCountsSql,
+  main,
   mergeRowCounts,
+  resolvesToSameTarget,
+  sameDatabaseTarget,
   parseCliArgs,
   parseRowCountRows,
   sanitizeErrorMessage,
@@ -174,5 +177,61 @@ describe("compare-row-counts error sanitizing", () => {
     expect(msg).not.toContain("s3cret");
     expect(msg).not.toContain("postgresql://");
     expect(msg).not.toContain("\n");
+  });
+});
+
+describe("compare-row-counts same-target guard", () => {
+  it("treats URLs that differ only in credentials or parameters as the same database", () => {
+    expect(
+      sameDatabaseTarget(
+        "postgresql://flowmate_app:pw1@DB.example.com:6432/flowmate?sslmode=require",
+        "postgres://flowmate_owner:pw2@db.example.com:6432/flowmate",
+      ),
+    ).toBe(true);
+  });
+
+  it("folds loopback names and defaults the port to 5432", () => {
+    expect(sameDatabaseTarget("postgresql://u:p@localhost/flowmate", "postgresql://u:p@127.0.0.1:5432/flowmate")).toBe(true);
+    expect(sameDatabaseTarget("postgresql://u:p@[::1]:5433/flowmate", "postgresql://u:p@127.0.0.1:5433/flowmate")).toBe(true);
+  });
+
+  it("different port, host or database is a different target", () => {
+    expect(sameDatabaseTarget("postgresql://u:p@127.0.0.1:5433/flowmate", "postgresql://u:p@127.0.0.1:6432/flowmate")).toBe(false);
+    expect(sameDatabaseTarget("postgresql://u:p@a.example:5432/flowmate", "postgresql://u:p@b.example:5432/flowmate")).toBe(false);
+    expect(sameDatabaseTarget("postgresql://u:p@a.example:5432/flowmate", "postgresql://u:p@a.example:5432/postgres")).toBe(false);
+  });
+
+  it("two host names resolving to a shared address are the same target", async () => {
+    const lookup = async (host: string) => (host === "db.jerome87.com" ? ["158.180.81.7"] : host === "alias.example" ? ["10.0.0.1", "158.180.81.7"] : []);
+    await expect(
+      resolvesToSameTarget("postgresql://u:p@db.jerome87.com:6432/flowmate", "postgresql://u:p@alias.example:6432/flowmate", lookup),
+    ).resolves.toBe(true);
+    await expect(
+      resolvesToSameTarget("postgresql://u:p@db.jerome87.com:6432/flowmate", "postgresql://u:p@other.example:6432/flowmate", lookup),
+    ).resolves.toBe(false);
+  });
+
+  it("main exits 2 before connecting when source and target are the same database, echoing no values", async () => {
+    const messages: string[] = [];
+    const spy = jest.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      messages.push(args.join(" "));
+    });
+    try {
+      const code = await main(
+        ["--source-env", "SUPABASE_SOURCE_URL", "--target-env", "DIRECT_URL"],
+        {
+          SUPABASE_SOURCE_URL: "postgresql://flowmate_app:s3cret-a@db.jerome87.com:6432/flowmate?sslmode=require",
+          DIRECT_URL: "postgresql://flowmate_owner:s3cret-b@db.jerome87.com:6432/flowmate",
+        },
+        async () => [],
+      );
+      expect(code).toBe(2);
+    } finally {
+      spy.mockRestore();
+    }
+    const text = messages.join("\n");
+    expect(text).toContain("same host:port/database");
+    expect(text).not.toContain("s3cret");
+    expect(text).not.toContain("jerome87");
   });
 });

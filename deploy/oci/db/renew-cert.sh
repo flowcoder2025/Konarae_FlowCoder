@@ -18,7 +18,8 @@
 # pgbouncer/tls (uid 70, 600). Then, on EVERY run: compare the certificate actually
 # served on 6432 with the current one; if it differs, SIGHUP PgBouncer, and if that
 # does not help, restart it. Alert when the served certificate expires in < 14 days
-# or PgBouncer is not running.
+# or PgBouncer is not running. Every network probe runs under `timeout` (a hang is an
+# alerted failure) and a watchdog bounds the whole run (FLOWMATE_RENEW_MAX_SECONDS, 1200 s).
 export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 PYTHONUTF8=1 PYTHONIOENCODING=utf-8
 set -Eeuo pipefail
 umask 077
@@ -32,6 +33,11 @@ LE_DIR=$FLOWMATE_DB_HOME/letsencrypt
 TLS_DIR=$FLOWMATE_DB_HOME/pgbouncer/tls
 DOMAIN=$FLOWMATE_DB_DOMAIN
 MIN_DAYS=${FLOWMATE_CERT_MIN_DAYS:-14}   # alert when the SERVED cert expires sooner
+PROBE_ADDR=${FLOWMATE_CERT_PROBE_ADDR:-127.0.0.1:6432}
+PROBE_TIMEOUT=${FLOWMATE_CERT_PROBE_TIMEOUT:-15}      # seconds per TLS probe
+CERTBOT_TIMEOUT=${FLOWMATE_CERTBOT_TIMEOUT:-600}      # seconds for the certbot container
+MAX_SECONDS=${FLOWMATE_RENEW_MAX_SECONDS:-1200}       # whole run
+certbot_name="flowmate-certbot-$$"
 
 fail() {
   trap - ERR
@@ -40,6 +46,27 @@ fail() {
   exit 1
 }
 trap 'fail "unexpected error at line $LINENO"' ERR
+
+# Whole-run bound: a watchdog alerts and stops the script (and a stuck certbot container).
+main_pid=$$
+(
+  trap - ERR
+  set +e
+  trap 'kill "$s" 2>/dev/null; exit 0' TERM
+  sleep "$MAX_SECONDS" &
+  s=$!
+  wait "$s" || exit 0
+  log "renew-cert FAILED: run exceeded ${MAX_SECONDS}s"
+  alert "[FlowMate DB] certificate renewal for $DOMAIN on $(hostname -s) exceeded ${MAX_SECONDS}s and was stopped"
+  docker rm -f "$certbot_name" >/dev/null 2>&1
+  kill -TERM "$main_pid" 2>/dev/null
+) &
+watchdog_pid=$!
+on_exit() {
+  kill "$watchdog_pid" 2>/dev/null || true
+  docker rm -f "$certbot_name" >/dev/null 2>&1 || true
+}
+trap on_exit EXIT
 
 extra=()
 case "${1:-}" in
@@ -56,7 +83,7 @@ exec 9>"$LE_DIR/.renew.lock"
 flock -n 9 || fail "another renewal is running"
 
 log "certbot certonly $DOMAIN ${extra[*]:-}"
-docker run --rm --user "$(id -u):$(id -g)" \
+timeout --kill-after=10 "$CERTBOT_TIMEOUT" docker run --rm --name "$certbot_name" --user "$(id -u):$(id -g)" \
   -v "$LE_DIR/config:/etc/letsencrypt" \
   -v "$LE_DIR/work:/var/lib/letsencrypt" \
   -v "$LE_DIR/logs:/var/log/letsencrypt" \
@@ -68,7 +95,11 @@ docker run --rm --user "$(id -u):$(id -g)" \
   --key-type rsa --rsa-key-size 2048 \
   --keep-until-expiring --max-log-backups 30 \
   --cert-name "$DOMAIN" -d "$DOMAIN" \
-  ${extra[@]+"${extra[@]}"} || fail "certbot failed (see $LE_DIR/logs)"
+  ${extra[@]+"${extra[@]}"} || {
+  rc=$?
+  [ "$rc" = 124 ] && fail "certbot timed out after ${CERTBOT_TIMEOUT}s"
+  fail "certbot failed (exit $rc, see $LE_DIR/logs)"
+}
 
 if [ "${extra[*]:-}" = "--dry-run" ]; then
   log "dry run ok"
@@ -98,32 +129,40 @@ if [ "${FLOWMATE_CERT_INSTALL_ONLY:-0}" = 1 ]; then
   exit 0
 fi
 
-# Every run, files changed or not: what does 6432 actually serve?
-served_cert() {
-  { openssl s_client -starttls postgres -connect 127.0.0.1:6432 -servername "$DOMAIN" </dev/null 2>/dev/null || true; } |
-    openssl x509 2>/dev/null || true
+# Every run, files changed or not: what does 6432 actually serve? Every probe is bounded by
+# `timeout`; a timeout is a failure (alert), never a reason to restart PgBouncer.
+probe_file=$(mktemp)
+trap 'on_exit; rm -f -- "$probe_file"' EXIT
+probe() { # writes the served leaf certificate (PEM) to $probe_file
+  local out rc=0
+  out=$(timeout --kill-after=5 "$PROBE_TIMEOUT" openssl s_client -starttls postgres -connect "$PROBE_ADDR" \
+    -servername "$DOMAIN" </dev/null 2>/dev/null) || rc=$?
+  [ "$rc" = 124 ] || [ "$rc" = 137 ] && fail "TLS probe of $PROBE_ADDR timed out after ${PROBE_TIMEOUT}s"
+  openssl x509 <<<"$out" >"$probe_file" 2>/dev/null || : >"$probe_file"
 }
 fingerprint() { openssl x509 -noout -fingerprint -sha256 2>/dev/null || true; }
 
 container_running "$PGB_CONTAINER" || fail "$PGB_CONTAINER is not running (6432 serves nothing)"
 want=$(fingerprint <"$cert")
-if [ "$(served_cert | fingerprint)" != "$want" ]; then
+probe
+if [ "$(fingerprint <"$probe_file")" != "$want" ]; then
   log "6432 serves a different certificate than $cert -> SIGHUP $PGB_CONTAINER"
-  docker kill -s HUP "$PGB_CONTAINER" >/dev/null
+  timeout 30 docker kill -s HUP "$PGB_CONTAINER" >/dev/null || fail "SIGHUP to $PGB_CONTAINER failed"
   sleep 2
-  if [ "$(served_cert | fingerprint)" != "$want" ]; then
+  probe
+  if [ "$(fingerprint <"$probe_file")" != "$want" ]; then
     log "SIGHUP did not switch the served certificate -> restarting $PGB_CONTAINER"
-    docker restart "$PGB_CONTAINER" >/dev/null
+    timeout 90 docker restart "$PGB_CONTAINER" >/dev/null || fail "restart of $PGB_CONTAINER failed or timed out"
     sleep 3
+    probe
   fi
-  [ "$(served_cert | fingerprint)" = "$want" ] || fail "PgBouncer does not serve the current certificate"
+  [ "$(fingerprint <"$probe_file")" = "$want" ] || fail "PgBouncer does not serve the current certificate"
   log "PgBouncer now serves the current certificate"
 fi
 
-served=$(served_cert)
-[ -n "$served" ] || fail "could not read the certificate served on 6432"
-enddate=$(openssl x509 -noout -enddate <<<"$served" | cut -d= -f2)
-if ! openssl x509 -noout -checkend $((MIN_DAYS * 86400)) <<<"$served" >/dev/null; then
+[ -s "$probe_file" ] || fail "could not read the certificate served on $PROBE_ADDR"
+enddate=$(openssl x509 -noout -enddate <"$probe_file" | cut -d= -f2)
+if ! openssl x509 -noout -checkend $((MIN_DAYS * 86400)) <"$probe_file" >/dev/null; then
   fail "served certificate expires in less than $MIN_DAYS days ($enddate)"
 fi
 log "6432 serves the current certificate, valid until $enddate"

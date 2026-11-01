@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Guard test for restore.sh with a stub `docker` (no Docker, no Postgres needed).
-# Proves: without FLOWMATE_CONFIRM_SWAP=flowmate nothing touches a non-empty live database
-# (no RENAME / DROP / pg_terminate_backend / ALLOW_CONNECTIONS, no backup); a bad or
-# unverifiable archive stops before any database is created; no scenario ever DROPs.
+# Proves: without FLOWMATE_CONFIRM_SWAP=<dump basename> nothing touches a non-empty live
+# database (no RENAME / DROP / pg_terminate_backend / ALLOW_CONNECTIONS, no backup); an
+# unverifiable, schema-only, manifest-less or mismatching archive never gets swapped in;
+# a failed rename gives the live db its connections back; no scenario ever DROPs.
 #
 #   bash deploy/oci/db/tests/restore-guard.test.sh      # bash >= 4.4 + GNU coreutils (e.g. on OCI)
+# shellcheck disable=SC2015  # `check && ok ... || bad ...`: ok() always succeeds
 export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 PYTHONUTF8=1 PYTHONIOENCODING=utf-8
 set -euo pipefail
 DB_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
@@ -27,15 +29,23 @@ case "$args" in
   "inspect -f {{.State.Running}} "*) echo true ;;
   "inspect -f {{.State.Health.Status}} "*) echo healthy ;;
   cp\ *) : ;;
-  *"pg_restore -l "*) [ "${STUB_TOC_FAIL:-0}" = 1 ] && exit 1; echo "3; 1259 1 TABLE DATA public foo postgres" ;;
+  *"pg_restore -l "*)
+    [ "${STUB_TOC_FAIL:-0}" = 1 ] && exit 1
+    if [ "${STUB_TOC_SCHEMA_ONLY:-0}" = 1 ]; then echo "3; 1259 1 TABLE public foo postgres"
+    else echo "3; 1259 1 TABLE public foo postgres"; echo "9; 0 1 TABLE DATA public foo postgres"; fi ;;
   *"pg_restore -d "*) [ "${STUB_RESTORE_FAIL:-0}" = 1 ] && exit 1; : ;;
   *"roles_present"*) echo 3 ;;
+  *"existing_restore_dbs"*) printf '%b' "${STUB_LEFTOVERS:-}" ;;
   *"live_exists"*) echo "${STUB_LIVE_EXISTS:-1}" ;;
   *"live_relations"*) echo "${STUB_LIVE_NREL:-40}" ;;
-  *"terminate_live"*) echo 0 ;;
-  *) if [[ $stdin == *"query_to_xml"* ]]; then printf '%b\n' "${STUB_COUNTS:-foo\t5}"
+  *"live_tables"*) printf '%b\n' "${STUB_LIVE_TABLES:-foo}" ;;
+  *"terminate_live"* | *"terminate_staging"*) echo 0 ;;
+  *"-c ALTER DATABASE flowmate WITH ALLOW_CONNECTIONS true"*) [ "${STUB_REENABLE_FAIL:-0}" = 1 ] && exit 1; : ;;
+  *) if [[ $stdin == *"query_to_xml"* ]]; then [ -n "${STUB_COUNTS-foo\t5}" ] && printf '%b\n' "${STUB_COUNTS-foo\t5}"
      elif [[ $stdin == *"\\getenv"* ]]; then echo "roles.sql: ok"
-     elif [[ $stdin == *"Privilege self-check"* ]]; then [ "${STUB_PRIV_FAIL:-0}" = 1 ] && echo "table not owned by flowmate_owner: foo"; :
+     elif [[ $stdin == *"Privilege self-check"* ]]; then [ "${STUB_PRIV_FAIL:-0}" = 1 ] && echo "table not owned by flowmate_owner: foo"
+     elif [[ $stdin == *"RENAME TO flowmate_prev_"* ]] && [ "${STUB_RENAME_FAIL:-0}" = 1 ]; then
+       echo "ERROR:  database \"flowmate_restore_x\" is being accessed by other users" >&2; exit 1
      fi ;;
 esac
 exit 0
@@ -44,98 +54,102 @@ STUB
 printf '#!/usr/bin/env bash\necho BACKUP >>"$STUB_LOG"\n' >"$work/bin/fake-backup"
 chmod +x "$work/bin/docker" "$work/bin/fake-backup"
 
-printf 'PGDMP fake archive\n' >"$work/x.dump"
+D="$work/x.dump"
+printf 'PGDMP fake archive\n' >"$D"
 (cd "$work" && sha256sum x.dump >x.dump.sha256)
+manifest() { printf '%b\n' "$1" >"$D.counts.tsv"; }
 
 pass=0
 fail=0
 n=0
-# run NAME EXPECTED_EXIT [ENV=VALUE...] -- runs restore.sh with the stub, log in $work/NAME.log
+# run NAME EXPECTED_EXIT [ENV=VALUE...] [-- restore args...]
 run() {
-  local name=$1 want=$2 rc=0
+  local name=$1 want=$2 rc=0 envs=() rargs=()
   shift 2
+  while [ $# -gt 0 ] && [ "$1" != "--" ]; do envs+=("$1"); shift; done
+  [ "${1:-}" = "--" ] && { shift; rargs=("$@"); }
   n=$((n + 1))
   export STUB_LOG="$work/$name.log"
   : >"$STUB_LOG"
   env PATH="$work/bin:$PATH" FLOWMATE_DB_HOME="$work/home" FLOWMATE_ENV_FILE="$work/home/.env" \
-    FLOWMATE_BACKUP_CMD="$work/bin/fake-backup" TELEGRAM_ENV_FILE=/nonexistent "$@" \
-    bash "$DB_DIR/restore.sh" "${DUMP:-$work/x.dump}" >"$work/$name.out" 2>&1 </dev/null || rc=$?
+    FLOWMATE_TEST_MODE=1 FLOWMATE_BACKUP_CMD="$work/bin/fake-backup" TELEGRAM_ENV_FILE=/nonexistent "${envs[@]}" \
+    bash "$DB_DIR/restore.sh" "${rargs[@]}" "${DUMP:-$D}" >"$work/$name.out" 2>&1 </dev/null || rc=$?
   if [ "$rc" != "$want" ]; then
     echo "FAIL $name: exit $rc, expected $want"; sed 's/^/    /' "$work/$name.out"; fail=$((fail + 1)); return 1
   fi
 }
 ok() { echo "ok   $1"; pass=$((pass + 1)); }
 bad() { echo "FAIL $1"; fail=$((fail + 1)); }
-has() { grep -qE "$2" "$work/$1.log"; }
+has() { grep -qE -- "$2" "$work/$1.log"; }
+says() { grep -qE -- "$2" "$work/$1.out"; }
 touches_live() { has "$1" 'RENAME|DROP DATABASE|pg_terminate_backend|ALLOW_CONNECTIONS|terminate_live'; }
+created() { has "$1" 'CREATE DATABASE'; }
+CONFIRM=FLOWMATE_CONFIRM_SWAP=x.dump
 
-# 1. no confirm, non-empty live db: staging only, live untouched, no backup
+manifest 'foo\t5'
+# --- confirmation ---
 if run noconfirm 0; then
-  if ! touches_live noconfirm && ! has noconfirm BACKUP && has noconfirm 'CREATE DATABASE flowmate_restore_' &&
-    grep -q 'FLOWMATE_CONFIRM_SWAP=flowmate' "$work/noconfirm.out"; then ok "no confirm: staging only, live untouched"
-  else bad "no confirm: live touched or staging missing"; fi
+  if ! touches_live noconfirm && ! has noconfirm BACKUP && created noconfirm && says noconfirm 'FLOWMATE_CONFIRM_SWAP=x.dump'
+  then ok "no confirm: staging only, live untouched, token printed"; else bad "no confirm: live touched or staging missing"; fi
 fi
-# 2. wrong confirm value behaves like no confirm
-if run wrongconfirm 0 FLOWMATE_CONFIRM_SWAP=yes; then
-  if ! touches_live wrongconfirm && ! has wrongconfirm BACKUP; then ok "wrong confirm value: live untouched"
-  else bad "wrong confirm value touched live"; fi
+if run statictoken 0 FLOWMATE_CONFIRM_SWAP=flowmate; then
+  if ! touches_live statictoken && ! has statictoken BACKUP; then ok "static token 'flowmate': live untouched"; else bad "static token swapped"; fi
 fi
-# 3. confirm: backup first, then rename in one transaction
-if run confirm 0 FLOWMATE_CONFIRM_SWAP=flowmate; then
-  b=$(grep -n BACKUP "$work/confirm.log" | head -1 | cut -d: -f1)
-  r=$(grep -n 'RENAME TO flowmate_prev_' "$work/confirm.log" | head -1 | cut -d: -f1)
-  if [ -n "$b" ] && [ -n "$r" ] && [ "$b" -lt "$r" ] && has confirm 'ALLOW_CONNECTIONS false' &&
-    has confirm 'BEGIN;'; then ok "confirm: backup before swap, rename transaction"
-  else bad "confirm: missing backup/rename order"; fi
+if run confirm 0 "$CONFIRM"; then
+  b=$(grep -n BACKUP "$work/confirm.log" | head -1 | cut -d: -f1 || true)
+  f=$(grep -nE 'ALTER DATABASE flowmate_restore_[0-9_]+ WITH ALLOW_CONNECTIONS false' "$work/confirm.log" | head -1 | cut -d: -f1 || true)
+  r=$(grep -n 'RENAME TO flowmate_prev_' "$work/confirm.log" | head -1 | cut -d: -f1 || true)
+  if [ -n "$b" ] && [ -n "$f" ] && [ -n "$r" ] && [ "$b" -lt "$f" ] && [ "$f" -lt "$r" ] && has confirm terminate_staging &&
+    has confirm 'ALTER DATABASE flowmate WITH ALLOW_CONNECTIONS false'; then ok "confirm: backup, fence staging+live, then rename tx"
+  else bad "confirm: wrong order or missing staging fence"; fi
 fi
-# 4. empty live db (first restore): swap without confirm, no backup
 if run emptylive 0 STUB_LIVE_NREL=0; then
-  if has emptylive 'RENAME TO flowmate_prev_' && ! has emptylive BACKUP; then ok "empty live db: swap without confirm"
-  else bad "empty live db: unexpected behaviour"; fi
+  if has emptylive 'RENAME TO flowmate_prev_' && ! has emptylive BACKUP; then ok "empty live db: swap without confirm"; else bad "empty live db"; fi
 fi
-# 5. live db missing: staging renamed to flowmate
 if run nolive 0 STUB_LIVE_EXISTS=0; then
-  if has nolive 'RENAME TO flowmate$' && ! has nolive 'flowmate_prev_'; then ok "no live db: staging becomes flowmate"
-  else bad "no live db: unexpected behaviour"; fi
+  if has nolive 'RENAME TO flowmate;' && ! has nolive 'flowmate_prev_'; then ok "no live db: staging becomes flowmate"; else bad "no live db"; fi
 fi
-# 6. sha256 mismatch -> stop before any CREATE DATABASE
-cp "$work/x.dump" "$work/y.dump"; (cd "$work" && sha256sum x.dump | sed 's/x.dump/y.dump/' >y.dump.sha256); printf 'tamper' >>"$work/y.dump"
-if DUMP="$work/y.dump" run badsum 1 FLOWMATE_CONFIRM_SWAP=flowmate; then
-  if ! has badsum 'CREATE DATABASE' && ! touches_live badsum; then ok "sha256 mismatch: nothing created"; else bad "sha256 mismatch created something"; fi
+if run nobackupoverride 1 FLOWMATE_TEST_MODE=0 "$CONFIRM"; then
+  if ! created nobackupoverride && ! touches_live nobackupoverride; then ok "FLOWMATE_BACKUP_CMD refused outside test mode"; else bad "backup override accepted"; fi
 fi
-# 7. missing .sha256
-cp "$work/x.dump" "$work/z.dump"
-if DUMP="$work/z.dump" run nosum 1 FLOWMATE_CONFIRM_SWAP=flowmate; then
-  if ! has nosum 'CREATE DATABASE'; then ok "missing .sha256: nothing created"; else bad "missing .sha256 created something"; fi
+# --- archive validation: nothing created ---
+cp "$D" "$work/y.dump"; sed 's/x.dump/y.dump/' "$D.sha256" >"$work/y.dump.sha256"; printf 'tamper' >>"$work/y.dump"; cp "$D.counts.tsv" "$work/y.dump.counts.tsv"
+if DUMP="$work/y.dump" run badsum 1 FLOWMATE_CONFIRM_SWAP=y.dump; then ! created badsum && ok "sha256 mismatch: nothing created" || bad "sha256 mismatch created"; fi
+cp "$D" "$work/z.dump"; cp "$D.counts.tsv" "$work/z.dump.counts.tsv"
+if DUMP="$work/z.dump" run nosum 1 FLOWMATE_CONFIRM_SWAP=z.dump; then ! created nosum && ok "missing .sha256: nothing created" || bad "missing .sha256 created"; fi
+mv "$D.counts.tsv" "$work/saved.counts"
+if run nomanifest 1 "$CONFIRM"; then ! created nomanifest && ! touches_live nomanifest && ok "missing manifest: nothing created, no swap" || bad "missing manifest"; fi
+mv "$work/saved.counts" "$D.counts.tsv"
+if run badtoc 1 "$CONFIRM" STUB_TOC_FAIL=1; then ! created badtoc && ok "unreadable archive: nothing created" || bad "bad archive created"; fi
+if run schemaonly 1 "$CONFIRM" STUB_TOC_SCHEMA_ONLY=1; then ! created schemaonly && ! touches_live schemaonly && ok "schema-only archive: nothing created, no swap" || bad "schema-only"; fi
+if run nodisk 1 "$CONFIRM" FLOWMATE_RESTORE_MIN_FREE_KB=999999999999; then ! created nodisk && ok "low disk: nothing created" || bad "low disk created"; fi
+# --- staging verification: no swap ---
+if run badcounts 1 "$CONFIRM" 'STUB_COUNTS=foo\t6'; then ! touches_live badcounts && ! has badcounts BACKUP && ok "manifest mismatch: no swap" || bad "mismatch swapped"; fi
+if run zerotables 1 "$CONFIRM" STUB_COUNTS=; then ! touches_live zerotables && says zerotables 'no tables' && ok "zero tables: no swap" || bad "zero tables swapped"; fi
+if run missinglive 1 "$CONFIRM" 'STUB_LIVE_TABLES=foo\nbar'; then
+  ! touches_live missinglive && says missinglive 'lacks live tables: bar' && ok "staging missing a live table: no swap" || bad "missing live table swapped"; fi
+if run missingliveok 0 "$CONFIRM" 'STUB_LIVE_TABLES=foo\nbar' -- --allow-missing-live-tables; then
+  has missingliveok 'RENAME TO flowmate_prev_' && ok "--allow-missing-live-tables: swap" || bad "override ignored"; fi
+manifest 'document_embeddings\t13467\nfoo\t5'
+if run exclnoflag 1 "$CONFIRM" 'STUB_COUNTS=document_embeddings\t0\nfoo\t5'; then ! touches_live exclnoflag && ok "excluded data without --manifest-exclude: no swap" || bad "exclnoflag swapped"; fi
+if run excl 0 "$CONFIRM" 'STUB_COUNTS=document_embeddings\t0\nfoo\t5' -- --manifest-exclude document_embeddings; then
+  has excl 'RENAME TO flowmate_prev_' && ok "--manifest-exclude document_embeddings (0 rows): swap" || bad "exclude: no swap"; fi
+if run exclrows 1 "$CONFIRM" 'STUB_COUNTS=document_embeddings\t3\nfoo\t5' -- --manifest-exclude document_embeddings; then
+  ! touches_live exclrows && ok "excluded table with rows in staging: no swap" || bad "exclrows swapped"; fi
+if run exclmissing 1 "$CONFIRM" 'STUB_COUNTS=foo\t5' -- --manifest-exclude document_embeddings; then
+  ! touches_live exclmissing && ok "excluded table missing in staging: no swap" || bad "exclmissing swapped"; fi
+manifest 'foo\t5'
+if run badpriv 1 "$CONFIRM" STUB_PRIV_FAIL=1; then ! touches_live badpriv && ok "privilege check failure: no swap" || bad "privilege failure swapped"; fi
+if run badrestore 1 "$CONFIRM" STUB_RESTORE_FAIL=1; then ! touches_live badrestore && ok "pg_restore failure: no swap" || bad "restore failure swapped"; fi
+# --- failed rename: live gets its connections back ---
+if run renamefail 1 "$CONFIRM" STUB_RENAME_FAIL=1; then
+  r=$(grep -n 'RENAME TO flowmate_prev_' "$work/renamefail.log" | head -1 | cut -d: -f1 || true)
+  e=$(grep -n -- '-c ALTER DATABASE flowmate WITH ALLOW_CONNECTIONS true' "$work/renamefail.log" | head -1 | cut -d: -f1 || true)
+  [ -n "$r" ] && [ -n "$e" ] && [ "$e" -gt "$r" ] && ok "rename failure: live ALLOW_CONNECTIONS true restored" || bad "rename failure: live not re-enabled"
 fi
-# 8. unreadable archive
-if run badtoc 1 FLOWMATE_CONFIRM_SWAP=flowmate STUB_TOC_FAIL=1; then
-  if ! has badtoc 'CREATE DATABASE'; then ok "pg_restore -l failure: nothing created"; else bad "bad archive created something"; fi
+if run reenablefail 1 "$CONFIRM" STUB_RENAME_FAIL=1 STUB_REENABLE_FAIL=1; then
+  says reenablefail 're-enable FAILED' && says reenablefail 'alert:' && ok "re-enable failure: loud + alert attempted" || bad "re-enable failure swallowed"
 fi
-# 9. not enough disk
-if run nodisk 1 FLOWMATE_CONFIRM_SWAP=flowmate FLOWMATE_RESTORE_MIN_FREE_KB=999999999999; then
-  if ! has nodisk 'CREATE DATABASE'; then ok "not enough disk: nothing created"; else bad "low disk created something"; fi
-fi
-# 10. manifest mismatch -> no swap even when confirmed
-printf 'foo\t6\n' >"$work/x.dump.counts.tsv"
-if run badcounts 1 FLOWMATE_CONFIRM_SWAP=flowmate; then
-  if ! touches_live badcounts && ! has badcounts BACKUP; then ok "manifest mismatch: no swap"; else bad "manifest mismatch swapped"; fi
-fi
-# 11. manifest match -> swap proceeds
-printf 'foo\t5\n' >"$work/x.dump.counts.tsv"
-if run goodcounts 0 FLOWMATE_CONFIRM_SWAP=flowmate; then
-  if has goodcounts 'RENAME TO flowmate_prev_'; then ok "manifest match: swap"; else bad "manifest match: no swap"; fi
-fi
-rm -f "$work/x.dump.counts.tsv"
-# 12. privilege check failure -> no swap
-if run badpriv 1 FLOWMATE_CONFIRM_SWAP=flowmate STUB_PRIV_FAIL=1; then
-  if ! touches_live badpriv; then ok "privilege check failure: no swap"; else bad "privilege failure swapped"; fi
-fi
-# 13. restore failure -> no swap
-if run badrestore 1 FLOWMATE_CONFIRM_SWAP=flowmate STUB_RESTORE_FAIL=1; then
-  if ! touches_live badrestore; then ok "pg_restore failure: no swap"; else bad "restore failure swapped"; fi
-fi
-# 14. never DROP DATABASE in any scenario
 if ! grep -l 'DROP DATABASE' "$work"/*.log >/dev/null 2>&1; then ok "no scenario issued DROP DATABASE"; else bad "DROP DATABASE issued"; fi
 
 echo "$pass passed, $fail failed ($n runs)"

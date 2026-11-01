@@ -5,9 +5,10 @@
 #   verify-restore.sh --latest    # newest dump in ~/backup/flowmate-db (monthly cron)
 #
 # The container uses the running flowmate-db image and initdb args, has no network
-# (--network none) and no published ports, and is always removed together with its
-# anonymous data volume (the restored data contains member PII); the script fails if
-# the number of dangling docker volumes grew.
+# (--network none) and no published ports. Its own volumes are recorded right after start;
+# cleanup is `docker rm -f -v` and must provably remove the container AND exactly those
+# volumes (the restored data contains member PII). A cleanup failure is alerted and logged
+# separately from the restore result (exit 3).
 # Counts are compared with the manifest produced by the same row-counts.sql (the
 # plan's compare-row-counts.ts can't run on OCI: no node_modules there).
 # Appends one line to ~/backup/flowmate-db/verify.log. Exit 0 only on exact match.
@@ -58,10 +59,30 @@ initdb_args=$(db_initdb_args)
 started=$(date +%s)
 cname="flowmate-verify-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 tmp_counts=$(mktemp)
-dangling_count() { docker volume ls -q --filter dangling=true | grep -c . || true; }
-dangling_before=$(dangling_count)
+own_volumes=""
+cleaned=0
+# remove_container: rm -f -v, then prove the container and its recorded volumes are gone.
+remove_container() {
+  local v leftover=""
+  docker rm -f -v "$cname" >/dev/null 2>&1 || leftover="container rm failed"
+  if docker container inspect "$cname" >/dev/null 2>&1; then leftover="$leftover container $cname still exists"; fi
+  for v in $own_volumes; do
+    if docker volume inspect "$v" >/dev/null 2>&1; then leftover="$leftover volume $v still exists"; fi
+  done
+  cleaned=1
+  if [ -n "$leftover" ]; then
+    log "CLEANUP FAILED:$leftover (restored PII may remain on disk: docker rm -f -v $cname; docker volume rm <volume>)"
+    alert "[FlowMate DB] verify-restore cleanup failed on $(hostname -s):$leftover. Restored member data may remain on disk."
+    record CLEANUP-FAIL "$dump_label$leftover"
+    return 1
+  fi
+  return 0
+}
 cleanup() {
-  docker rm -f -v "$cname" >/dev/null 2>&1 || true   # -v: also remove its anonymous volume
+  # EXIT trap: never trigger the ERR trap from here (the exit status is already decided).
+  trap - ERR
+  set +e
+  if [ "$cleaned" = 0 ] && docker container inspect "$cname" >/dev/null 2>&1; then remove_container; fi
   rm -f -- "$tmp_counts"
 }
 trap cleanup EXIT
@@ -72,6 +93,8 @@ POSTGRES_PASSWORD=$(openssl rand -hex 24) \
   -e POSTGRES_PASSWORD -e POSTGRES_DB=flowmate -e POSTGRES_INITDB_ARGS="$initdb_args" \
   "$image" >/dev/null || fail "could not start throwaway container"
 
+own_volumes=$(docker inspect -f '{{range .Mounts}}{{if .Name}}{{.Name}} {{end}}{{end}}' "$cname")
+[ -n "$own_volumes" ] || fail "could not record the throwaway container's volumes"
 ready=0
 for _ in $(seq 1 90); do
   if docker logs "$cname" 2>&1 | grep -q 'PostgreSQL init process complete' &&
@@ -100,10 +123,7 @@ if ! diff_out=$(diff "$manifest" "$tmp_counts"); then
   fail "row counts differ ($(printf '%s\n' "$diff_out" | grep -c '^[<>]') lines)"
 fi
 
-docker rm -f -v "$cname" >/dev/null 2>&1 || true
-dangling_after=$(dangling_count)
-[ "$dangling_after" -le "$dangling_before" ] ||
-  fail "dangling docker volumes grew from $dangling_before to $dangling_after (restored data left on disk?)"
-
 record OK "$dump_label tables=$tables rows=$rows duration=$(($(date +%s) - started))s"
-log "verify-restore ok: $dump_label tables=$tables rows=$rows dangling_volumes=$dangling_after"
+log "verify-restore ok: $dump_label tables=$tables rows=$rows"
+remove_container || exit 3
+log "cleanup ok: removed $cname and its volume(s) $own_volumes"

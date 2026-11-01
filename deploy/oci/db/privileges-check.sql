@@ -6,17 +6,20 @@ JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
 WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'S')
   AND c.relowner <> 'flowmate_owner'::regrole
 UNION ALL
-SELECT 'flowmate_app lacks SELECT/INSERT/UPDATE/DELETE on ' || c.relname
+-- One check per privilege: has_table_privilege(..., 'A, B') is true if ANY of them is held.
+SELECT 'flowmate_app lacks ' || p.priv || ' on ' || c.relname
 FROM pg_catalog.pg_class AS c
 JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+CROSS JOIN (VALUES ('SELECT'), ('INSERT'), ('UPDATE'), ('DELETE')) AS p(priv)
 WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p')
-  AND NOT pg_catalog.has_table_privilege('flowmate_app', c.oid, 'SELECT, INSERT, UPDATE, DELETE')
+  AND NOT pg_catalog.has_table_privilege('flowmate_app', c.oid, p.priv)
 UNION ALL
-SELECT 'flowmate_app has TRUNCATE/REFERENCES/TRIGGER/MAINTAIN on ' || c.relname
+SELECT 'flowmate_app has ' || p.priv || ' on ' || c.relname
 FROM pg_catalog.pg_class AS c
 JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+CROSS JOIN (VALUES ('TRUNCATE'), ('REFERENCES'), ('TRIGGER'), ('MAINTAIN')) AS p(priv)
 WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p')
-  AND pg_catalog.has_table_privilege('flowmate_app', c.oid, 'TRUNCATE, REFERENCES, TRIGGER, MAINTAIN')
+  AND pg_catalog.has_table_privilege('flowmate_app', c.oid, p.priv)
 UNION ALL
 SELECT 'flowmate_app lacks USAGE on sequence ' || c.relname
 FROM pg_catalog.pg_class AS c
