@@ -5,7 +5,9 @@
 #   verify-restore.sh --latest    # newest dump in ~/backup/flowmate-db (monthly cron)
 #
 # The container uses the running flowmate-db image and initdb args, has no network
-# (--network none) and no published ports, and is always removed (trap).
+# (--network none) and no published ports, and is always removed together with its
+# anonymous data volume (the restored data contains member PII); the script fails if
+# the number of dangling docker volumes grew.
 # Counts are compared with the manifest produced by the same row-counts.sql (the
 # plan's compare-row-counts.ts can't run on OCI: no node_modules there).
 # Appends one line to ~/backup/flowmate-db/verify.log. Exit 0 only on exact match.
@@ -18,12 +20,17 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
 VERIFY_LOG="$FLOWMATE_BACKUP_DIR/verify.log"
 dump_label="?"
-record() { printf '%s %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" >>"$VERIFY_LOG"; }
+# Best effort: a failing verify.log write must never stop the alert.
+record() {
+  { printf '%s %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" >>"$VERIFY_LOG"; } 2>/dev/null ||
+    log "could not write $VERIFY_LOG"
+}
 fail() {
   trap - ERR
+  set +e
   log "verify-restore FAILED: $1"
-  record FAIL "$dump_label $1"
   alert "[FlowMate DB] restore verification failed on $(hostname -s) for $dump_label: $1"
+  record FAIL "$dump_label $1"
   exit 1
 }
 trap 'fail "unexpected error at line $LINENO"' ERR
@@ -51,8 +58,10 @@ initdb_args=$(db_initdb_args)
 started=$(date +%s)
 cname="flowmate-verify-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 tmp_counts=$(mktemp)
+dangling_count() { docker volume ls -q --filter dangling=true | grep -c . || true; }
+dangling_before=$(dangling_count)
 cleanup() {
-  docker rm -f "$cname" >/dev/null 2>&1 || true
+  docker rm -f -v "$cname" >/dev/null 2>&1 || true   # -v: also remove its anonymous volume
   rm -f -- "$tmp_counts"
 }
 trap cleanup EXIT
@@ -91,5 +100,10 @@ if ! diff_out=$(diff "$manifest" "$tmp_counts"); then
   fail "row counts differ ($(printf '%s\n' "$diff_out" | grep -c '^[<>]') lines)"
 fi
 
+docker rm -f -v "$cname" >/dev/null 2>&1 || true
+dangling_after=$(dangling_count)
+[ "$dangling_after" -le "$dangling_before" ] ||
+  fail "dangling docker volumes grew from $dangling_before to $dangling_after (restored data left on disk?)"
+
 record OK "$dump_label tables=$tables rows=$rows duration=$(($(date +%s) - started))s"
-log "verify-restore ok: $dump_label tables=$tables rows=$rows"
+log "verify-restore ok: $dump_label tables=$tables rows=$rows dangling_volumes=$dangling_after"

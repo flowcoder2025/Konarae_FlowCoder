@@ -66,15 +66,22 @@ export function findMismatches(rows: readonly RowCountRow[]): RowCountRow[] {
   return rows.filter((row) => row.source !== row.target);
 }
 
-/** Rows as returned by row-counts.sql (row_count is text to avoid BigInt). */
+/**
+ * Rows as returned by row-counts.sql (row_count is text to avoid BigInt). Counts must be
+ * non-negative integer literals: null/""/"1e3" are rejected before Number() could turn
+ * them into 0 or 1000.
+ */
 export function parseRowCountRows(rows: ReadonlyArray<{ table_name: unknown; row_count: unknown }>): Map<string, number> {
   const counts = new Map<string, number>();
   for (const row of rows) {
-    const table = String(row.table_name);
-    const count = Number(row.row_count);
-    if (!table || !Number.isSafeInteger(count) || count < 0) {
+    const table = row.table_name;
+    const raw = row.row_count;
+    const text = typeof raw === "bigint" || (typeof raw === "number" && Number.isInteger(raw)) ? String(raw) : raw;
+    if (typeof table !== "string" || table === "" || typeof text !== "string" || !/^[0-9]+$/.test(text)) {
       throw new Error("row-counts.sql returned an unexpected row");
     }
+    const count = Number(text);
+    if (!Number.isSafeInteger(count)) throw new Error("row-counts.sql returned an unexpected row");
     counts.set(table, count);
   }
   return counts;

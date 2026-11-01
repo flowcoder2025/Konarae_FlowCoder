@@ -87,8 +87,19 @@ describe("compare-row-counts merge/diff", () => {
 
   it("parses row-counts.sql rows (text counts) and rejects malformed rows", () => {
     expect(parseRowCountRows([{ table_name: "a", row_count: "12" }])).toEqual(counts({ a: 12 }));
+    expect(parseRowCountRows([{ table_name: "a", row_count: 12 }, { table_name: "b", row_count: BigInt(3) }])).toEqual(
+      counts({ a: 12, b: 3 }),
+    );
     expect(() => parseRowCountRows([{ table_name: "a", row_count: "x" }])).toThrow();
     expect(() => parseRowCountRows([{ table_name: "a", row_count: "-1" }])).toThrow();
+  });
+
+  it("rejects null / empty / non-numeric counts instead of reading them as 0", () => {
+    for (const bad of [null, undefined, "", " ", "1e3", "12.0", "0x10", NaN, 1.5, {}, true]) {
+      expect(() => parseRowCountRows([{ table_name: "a", row_count: bad }])).toThrow(/unexpected row/);
+    }
+    expect(() => parseRowCountRows([{ table_name: null, row_count: "1" }])).toThrow(/unexpected row/);
+    expect(() => parseRowCountRows([{ table_name: "", row_count: "1" }])).toThrow(/unexpected row/);
   });
 
   it("loads the shared row-counts.sql as a single statement without the trailing semicolon", () => {

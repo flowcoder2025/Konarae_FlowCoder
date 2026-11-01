@@ -38,10 +38,19 @@ case "${1:-help}" in
 
   start)
     log "Starting FlowMate services..."
+    # Workers reach Postgres as flowmate-db:5432 on the `flowmate` network (deploy/oci/db).
+    # Without it a redeploy after the DB cutover would silently lose DB access.
+    # NET_RAW is dropped so a compromised worker cannot spoof traffic on that bridge.
+    sudo docker network inspect flowmate >/dev/null 2>&1 || {
+      echo "[deploy] docker network 'flowmate' missing: install deploy/oci/db first" >&2
+      exit 1
+    }
 
     sudo docker run -d \
       --restart always \
       --name flowmate-crawler \
+      --network flowmate \
+      --cap-drop NET_RAW \
       -p 3001:3001 \
       --memory 2g \
       --memory-swap 2g \
@@ -53,6 +62,8 @@ case "${1:-help}" in
     sudo docker run -d \
       --restart always \
       --name flowmate-embedding \
+      --network flowmate \
+      --cap-drop NET_RAW \
       -p 3002:3002 \
       --memory 1g \
       --memory-swap 1g \
@@ -64,6 +75,8 @@ case "${1:-help}" in
     sudo docker run -d \
       --restart always \
       --name flowmate-parser \
+      --network flowmate \
+      --cap-drop NET_RAW \
       -p 8000:8000 \
       --env-file "$PROJECT_DIR/.env.production" \
       -e PORT=8000 \

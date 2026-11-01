@@ -6,13 +6,17 @@
 #
 # A set is <name>.dump + .dump.counts.tsv + .dump.sha256; every pulled dump is
 # re-verified against its .sha256. Fails loudly (exit != 0, ERROR line in the log)
-# when the volume is not mounted, rsync fails, or a checksum does not match.
+# when the volume is not mounted, rsync fails, a checksum does not match, or the newest
+# dump is older than 36h. Nothing is pruned unless every check passed.
+# On success it touches oci:backup/flowmate-db/.mini-pulled; backup.sh on OCI sends a
+# Telegram alert when that marker is older than 48h, so a dead offsite job is noticed.
 # Installed copy: ~/.local/bin/flowmate-db-pull-backups.sh (install-launchd.sh), so the
 # job can still start and report when the portable volume is missing.
 # launchd context needs a one-time macOS permission: System Settings > Privacy &
-# Security > Full Disk Access (or Files and Folders > Removable Volumes) for
-# /bin/bash and /usr/bin/rsync. Without it rsync fails with "Operation not permitted"
-# (logged, exit != 0). Manual runs from a terminal use the terminal's permission.
+# Security > Full Disk Access: add /bin/bash (the job's program, the "responsible"
+# process for TCC) and /usr/bin/rsync (the binary TCC denied in testing). Without it
+# rsync fails with "Operation not permitted" (logged, exit != 0, no marker -> OCI alerts
+# after 48h). Manual runs from a terminal use the terminal app's permission.
 # macOS /bin/bash 3.2 compatible.
 export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 PYTHONUTF8=1 PYTHONIOENCODING=utf-8
 set -euo pipefail
@@ -23,6 +27,7 @@ VOLUME=${FLOWMATE_BACKUP_VOLUME:-/Volumes/포터블}
 DEST=${FLOWMATE_BACKUP_DEST:-$VOLUME/Backups/FlowMate/daily}
 REMOTE=${FLOWMATE_BACKUP_REMOTE:-oci:backup/flowmate-db/}
 KEEP=${FLOWMATE_BACKUP_KEEP:-30}
+MAX_AGE_HOURS=${FLOWMATE_BACKUP_MAX_AGE_HOURS:-36}
 # Apple's /usr/bin/rsync (openrsync) on purpose: under launchd, macOS TCC blocks a
 # Homebrew rsync from writing to a removable volume (it waits on a consent prompt
 # forever); the platform binary is not blocked.
@@ -83,8 +88,17 @@ for d in $dumps; do
     bad=$((bad + 1))
   fi
 done
+[ "$bad" -eq 0 ] || die "$bad of $total sets failed verification (nothing pruned)"
 
-# Retention: newest $KEEP sets.
+# Freshness: name carries the UTC timestamp, flowmate-db-YYYYmmddTHHMMSSZ.dump.
+newest=$(printf '%s\n' "$dumps" | head -n 1)
+stamp=${newest#flowmate-db-}
+stamp=${stamp%.dump}
+newest_epoch=$(date -j -u -f '%Y%m%dT%H%M%SZ' "$stamp" +%s 2>/dev/null) || die "cannot parse timestamp of $newest"
+age_h=$((($(date +%s) - newest_epoch) / 3600))
+[ "$age_h" -le "$MAX_AGE_HOURS" ] || die "newest backup $newest is ${age_h}h old (limit ${MAX_AGE_HOURS}h; is backup.sh running on OCI?)"
+
+# Retention: newest $KEEP sets (only reached when every check passed).
 n=0
 for d in $dumps; do
   n=$((n + 1))
@@ -94,6 +108,10 @@ for d in $dumps; do
   fi
 done
 
-newest=$(printf '%s\n' "$dumps" | head -n 1)
-[ "$bad" -eq 0 ] || die "$bad of $total sets failed verification"
-log "pull ok: $total sets verified (keep $KEEP), newest $newest, $(($(date +%s) - started))s"
+# Tell OCI the offsite copy is current (backup.sh alerts when this goes stale).
+remote_host=${REMOTE%%:*}
+remote_dir=${REMOTE#*:}
+ssh -o BatchMode=yes -o ConnectTimeout=20 "$remote_host" "umask 077 && touch '${remote_dir%/}/.mini-pulled'" ||
+  die "could not update the pull marker on $remote_host"
+
+log "pull ok: $total sets verified (keep $KEEP), newest $newest (${age_h}h old), $(($(date +%s) - started))s"

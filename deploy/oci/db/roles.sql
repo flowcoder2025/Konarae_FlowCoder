@@ -3,7 +3,9 @@
 -- Plan-approved exception to "Prisma-first": roles/privileges/auth function only.
 -- NO table DDL here — tables come from pg_restore or `prisma db push`.
 --
--- Run as the postgres superuser over the local socket (peer auth), in db flowmate.
+-- Run as the postgres superuser over the local socket (peer auth), in db flowmate or in a
+-- restore staging db flowmate_restore_<YYYYmmdd_HHMMSS> (restore.sh; grants on a database
+-- object survive its rename).
 -- Passwords are read from the environment with \getenv, never from argv:
 --   FLOWMATE_OWNER_PASSWORD=... FLOWMATE_APP_PASSWORD=... PGBOUNCER_AUTH_PASSWORD=... \
 --   docker exec -i -u postgres -e FLOWMATE_OWNER_PASSWORD -e FLOWMATE_APP_PASSWORD \
@@ -25,10 +27,11 @@ SET log_min_error_statement = panic;
 SET log_min_duration_statement = -1;
 SET log_statement = 'none';
 
-SELECT current_database() = 'flowmate' AND current_user = 'postgres' AS roles_ctx_ok \gset
+SELECT current_database() ~ '^flowmate(_restore_[0-9]{8}_[0-9]{6})?$' AND current_user = 'postgres' AS roles_ctx_ok,
+       current_database() AS target_db \gset
 \if :roles_ctx_ok
 \else
-  \echo 'roles.sql: must run as postgres in database flowmate'
+  \echo 'roles.sql: must run as postgres in database flowmate (or a restore staging db)'
   DO $$ BEGIN RAISE EXCEPTION 'roles.sql: wrong database or user'; END $$;
 \endif
 
@@ -93,9 +96,11 @@ FROM pg_catalog.pg_authid WHERE rolname = 'pgbouncer_auth' \gset
 -- ---------------------------------------------------------------------------
 -- Owner => member of pg_database_owner => owns schema public (CREATE for
 -- pg_restore --role=flowmate_owner and prisma db push).
-ALTER DATABASE flowmate OWNER TO flowmate_owner;
-REVOKE ALL ON DATABASE flowmate FROM PUBLIC;
-GRANT CONNECT ON DATABASE flowmate TO flowmate_app, pgbouncer_auth;
+ALTER DATABASE :"target_db" OWNER TO flowmate_owner;
+REVOKE ALL ON DATABASE :"target_db" FROM PUBLIC;
+GRANT CONNECT ON DATABASE :"target_db" TO flowmate_app, pgbouncer_auth;
+-- Nobody but the superuser needs the maintenance databases.
+REVOKE CONNECT ON DATABASE postgres, template1 FROM PUBLIC;
 
 -- ---------------------------------------------------------------------------
 -- Schema public: flowmate_app gets DML only. No CREATE, TRUNCATE, REFERENCES,
@@ -114,6 +119,23 @@ ALTER DEFAULT PRIVILEGES FOR ROLE flowmate_owner IN SCHEMA public
   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO flowmate_app;
 ALTER DEFAULT PRIVILEGES FOR ROLE flowmate_owner IN SCHEMA public
   GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO flowmate_app;
+
+-- Functions: no EXECUTE for PUBLIC on flowmate_owner's functions, explicit grant to the app.
+-- The REVOKE must be the global (no IN SCHEMA) form: per-schema default privileges can only
+-- add to the global defaults, so `IN SCHEMA public REVOKE ... FROM PUBLIC` would be a no-op.
+ALTER DEFAULT PRIVILEGES FOR ROLE flowmate_owner REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE flowmate_owner IN SCHEMA public
+  GRANT EXECUTE ON FUNCTIONS TO flowmate_app;
+-- Existing functions in public that came from a restore (e.g. hybrid_search, called by
+-- src/lib/rag.ts). Extension members (pgvector) keep their defaults: vector operators need them.
+SELECT format('REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC', p.oid::regprocedure),
+       format('GRANT EXECUTE ON FUNCTION %s TO flowmate_app', p.oid::regprocedure)
+FROM pg_catalog.pg_proc AS p
+JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
+WHERE n.nspname = 'public'
+  AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend AS d
+                  WHERE d.classid = 'pg_catalog.pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'e')
+\gexec
 
 -- ---------------------------------------------------------------------------
 -- PgBouncer auth_query function. Own schema (not public) so it stays out of

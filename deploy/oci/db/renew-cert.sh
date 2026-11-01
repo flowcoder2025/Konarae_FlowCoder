@@ -15,8 +15,10 @@
 # trusted LE root. The ECDSA chain ends at ISRG Root X2, which older client trust
 # stores (serverless runtimes, bundled CA lists) may lack.
 # When the issued cert differs from the installed one: copy cert+key into
-# pgbouncer/tls (uid 70, 600), SIGHUP PgBouncer, confirm the served certificate
-# changed; if not, restart PgBouncer and confirm again.
+# pgbouncer/tls (uid 70, 600). Then, on EVERY run: compare the certificate actually
+# served on 6432 with the current one; if it differs, SIGHUP PgBouncer, and if that
+# does not help, restart it. Alert when the served certificate expires in < 14 days
+# or PgBouncer is not running.
 export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 PYTHONUTF8=1 PYTHONIOENCODING=utf-8
 set -Eeuo pipefail
 umask 077
@@ -29,6 +31,7 @@ CF_INI=${CLOUDFLARE_INI:-$HOME/.secrets/cloudflare.ini}
 LE_DIR=$FLOWMATE_DB_HOME/letsencrypt
 TLS_DIR=$FLOWMATE_DB_HOME/pgbouncer/tls
 DOMAIN=$FLOWMATE_DB_DOMAIN
+MIN_DAYS=${FLOWMATE_CERT_MIN_DAYS:-14}   # alert when the SERVED cert expires sooner
 
 fail() {
   trap - ERR
@@ -82,31 +85,45 @@ checkhost=$(openssl x509 -in "$cert" -noout -checkhost "$DOMAIN")
   fail "certificate and key do not match"
 
 if sudo -n cmp -s "$cert" "$TLS_DIR/fullchain.pem" && sudo -n cmp -s "$key" "$TLS_DIR/privkey.pem"; then
-  log "certificate unchanged ($(openssl x509 -in "$cert" -noout -enddate))"
+  log "certificate files unchanged ($(openssl x509 -in "$cert" -noout -enddate))"
+else
+  sudo -n install -d -o "$PGB_UID" -g "$PGB_UID" -m 700 "$TLS_DIR"
+  sudo_write_file "$PGB_UID" 600 "$TLS_DIR/privkey.pem" <"$key"
+  sudo_write_file "$PGB_UID" 600 "$TLS_DIR/fullchain.pem" <"$cert"
+  log "installed new certificate files ($(openssl x509 -in "$cert" -noout -enddate))"
+fi
+
+if [ "${FLOWMATE_CERT_INSTALL_ONLY:-0}" = 1 ]; then
+  log "install-only mode (first install, PgBouncer not started yet)"
   exit 0
 fi
 
-sudo -n install -d -o "$PGB_UID" -g "$PGB_UID" -m 700 "$TLS_DIR"
-sudo_write_file "$PGB_UID" 600 "$TLS_DIR/privkey.pem" <"$key"
-sudo_write_file "$PGB_UID" 600 "$TLS_DIR/fullchain.pem" <"$cert"
-log "installed new certificate ($(openssl x509 -in "$cert" -noout -enddate))"
-
-served_fingerprint() {
+# Every run, files changed or not: what does 6432 actually serve?
+served_cert() {
   { openssl s_client -starttls postgres -connect 127.0.0.1:6432 -servername "$DOMAIN" </dev/null 2>/dev/null || true; } |
-    openssl x509 -noout -fingerprint -sha256 2>/dev/null || true
+    openssl x509 2>/dev/null || true
 }
+fingerprint() { openssl x509 -noout -fingerprint -sha256 2>/dev/null || true; }
 
-if container_running "$PGB_CONTAINER"; then
-  want=$(openssl x509 -in "$cert" -noout -fingerprint -sha256)
+container_running "$PGB_CONTAINER" || fail "$PGB_CONTAINER is not running (6432 serves nothing)"
+want=$(fingerprint <"$cert")
+if [ "$(served_cert | fingerprint)" != "$want" ]; then
+  log "6432 serves a different certificate than $cert -> SIGHUP $PGB_CONTAINER"
   docker kill -s HUP "$PGB_CONTAINER" >/dev/null
   sleep 2
-  if [ "$(served_fingerprint)" != "$want" ]; then
+  if [ "$(served_cert | fingerprint)" != "$want" ]; then
     log "SIGHUP did not switch the served certificate -> restarting $PGB_CONTAINER"
     docker restart "$PGB_CONTAINER" >/dev/null
     sleep 3
   fi
-  [ "$(served_fingerprint)" = "$want" ] || fail "PgBouncer does not serve the new certificate"
-  log "PgBouncer serves the new certificate"
-else
-  log "$PGB_CONTAINER not running; certificate will be used on start"
+  [ "$(served_cert | fingerprint)" = "$want" ] || fail "PgBouncer does not serve the current certificate"
+  log "PgBouncer now serves the current certificate"
 fi
+
+served=$(served_cert)
+[ -n "$served" ] || fail "could not read the certificate served on 6432"
+enddate=$(openssl x509 -noout -enddate <<<"$served" | cut -d= -f2)
+if ! openssl x509 -noout -checkend $((MIN_DAYS * 86400)) <<<"$served" >/dev/null; then
+  fail "served certificate expires in less than $MIN_DAYS days ($enddate)"
+fi
+log "6432 serves the current certificate, valid until $enddate"

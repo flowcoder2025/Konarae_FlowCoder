@@ -21,6 +21,10 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 sudo -n true 2>/dev/null || die "passwordless sudo required"
 command -v docker >/dev/null || die "docker missing"
 cd "$FLOWMATE_DB_HOME"
+exec 8>"$FLOWMATE_DB_HOME/.admin.lock"
+flock -n 8 || die "another install.sh/restore.sh is running"
+# The Telegram bot token used by every alert must not be readable by other local accounts.
+require_private_file "$TELEGRAM_ENV_FILE"
 
 # --- 1. directories ----------------------------------------------------------
 chmod 750 "$FLOWMATE_DB_HOME"
@@ -28,7 +32,7 @@ install -d -m 700 "$FLOWMATE_DB_HOME/secrets" "$FLOWMATE_DB_HOME/letsencrypt" "$
 chmod 700 "$FLOWMATE_BACKUP_DIR"
 [ -d "$FLOWMATE_DB_HOME/data" ] || install -d -m 700 "$FLOWMATE_DB_HOME/data"   # entrypoint chowns to 999
 sudo -n install -d -o "$PGB_UID" -g "$PGB_UID" -m 700 "$FLOWMATE_DB_HOME/pgbouncer" "$FLOWMATE_DB_HOME/pgbouncer/tls"
-chmod 644 postgres/postgresql.conf postgres/pg_hba.conf postgres/conf.d/*.conf roles.sql row-counts.sql
+chmod 644 postgres/postgresql.conf postgres/pg_hba.conf postgres/conf.d/*.conf roles.sql row-counts.sql privileges-check.sql
 chmod 755 postgres postgres/conf.d
 
 # --- 2. secrets (.env) -------------------------------------------------------
@@ -52,7 +56,7 @@ fi
 # --- 3. TLS certificate --------------------------------------------------------
 if ! sudo -n test -s "$FLOWMATE_DB_HOME/pgbouncer/tls/fullchain.pem"; then
   log "no TLS certificate installed yet -> renew-cert.sh"
-  "$SCRIPT_DIR/renew-cert.sh"
+  FLOWMATE_CERT_INSTALL_ONLY=1 "$SCRIPT_DIR/renew-cert.sh"
 fi
 
 # --- 4. render pgbouncer.ini + userlist.txt -----------------------------------
@@ -74,6 +78,8 @@ rendered=$(sed \
 if grep -qE '@[A-Z_]+@' <<<"$rendered"; then die "unrendered placeholder in pgbouncer.ini"; fi
 
 pgb_changed=0
+# Must run in THIS shell (redirect, not a pipe): a pipeline would run it in a subshell and
+# lose pgb_changed=1, leaving PgBouncer on its old config.
 write_if_changed() { # DEST (content on stdin)
   local dest=$1 tmp
   tmp=$(mktemp)
@@ -87,19 +93,30 @@ write_if_changed() { # DEST (content on stdin)
   pgb_changed=1
   log "updated $dest"
 }
-printf '%s\n' "$rendered" | write_if_changed "$FLOWMATE_DB_HOME/pgbouncer/pgbouncer.ini"
+write_if_changed "$FLOWMATE_DB_HOME/pgbouncer/pgbouncer.ini" < <(printf '%s\n' "$rendered")
 write_if_changed "$FLOWMATE_DB_HOME/pgbouncer/pgbouncer_hba.conf" <"$SCRIPT_DIR/pgbouncer_hba.conf"
 # auth_user's own server login needs the plaintext password (SCRAM verifiers in
 # auth_file only work for client auth). App users are NOT listed (auth_query).
-printf '"pgbouncer_auth" "%s"\n' "$(secret_get PGBOUNCER_AUTH_PASSWORD)" |
-  write_if_changed "$FLOWMATE_DB_HOME/pgbouncer/userlist.txt"
+auth_pw=$(secret_get PGBOUNCER_AUTH_PASSWORD)
+write_if_changed "$FLOWMATE_DB_HOME/pgbouncer/userlist.txt" < <(printf '"pgbouncer_auth" "%s"\n' "$auth_pw")
+unset auth_pw
 
 # --- 5. containers -------------------------------------------------------------
 docker compose -f "$FLOWMATE_DB_HOME/docker-compose.yml" up -d --wait --wait-timeout 300
 wait_db_healthy
+# Config dir is a bind mount: edits to postgresql.conf / conf.d / pg_hba.conf need a reload.
+db_psql -d postgres -At -c "SELECT pg_reload_conf()" >/dev/null
+sleep 1
+for setting in log_parameter_max_length log_parameter_max_length_on_error log_statement; do
+  want=0; [ "$setting" = log_statement ] && want=none
+  got=$(db_psql -d postgres -At -c "SHOW $setting")
+  [ "$got" = "$want" ] || die "$setting is '$got', expected '$want'"
+done
+log "postgres config reloaded (log_parameter_max_length*=0, log_statement=none)"
 
 # --- 6. roles / privileges / auth function -------------------------------------
 apply_roles
+check_privileges flowmate || die "privilege check failed"
 if [ "$pgb_changed" = 1 ] || [ "${FLOWMATE_ROTATE_PASSWORDS:-0}" = 1 ]; then
   log "pgbouncer config changed -> restart $PGB_CONTAINER"
   docker restart "$PGB_CONTAINER" >/dev/null

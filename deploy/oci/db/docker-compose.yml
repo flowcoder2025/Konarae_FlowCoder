@@ -46,7 +46,9 @@ services:
     mem_limit: 2g
     stop_grace_period: 60s
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -q -h /var/run/postgresql -U postgres -d flowmate"]
+      # Run as OS user postgres: as root the probe trips `local all postgres peer` and logs a
+      # "Peer authentication failed" FATAL every interval.
+      test: ["CMD", "gosu", "postgres", "pg_isready", "-q", "-h", "/var/run/postgresql", "-U", "postgres", "-d", "flowmate"]
       interval: 10s
       timeout: 5s
       retries: 6

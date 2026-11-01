@@ -11,7 +11,12 @@
 # flock prevents overlap; newest $FLOWMATE_BACKUP_KEEP (7) sets are kept.
 # Any failure -> Telegram alert (no secrets in the message) + exit 1.
 #
-# Test hook: FLOWMATE_BACKUP_DB=<name> backs up another database (alert-path test).
+# Offsite check: the Mini pull job touches $DIR/.mini-pulled after every verified pull.
+# When that marker is older than 48h (or never appeared within 48h) -> Telegram alert, so a
+# broken offsite copy surfaces on the same alert path as a broken backup.
+#
+# Test hooks: FLOWMATE_BACKUP_DB=<name> backs up another database (alert-path test);
+# FLOWMATE_OFFSITE_MAX_HOURS (default 48).
 export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 PYTHONUTF8=1 PYTHONIOENCODING=utf-8
 set -Eeuo pipefail
 umask 077
@@ -21,6 +26,7 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
 DB_NAME=${FLOWMATE_BACKUP_DB:-flowmate}
 KEEP=${FLOWMATE_BACKUP_KEEP:-7}
+OFFSITE_MAX_HOURS=${FLOWMATE_OFFSITE_MAX_HOURS:-48}
 DIR=$FLOWMATE_BACKUP_DIR
 
 fail() {
@@ -34,6 +40,7 @@ trap '' PIPE   # a dead psql coprocess must surface as a write error, not kill t
 
 [[ $DB_NAME =~ ^[a-z_][a-z0-9_]*$ ]] || fail "invalid database name"
 [[ $KEEP =~ ^[1-9][0-9]*$ ]] || fail "invalid FLOWMATE_BACKUP_KEEP"
+[[ $OFFSITE_MAX_HOURS =~ ^[1-9][0-9]*$ ]] || fail "invalid FLOWMATE_OFFSITE_MAX_HOURS"
 install -d -m 700 "$DIR"
 chmod 700 "$DIR"
 exec 9>"$DIR/.backup.lock"
@@ -121,3 +128,28 @@ done
 
 rows=$(awk -F'\t' '{s += $2} END {print s + 0}' "$final.counts.tsv")
 log "backup ok: $name size=$(du -h "$final" | cut -f1) tables=$tables rows=$rows duration=$(($(date +%s) - started))s kept=$((${#sets[@]} < KEEP ? ${#sets[@]} : KEEP))"
+
+# --- 8. offsite copy freshness (Mini pull marker) -----------------------------------------
+check_offsite() {
+  local marker="$DIR/.mini-pulled" grace="$DIR/.mini-pull-grace-start" now age
+  now=$(date +%s)
+  if [ -f "$marker" ]; then
+    age=$((now - $(stat -c %Y "$marker")))
+    if [ "$age" -gt $((OFFSITE_MAX_HOURS * 3600)) ]; then
+      log "offsite STALE: last Mini pull $((age / 3600))h ago"
+      alert "[FlowMate DB] offsite backup stale on $(hostname -s): last Mini pull $((age / 3600))h ago (limit ${OFFSITE_MAX_HOURS}h). Check the Mini launchd job com.flowcoder.flowmate-db-backup."
+    else
+      log "offsite ok: last Mini pull $((age / 3600))h ago"
+    fi
+  else
+    [ -f "$grace" ] || touch "$grace"
+    age=$((now - $(stat -c %Y "$grace")))
+    if [ "$age" -gt $((OFFSITE_MAX_HOURS * 3600)) ]; then
+      log "offsite MISSING: no Mini pull marker for $((age / 3600))h"
+      alert "[FlowMate DB] offsite backup missing on $(hostname -s): the Mini has not pulled any backup for $((age / 3600))h. Check com.flowcoder.flowmate-db-backup."
+    else
+      log "offsite: no Mini pull yet (grace period, $((age / 3600))h of ${OFFSITE_MAX_HOURS}h)"
+    fi
+  fi
+}
+check_offsite

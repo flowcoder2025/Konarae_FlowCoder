@@ -92,9 +92,13 @@ db_psql() {
   docker exec -i -u postgres "$DB_CONTAINER" psql -X -q -v ON_ERROR_STOP=1 "$@"
 }
 
-# Apply roles.sql (idempotent). Set FLOWMATE_ROTATE_PASSWORDS=1 to re-set passwords.
+# SQL files ship next to the scripts (deployed copy: FLOWMATE_DB_HOME).
+FLOWMATE_SQL_DIR=${FLOWMATE_SQL_DIR:-${SCRIPT_DIR:-$FLOWMATE_DB_HOME}}
+
+# apply_roles [DB] -- roles.sql (idempotent) in DB (default flowmate).
+# FLOWMATE_ROTATE_PASSWORDS=1 re-sets passwords.
 apply_roles() {
-  local owner app auth
+  local db=${1:-flowmate} owner app auth
   owner=$(secret_get FLOWMATE_OWNER_PASSWORD)
   app=$(secret_get FLOWMATE_APP_PASSWORD)
   auth=$(secret_get PGBOUNCER_AUTH_PASSWORD)
@@ -105,7 +109,31 @@ apply_roles() {
     docker exec -i -u postgres \
       -e FLOWMATE_OWNER_PASSWORD -e FLOWMATE_APP_PASSWORD -e PGBOUNCER_AUTH_PASSWORD \
       -e FLOWMATE_ROTATE_PASSWORDS \
-      "$DB_CONTAINER" psql -X -q -v ON_ERROR_STOP=1 -d flowmate -f - <"$FLOWMATE_DB_HOME/roles.sql"
+      "$DB_CONTAINER" psql -X -q -v ON_ERROR_STOP=1 -d "$db" -f - <"$FLOWMATE_SQL_DIR/roles.sql"
+}
+
+# check_privileges [DB] -- privileges-check.sql must return no rows.
+check_privileges() {
+  local db=${1:-flowmate} out
+  # Explicit status check: callers use `check_privileges || die`, where errexit is off.
+  if ! out=$(docker exec -i -u postgres "$DB_CONTAINER" psql -X -q -At -v ON_ERROR_STOP=1 -d "$db" -f - \
+    <"$FLOWMATE_SQL_DIR/privileges-check.sql"); then
+    log "privilege check query failed in $db"
+    return 1
+  fi
+  if [ -n "$out" ]; then
+    log "privilege check FAILED in $db:"
+    printf '%s\n' "$out" >&2
+    return 1
+  fi
+  log "privilege check ok ($db)"
+}
+
+# The Telegram bot token file must not be readable by other local accounts.
+require_private_file() {
+  local f=$1 mode
+  mode=$(stat -c %a "$f" 2>/dev/null) || die "missing $f"
+  [ "$mode" = "600" ] || die "$f must be mode 600 (is $mode): chmod 600 $f"
 }
 
 # Image reference of the running db container (verify-restore uses the same one).

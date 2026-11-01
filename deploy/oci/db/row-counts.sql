@@ -5,6 +5,8 @@
 --   backup.sh / verify-restore.sh  psql -X -q -At -F '<TAB>' -f row-counts.sql  -> "<table>\t<count>" lines
 --   scripts/db/compare-row-counts.ts  (Prisma $queryRawUnsafe on this file's text)
 -- Keep it a single statement without psql meta-commands (the TS loader strips the final ";").
+-- Partitions are skipped (NOT relispartition): a partitioned parent counts its children.
+-- The schema has no partitioned tables today; revisit the manifests if one is added.
 SELECT
   c.relname::text AS table_name,
   (xpath(
