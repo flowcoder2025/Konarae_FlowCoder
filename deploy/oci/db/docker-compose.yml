@@ -1,0 +1,107 @@
+# FlowMate Postgres 17 (+pgvector) and PgBouncer on the OCI VM.
+#
+# Deployed copy lives in /home/ubuntu/flowmate-db (install.sh). All host paths are
+# absolute on purpose: running compose from another checkout must not create a
+# second data directory.
+#
+# No secret values in this file. The postgres superuser password is read from a
+# 600 file (POSTGRES_PASSWORD_FILE); role passwords live in
+# /home/ubuntu/flowmate-db/.env and are applied by roles.sql; PgBouncer's
+# userlist.txt is rendered by install.sh.
+#
+# Images are pinned by tag AND multi-arch index digest.
+# Collation: the pgvector tag must stay on Debian trixie (libicu76). Verified
+# 2026-11-02 with a restore of the Supabase dump: `ORDER BY name` on
+# "SupportProject" (16,495 rows, Korean + curly quotes) is byte-identical to
+# Supabase on trixie/ICU 76, but NOT on bookworm/ICU 72 (U+2018 vs U+0027 order).
+# Supabase reports datcollversion 153.120 yet orders like ICU 76; trixie records
+# 153.128. The version string differs by design; the ordering is what matters.
+name: flowmate-db
+
+services:
+  flowmate-db:
+    image: pgvector/pgvector:0.8.7-pg17-trixie@sha256:01215e09bd4bd582d20230e025b6c971deeeffee49ceef1aae167e839cb62a7e
+    container_name: flowmate-db
+    restart: unless-stopped
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: flowmate
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale-provider=icu --icu-locale=en-US --locale=en_US.UTF-8 --data-checksums"
+      PGDATA: /var/lib/postgresql/data
+    volumes:
+      - /home/ubuntu/flowmate-db/data:/var/lib/postgresql/data
+      # Directory mount (not single files) so edited configs are visible after a reload.
+      - /home/ubuntu/flowmate-db/postgres:/etc/postgresql:ro
+      - /home/ubuntu/flowmate-db/secrets/postgres_password:/run/secrets/postgres_password:ro
+    ports:
+      # Loopback only. Docker-published ports bypass ufw, so never publish on 0.0.0.0.
+      # Admin access: ssh -L 5433:127.0.0.1:5433 oci
+      - "127.0.0.1:5433:5432"
+    networks:
+      flowmate:
+        ipv4_address: 172.21.0.2
+    shm_size: 256m
+    mem_limit: 2g
+    stop_grace_period: 60s
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -q -h /var/run/postgresql -U postgres -d flowmate"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  flowmate-pgbouncer:
+    image: edoburu/pgbouncer:v1.26.1-p0@sha256:488422e38cff912895d0d65d8963fcd306e6ac589a724398b6eb8e294e94d624
+    container_name: flowmate-pgbouncer
+    restart: unless-stopped
+    depends_on:
+      flowmate-db:
+        condition: service_healthy
+    volumes:
+      # Rendered pgbouncer.ini + userlist.txt + tls/ (all owned by uid 70, mode 600).
+      # The image's entrypoint skips its env-based config generation when
+      # /etc/pgbouncer/pgbouncer.ini exists, and execs pgbouncer as PID 1.
+      - /home/ubuntu/flowmate-db/pgbouncer:/etc/pgbouncer:ro
+    ports:
+      # Public, TLS-only (client_tls_sslmode=require). Opened in ufw + OCI security list.
+      - "6432:6432"
+    networks:
+      flowmate:
+        ipv4_address: 172.21.0.3
+    mem_limit: 256m
+    ulimits:
+      nofile:
+        soft: 8192
+        hard: 8192
+    healthcheck:
+      # Plain TCP probe: a pg_isready login attempt would hit auth_query every interval.
+      test: ["CMD", "nc", "-z", "127.0.0.1", "6432"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+networks:
+  flowmate:
+    name: flowmate
+    driver: bridge
+    ipam:
+      config:
+        # Static IPs (.2 db, .3 pgbouncer) sit outside ip_range, so containers joined
+        # later (crawler/embedding/parser at cutover) can never take them.
+        # pg_hba.conf depends on these addresses and on the gateway (.1).
+        - subnet: 172.21.0.0/24
+          ip_range: 172.21.0.128/25
+          gateway: 172.21.0.1
