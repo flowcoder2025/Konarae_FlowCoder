@@ -415,8 +415,8 @@ CrawlSource → CrawlJob → SupportProject + ProjectAttachment
 
 ### 9.5 OCI Worker 인프라
 
-**서버**: OCI Always Free Ampere A1.Flex (4 OCPU, 24GB RAM, ARM64) - `158.180.81.7`
-**도메인**: `worker.jerome87.com` (Cloudflare Proxy ON, SSL 종단)
+**서버**: OCI Ampere A1.Flex (2 OCPU, 12GB RAM, ARM64, ap-chuncheon-1) - 공인 IP `158.180.81.7`
+**도메인**: `worker.jerome87.com` (Cloudflare Proxy ON, SSL 종단), `db.jerome87.com` (DNS only, PgBouncer 6432)
 
 ```
 Cloudflare (SSL) → Nginx (호스트, port 80) → Docker 컨테이너
@@ -438,11 +438,11 @@ Cloudflare (SSL) → Nginx (호스트, port 80) → Docker 컨테이너
 **배포 파일**: `deploy/oci/` (Dockerfile, nginx 설정, deploy.sh)
 **Nginx 설정**: `/etc/nginx/sites-available/worker` (호스트 nginx에 통합)
 **환경변수**: `/home/ubuntu/flowmate/.env.production`
-**SSH**: `ssh -i ~/.ssh/oci_key ubuntu@158.180.81.7`
+**SSH**: `ssh oci` (Tailscale `100.126.53.122`, 키 `~/.ssh/oci_key`). 공인 IP 22번은 막혀 있다.
 
 **배포 절차**:
 ```bash
-ssh -i ~/.ssh/oci_key ubuntu@158.180.81.7
+ssh oci
 cd ~/flowmate && git pull
 sudo docker stop flowmate-crawler flowmate-embedding
 sudo docker rm flowmate-crawler flowmate-embedding
@@ -456,6 +456,21 @@ sudo docker run -d --name flowmate-embedding --env-file .env.production -p 3002:
 - `RAILWAY_CRAWLER_URL=https://worker.jerome87.com`
 - `RAILWAY_WORKER_URL=https://worker.jerome87.com`
 - `TEXT_PARSER_URL=https://worker.jerome87.com`
+- DB(전환 1A.3 이후): `DATABASE_URL`과 `DIRECT_URL`에 같은 값
+  `postgresql://flowmate_app:<pw>@db.jerome87.com:6432/flowmate?sslmode=require&sslaccept=strict&pgbouncer=true&connection_limit=1`
+  (`sslaccept=strict` 필수. 빼면 Prisma가 인증서를 검증하지 않는다.)
+
+**DB 스택** (Phase 1A, 원본 `deploy/oci/db/`, 배포본 `/home/ubuntu/flowmate-db/`, 상세 `deploy/oci/db/README.md`):
+
+| 컨테이너 | 이미지 | 포트 | 역할 |
+|-----------|--------|------|------|
+| flowmate-db | `pgvector/pgvector:0.8.7-pg17-trixie` | `127.0.0.1:5433` → 5432 (공개 안 함) | Postgres 17 + pgvector, ICU en-US |
+| flowmate-pgbouncer | `edoburu/pgbouncer:v1.26.1-p0` | `6432` (공개, TLS 필수) | transaction pooling, `flowmate_app`만 허용 |
+
+- 네트워크: docker `flowmate` (172.21.0.0/24, db .2, pgbouncer .3, gateway .1). 워커는 전환 때 이 네트워크에 붙인다.
+- 연결 문자열: OCI 워커 `postgresql://flowmate_app:<pw>@flowmate-db:5432/flowmate`, 관리자 `ssh -L 5433:127.0.0.1:5433 oci` 후 `flowmate_owner@127.0.0.1:5433/flowmate` (복원·`prisma db push`는 이 경로로만).
+- 시크릿: `/home/ubuntu/flowmate-db/.env`(600). 백업: 04:00 KST `~/backup/flowmate-db/`(7개) → Mini 05:30 `/Volumes/포터블/Backups/FlowMate/daily/`(30개).
+- 이미지는 trixie(ICU 76)를 유지한다. bookworm(ICU 72)은 Supabase와 한글·따옴표 정렬 결과가 다르다.
 
 ### 9.6 Worker 메모리 관리 규칙
 
@@ -565,3 +580,4 @@ CREATE POLICY "users can view own data" ON companies
 | 2025-12-16 | 3.1.0 | 개발 규칙 섹션 추가 (Prisma 우선, 환경변수, ReBAC) |
 | 2026-03-06 | 3.2.0 | Railway → OCI 마이그레이션, Worker 인프라 섹션 추가 |
 | 2026-03-06 | 3.3.0 | Worker 메모리 관리 규칙 추가, OCI 배포 절차 문서화 |
+| 2026-11-02 | 3.4.0 | 9.5 OCI 사양(2 OCPU/12GB)·SSH(`ssh oci`) 정정, DB 스택(Postgres 17 + PgBouncer)·DB 연결 문자열 추가 |
