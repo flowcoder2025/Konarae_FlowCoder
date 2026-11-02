@@ -13,9 +13,12 @@
 4. Start: `CRAWLER_IMAGE=flowmate-crawler:<tag> EMBEDDING_IMAGE=flowmate-embedding:<tag> PARSER_IMAGE=flowmate-parser:<tag> ./deploy/oci/deploy.sh start`
    (explicit refs are required; there is no implicit `:latest`. Currently running refs:
    `docker inspect -f '{{.Config.Image}}' flowmate-crawler`, etc.)
-   `start`/`restart` validate everything first (network `flowmate`, image refs, and `.env.production`'s
-   `DATABASE_URL` host must be `flowmate-db`; override for a rollback: `FLOWMATE_ALLOW_NON_OCI_DB=1`);
-   `./deploy/oci/deploy.sh check` runs only the validation. `restart` never stops a worker before it passes.
+   `check`, `start` and `restart` all need the three `*_IMAGE` variables. They validate everything first
+   (network `flowmate`, image refs, exactly one `DATABASE_URL` in `.env.production` whose host is
+   `flowmate-db`; override for a rollback: `FLOWMATE_ALLOW_NON_OCI_DB=1`); `check` runs only the
+   validation. `start`/`restart` then `docker create` all three new containers (so docker parses the env
+   file and options) and only after that stop and remove the old ones. Workers run with
+   `--restart unless-stopped`; their memory limits are revisited in Phase 1B.7.
 5. Verify: `./deploy/oci/deploy.sh status`
 
 ## Services

@@ -242,41 +242,61 @@ Supabase manifest frozen at dump time, and Supabase is later checked against tha
 never "Supabase vs OCI" after the switch (legitimate logins make OCI diverge) and never through
 `DIRECT_URL` once `.env.local` might point at OCI.
 
-0. Window away from the Vercel crons (14·17·20·21·00 UTC). Crawl + digest still paused (Phase 0).
-   Note the `/projects` TTFB. In the operator shell on the Mini, **before any `.env.local` change**:
+0. **Window:** outside the Vercel crons (14·17·20·21·00 UTC). Even with crawling paused those runs
+   write: the 2026-11-01 17:00 UTC run changed `SupportProject.status` on 24 rows. The fence (step 2)
+   and the checksum gate (step 8) cover anything that still slips through. Crawl + digest still
+   paused (Phase 0). Note the `/projects` TTFB. In the operator shell on the Mini (bash or zsh),
+   **before any `.env.local` change**:
    ```bash
    cd /Volumes/포터블/Production/FlowMate && set -a && source .env.local && set +a
-   umask 077; printf 'SUPABASE_SOURCE_URL=%q\n' "$DIRECT_URL" > ~/.flowmate-cutover.env   # %q: safe to `source` (& # spaces); never echoed
+   umask 077; cp -p .env.local ~/.flowmate-cutover.env.local && chmod 600 ~/.flowmate-cutover.env.local   # rollback restores it
+   printf 'SUPABASE_SOURCE_URL=%q\n' "$DIRECT_URL" > ~/.flowmate-cutover.env   # %q: safe to `source` (& # spaces); never echoed
    set -a && source ~/.flowmate-cutover.env && set +a
    eval "$(SRC=$SUPABASE_SOURCE_URL node -e 'const u=new URL(process.env.SRC);const q=s=>"\x27"+String(s).replace(/\x27/g,"\x27\\\x27\x27")+"\x27";console.log(`export PGHOST=${q(u.hostname)} PGPORT=${q(u.port||5432)} PGUSER=${q(decodeURIComponent(u.username))} PGPASSWORD=${q(decodeURIComponent(u.password))} PGDATABASE=${q(u.pathname.slice(1))} PGSSLMODE=require`)')"
    SB() { docker run --rm -i -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD -e PGDATABASE -e PGSSLMODE postgres:17 "$@"; }   # Supabase client
    ```
    `scripts/db/compare-row-counts.ts` exits 2 if source and target are the same database — checked by
-   query (`pg_control_system().system_identifier` + the database oid), so OCI via 6432, via the tunnel
-   and via `flowmate-db:5432` are all recognised as one db and a repointed env cannot produce a fake
+   query (`pg_control_system().system_identifier` + the database oid; if the two sides can only be
+   identified by different methods it also exits 2), so OCI via 6432, via the tunnel and via
+   `flowmate-db:5432` are all recognised as one db and a repointed env cannot produce a fake
    "0 mismatches".
+
+   **0b. Deploy exactly this branch's scripts to OCI and verify them:**
+   ```bash
+   rsync -a --exclude mini/ --exclude tests/ --exclude .DS_Store deploy/oci/db/ oci:flowmate-db/
+   (cd deploy/oci/db && find . -type f ! -path './mini/*' ! -path './tests/*' ! -name .DS_Store -print0 | xargs -0 shasum -a 256) |
+     ssh oci 'cd ~/flowmate-db && sha256sum -c --quiet' && echo "OCI scripts == branch"
+   ssh oci ~/flowmate-db/install.sh          # idempotent; must end with "install ok"
+   ```
 1. **Supabase pre-check:** no running/pending jobs; mark the 10-30 hung crawl jobs failed now (a
    write — confirm first; after step 2 writes fail). Also list which roles hold sessions — every app
    role must be covered by the fence (expected: only `postgres` via the pooler):
-   ```sql
+   ```bash
+   SB psql -X -v ON_ERROR_STOP=1 <<'SQL'
    SELECT 'CrawlJob', status, count(*) FROM "CrawlJob" WHERE status IN ('running','pending') GROUP BY 2
    UNION ALL SELECT 'pipeline_jobs', status, count(*) FROM pipeline_jobs WHERE status IN ('running','pending') GROUP BY 2;
    SELECT usename, count(*) FROM pg_stat_activity WHERE backend_type = 'client backend' GROUP BY 1;
+   SQL
    ```
 2. **Write fence on Supabase.** Run it in an explicit `BEGIN READ WRITE` transaction so the admin
    session can never get stuck read-only, then end the existing sessions (they keep their old default):
-   ```sql
+   ```bash
+   SB psql -X -v ON_ERROR_STOP=1 <<'SQL'
    BEGIN READ WRITE;
    ALTER ROLE postgres IN DATABASE postgres SET default_transaction_read_only = on;
    COMMIT;
    SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity
    WHERE usename = 'postgres' AND datname = 'postgres' AND pid <> pg_backend_pid() AND backend_type = 'client backend';
+   SQL
    ```
-   Check from a **new** session (the default applies at session start):
-   ```sql
+   Check from a **new** session (the default applies at session start; no ON_ERROR_STOP, the
+   UPDATE is expected to fail):
+   ```bash
+   SB psql -X <<'SQL'
    SHOW default_transaction_read_only;                              -- on
    UPDATE "CrawlSource" SET "updatedAt" = "updatedAt" WHERE false;  -- ERROR: cannot execute UPDATE in a read-only transaction
    SELECT count(*) FROM "SupportProject";                           -- reads still work
+   SQL
    ```
    **The fence is a soft convention, not enforcement:** any session can still write with
    `BEGIN READ WRITE` (verified on a throwaway pg17). It holds for this app because Prisma never
@@ -310,8 +330,8 @@ never "Supabase vs OCI" after the switch (legitimate logins make OCI diverge) an
    ```bash
    rsync -t --chmod=F600 "$M" "$M.sha256" "$M.counts.tsv" "$M.latest.tsv" "$M.checksums.tsv" oci:backup/flowmate-migrate/
    B=$(basename "$M")
-   ssh oci "~/flowmate-db/restore.sh --manifest-exclude document_embeddings ~/backup/flowmate-migrate/$B"          # stage + verify, prints the token
-   ssh oci "FLOWMATE_CONFIRM_SWAP=$B ~/flowmate-db/restore.sh --manifest-exclude document_embeddings ~/backup/flowmate-migrate/$B"
+   ssh oci "~/flowmate-db/restore.sh --require-checksums --manifest-exclude document_embeddings ~/backup/flowmate-migrate/$B"          # stage + verify, prints the token
+   ssh oci "FLOWMATE_CONFIRM_SWAP=$B ~/flowmate-db/restore.sh --require-checksums --manifest-exclude document_embeddings ~/backup/flowmate-migrate/$B"
    ```
 5. **Extra pre-switch checks** (Supabase is fenced, so it is still at the dump state). Tunnel and
    admin URL, the password read over SSH into the variable, never printed:
@@ -322,7 +342,12 @@ never "Supabase vs OCI" after the switch (legitimate logins make OCI diverge) an
    DATABASE_URL=$OCI_OWNER_URL DIRECT_URL=$OCI_OWNER_URL npx prisma migrate diff \
      --from-schema-datasource prisma/schema.prisma --to-schema-datamodel prisma/schema.prisma --exit-code                       # "No difference detected."
    ssh oci "docker exec -i -u postgres flowmate-db psql -X -q -At -F '$TAB' -d flowmate -f -" < deploy/oci/db/latest-writes.sql | diff "$M.latest.tsv" -
-   # collation: sha256 of `SELECT id FROM "SupportProject" ORDER BY name, id` equal on both sides; sequences: 0 on both
+   # collation: identical ordering on both sides
+   C='SELECT id FROM "SupportProject" ORDER BY name, id'
+   diff <(SB psql -X -At -c "$C" | shasum -a 256) <(printf '%s' "$C" | ssh oci 'docker exec -i -u postgres flowmate-db psql -X -At -d flowmate' | shasum -a 256)
+   # sequences: none on either side (nothing to sync)
+   SB psql -X -At -c "SELECT count(*) FROM pg_sequences WHERE schemaname = 'public'"                                  # 0
+   ssh oci "docker exec -u postgres flowmate-db psql -X -At -d flowmate -c \"SELECT count(*) FROM pg_sequences WHERE schemaname = 'public'\""   # 0
    ```
 6. **Switch the OCI workers first** (idle while crawl/digest are paused) with `switch-workers.sh`
    (independent of the `~/flowmate` git checkout, which has local changes). `~/flowmate/.env.production`
@@ -332,17 +357,22 @@ never "Supabase vs OCI" after the switch (legitimate logins make OCI diverge) an
    each worker from that file + keys only the running container has (`PORT`, `NODE_OPTIONS`), with
    the running image, ports, restart policy, memory etc., plus `--network flowmate --cap-drop
    NET_RAW`. Before stopping anything it logs in as `flowmate_app` from a throwaway container on
-   network `flowmate`, and `docker create`s each new container and diffs its Config/HostConfig against
-   the running one (only name, network, NET_RAW and env may differ). Progress is kept in
-   `~/flowmate-db/workers/switch.state`; if the run is interrupted (lost SSH, Ctrl-C), `--apply`
-   resumes and `--rollback` undoes. Run it inside `tmux`/`nohup` anyway. Old containers stay
-   stopped as `<name>-pre-oci-<ts>`. Later redeploys (`deploy.sh start`/`restart`, CLAUDE.md §9.5)
-   read the edited `.env.production`; `deploy.sh` refuses when its `DATABASE_URL` host is not
-   `flowmate-db` unless `FLOWMATE_ALLOW_NON_OCI_DB=1`.
+   network `flowmate`, refuses containers with mounts, and `docker create`s each new container: its
+   Config/HostConfig must equal the running one (only name, network, NET_RAW and env may differ) and
+   its env must hold exactly one `DATABASE_URL` and one `DIRECT_URL`, both on `flowmate-db`. Progress
+   is kept in `~/flowmate-db/workers/switch.state`; an interrupted run (lost SSH, Ctrl-C) is resumed
+   by `--apply` (only while the recorded direction is still "switch") or undone by `--rollback`. Run
+   it inside `tmux` anyway. Old containers stay stopped as `<name>-pre-oci-<ts>`. Later redeploys
+   (`deploy.sh start`/`restart`, CLAUDE.md §9.5) read the edited `.env.production`; `deploy.sh`
+   refuses when its `DATABASE_URL` host is not `flowmate-db` unless `FLOWMATE_ALLOW_NON_OCI_DB=1`.
    ```bash
-   ssh oci ~/flowmate-db/switch-workers.sh            # dry run: preflight, candidates diffed, nothing changed
+   ssh oci ~/flowmate-db/switch-workers.sh            # dry run: preflight, candidates checked and removed, nothing changed
    ssh oci ~/flowmate-db/switch-workers.sh --apply
    ```
+   `--rollback` is valid **only until `switch-workers.sh --done` or the first `deploy.sh restart`,
+   whichever comes first** (it refuses, without touching anything, if a container was replaced or an
+   original removed, and prints the manual path). After step 9 succeeds: `ssh oci
+   ~/flowmate-db/switch-workers.sh --done`.
    **Verify real DB connectivity** (`/health` only reports memory). Prints `db ok` / `db FAIL <code>`, never the URL:
    ```bash
    for c in flowmate-crawler flowmate-embedding; do
@@ -379,21 +409,25 @@ never "Supabase vs OCI" after the switch (legitimate logins make OCI diverge) an
 2. Revert the env: Vercel Production (then Preview) back to the Supabase `DATABASE_URL`/`DIRECT_URL`
    and redeploy; workers: `ssh oci ~/flowmate-db/switch-workers.sh --rollback` (also restores
    `~/flowmate/.env.production` from `.env.production.pre-cutover-<ts>`, sha256-checked; afterwards
-   `deploy.sh` needs `FLOWMATE_ALLOW_NON_OCI_DB=1`, since the file points at Supabase again); the
-   Mini `.env.local` back to the Supabase values (they are in `~/.flowmate-cutover.env` as
-   `SUPABASE_SOURCE_URL`; `DATABASE_URL` from your pre-cutover copy of `.env.local`).
+   `deploy.sh` needs `FLOWMATE_ALLOW_NON_OCI_DB=1`, since the file points at Supabase again). If
+   `--rollback` refuses (after `--done` or a `deploy.sh restart`), follow the manual path it prints:
+   `cp -p ~/flowmate/.env.production.pre-cutover-<ts> ~/flowmate/.env.production`, then
+   `FLOWMATE_ALLOW_NON_OCI_DB=1 CRAWLER_IMAGE=… EMBEDDING_IMAGE=… PARSER_IMAGE=… ~/flowmate/deploy/oci/deploy.sh restart`.
+   Mini: `cp -p ~/.flowmate-cutover.env.local /Volumes/포터블/Production/FlowMate/.env.local`.
 3. Lift the fence on Supabase — only now, so nothing writes to both sides. A new session is
    read-only, so the `RESET` must run in an explicit read-write transaction (a bare `ALTER ROLE ...
    RESET` fails with "cannot execute ALTER ROLE in a read-only transaction"); then end the pooled
    sessions so they reconnect writable:
-   ```sql
+   ```bash
+   SB psql -X -v ON_ERROR_STOP=1 <<'SQL'
    BEGIN READ WRITE;
    ALTER ROLE postgres IN DATABASE postgres RESET default_transaction_read_only;
    COMMIT;
    SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity
    WHERE usename = 'postgres' AND datname = 'postgres' AND pid <> pg_backend_pid() AND backend_type = 'client backend';
+   SQL
+   SB psql -X -At -c 'SHOW default_transaction_read_only'     # new session: off
    ```
-   Check from a new session: `SHOW default_transaction_read_only` → `off`.
 
 Keep the observation window short: every hour on OCI is an hour of writes to reconcile on rollback.
 
@@ -402,15 +436,14 @@ Keep the observation window short: every hour on OCI is an hour of writes to rec
 | Item | Where | Notes |
 |---|---|---|
 | Staging/previous databases | `flowmate_restore_*`, `flowmate_prev_*` in flowmate-db | listed with sizes by every `restore.sh` run; `DROP DATABASE <name>` once the live db is verified |
-| Pre-switch worker containers | `flowmate-*-pre-oci-<ts>` (stopped, restart=no) | `docker rm <name>` once the switched workers are fine; also `*-oci-rolledback-*` after a rollback |
-| Worker env copies | `/home/ubuntu/flowmate-db/workers/*.env` (600) | in use by the switched workers; keep |
+| Pre-switch worker containers | `flowmate-*-pre-oci-<ts>` (stopped, restart=no) | only AFTER `switch-workers.sh --done` (they are what `--rollback` restores): `docker rm <name>`; also `*-oci-rolledback-*` after a rollback |
 | First (bookworm) rehearsal cluster | `/home/ubuntu/flowmate-db/data.bookworm-20261102` (uid 999, 700, ~326MB) | PII; `sudo rm -rf` after approval |
 | Leaked verify-restore volumes | `69911ab8…`, `8808177c…` (from runs before the `rm -v` fix) | PII; `docker volume rm <id>` after approval (`04cf968a…` from 2026-09-29 is not ours) |
 | Rehearsal migrate dump | `~/backup/flowmate-migrate/flowmate-public-migrate-20261101-2150.dump*` | PII |
 | Supabase dumps on the portable drive | `/Volumes/포터블/Backups/FlowMate/flowmate-public-*-20261101-2150.dump` + `SHA256SUMS-20261101-2150.txt` | keep until Phase 4 decides on Supabase |
 | `~/.flowmate-cutover.env` on the Mini | holds the Supabase URL (600) | delete after the observation window |
 | `.env.production.pre-cutover-<ts>` on OCI | `~/flowmate/` (600, Supabase credentials) | keep until rollback is no longer an option |
-| `switch.state*` | `~/flowmate-db/workers/` | `.failed-*` / `.rolledback-*` are history only |
+| `switch.state*` | `~/flowmate-db/workers/` | `.done-*` / `.failed-*` / `.rolledback-*` are history only (no env copies are kept there) |
 
 ## Ops quick reference
 

@@ -451,7 +451,7 @@ sudo docker build -f deploy/oci/embedding/Dockerfile -t flowmate-embedding .
 sudo docker run -d --name flowmate-crawler --network flowmate --cap-drop NET_RAW --env-file .env.production -p 3001:3001 --restart unless-stopped flowmate-crawler
 sudo docker run -d --name flowmate-embedding --network flowmate --cap-drop NET_RAW --env-file .env.production -p 3002:3002 --restart unless-stopped flowmate-embedding
 ```
-- 워커 env의 기준은 `~/flowmate/.env.production` 하나다. DB 전환 때 `deploy/oci/db/switch-workers.sh`가 이 파일의 `DATABASE_URL`/`DIRECT_URL`을 `flowmate-db`로 바꾼다(백업 `.env.production.pre-cutover-<ts>`). `deploy.sh start`/`restart`는 이 값이 `flowmate-db`가 아니면 거부한다(롤백 뒤에는 `FLOWMATE_ALLOW_NON_OCI_DB=1`).
+- 워커 env의 기준은 `~/flowmate/.env.production` 하나다. DB 전환 때 `deploy/oci/db/switch-workers.sh`가 이 파일의 `DATABASE_URL`/`DIRECT_URL`을 `flowmate-db`로 바꾼다(백업 `.env.production.pre-cutover-<ts>`). `deploy.sh start`/`restart`는 이 값이 `flowmate-db`가 아니면 거부하고(롤백 뒤에는 `FLOWMATE_ALLOW_NON_OCI_DB=1`), 새 컨테이너 3개를 먼저 `docker create`한 뒤에야 기존 것을 멈춘다. `switch-workers.sh --rollback`은 `--done` 또는 첫 `deploy.sh restart` 전까지만 쓸 수 있다.
 - `--network flowmate`는 빠뜨리면 안 된다. DB 전환 뒤 워커는 `flowmate-db:5432`로 붙으므로, 빠지면 재배포 직후 DB 연결이 조용히 끊긴다. `--cap-drop NET_RAW`는 워커가 그 브리지에서 다른 주소를 흉내 내지 못하게 막는다.
 
 **Vercel 환경변수**:
