@@ -12,6 +12,7 @@ import {
   mergeRowCounts,
   resolvesToSameTarget,
   sameDatabaseTarget,
+  sameIdentity,
   parseCliArgs,
   parseRowCountRows,
   sanitizeErrorMessage,
@@ -223,7 +224,7 @@ describe("compare-row-counts same-target guard", () => {
           SUPABASE_SOURCE_URL: "postgresql://flowmate_app:s3cret-a@db.jerome87.com:6432/flowmate?sslmode=require",
           DIRECT_URL: "postgresql://flowmate_owner:s3cret-b@db.jerome87.com:6432/flowmate",
         },
-        async () => [],
+        { lookup: async () => [] },
       );
       expect(code).toBe(2);
     } finally {
@@ -233,5 +234,70 @@ describe("compare-row-counts same-target guard", () => {
     expect(text).toContain("same host:port/database");
     expect(text).not.toContain("s3cret");
     expect(text).not.toContain("jerome87");
+  });
+});
+
+describe("compare-row-counts identity guard (by query, not URL)", () => {
+  const PGBOUNCER = "postgresql://flowmate_app:s3cret-app@db.jerome87.com:6432/flowmate?sslmode=require&sslaccept=strict&pgbouncer=true";
+  const TUNNEL = "postgresql://flowmate_owner:s3cret-owner@127.0.0.1:5433/flowmate?sslmode=disable";
+  const env = { OCI_APP_URL: PGBOUNCER, OCI_OWNER_URL: TUNNEL };
+  const argv = ["--source-env", "OCI_APP_URL", "--target-env", "OCI_OWNER_URL"];
+  const quiet = () => {
+    const messages: string[] = [];
+    const spies = [
+      jest.spyOn(console, "error").mockImplementation((...a: unknown[]) => void messages.push(a.join(" "))),
+      jest.spyOn(console, "log").mockImplementation((...a: unknown[]) => void messages.push(a.join(" "))),
+    ];
+    return { messages, restore: () => spies.forEach((s) => s.mockRestore()) };
+  };
+
+  it("pgbouncer URL vs tunnel URL of the same database exits 2 (URLs differ, identity is equal)", async () => {
+    expect(sameDatabaseTarget(PGBOUNCER, TUNNEL)).toBe(false);
+    const readCounts = jest.fn(async () => counts({ a: 1 }));
+    const out = quiet();
+    let code: number;
+    try {
+      code = await main(argv, env, {
+        lookup: async () => [],
+        readIdentity: async () => ({ systemIdentifier: "7300000000000000001", databaseOid: "208205", method: "control" }),
+        readCounts,
+      });
+    } finally {
+      out.restore();
+    }
+    expect(code).toBe(2);
+    expect(readCounts).not.toHaveBeenCalled();
+    expect(out.messages.join("\n")).toContain("are the same database");
+    expect(out.messages.join("\n")).not.toContain("s3cret");
+  });
+
+  it("different system identifiers (e.g. Supabase vs OCI) proceed to the comparison", async () => {
+    const readCounts = jest.fn(async () => counts({ a: 1 }));
+    const out = quiet();
+    let code: number;
+    try {
+      code = await main(argv, env, {
+        lookup: async () => [],
+        readIdentity: async (url) => ({
+          systemIdentifier: url === PGBOUNCER ? "111" : "222",
+          databaseOid: "5",
+          method: "control",
+        }),
+        readCounts,
+      });
+    } finally {
+      out.restore();
+    }
+    expect(code).toBe(0);
+    expect(readCounts).toHaveBeenCalledTimes(2);
+  });
+
+  it("same cluster but different database oid is not the same database", () => {
+    expect(
+      sameIdentity(
+        { systemIdentifier: "1", databaseOid: "16384", method: "control" },
+        { systemIdentifier: "1", databaseOid: "16385", method: "control" },
+      ),
+    ).toBe(false);
   });
 });

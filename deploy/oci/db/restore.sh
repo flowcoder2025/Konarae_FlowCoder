@@ -13,7 +13,8 @@
 # 2. Stage into flowmate_restore_<YYYYmmdd_HHMMSS> (owner flowmate_owner, ICU en-US):
 #    CREATE EXTENSION vector (as postgres), pg_restore -n public --no-owner --no-acl
 #    --role=flowmate_owner --single-transaction --exit-on-error, roles.sql (grants and the
-#    pgbouncer auth function live inside the db), privileges-check.sql, ANALYZE.
+#    pgbouncer auth function live inside the db), privileges-check.sql, ANALYZE. If
+#    <dump>.checksums.tsv exists (cutover), every table's content checksum must match it too.
 # 3. Verify staging: > 0 tables; exact row counts == manifest, except tables listed in
 #    --manifest-exclude, which must exist with 0 rows (e.g. document_embeddings, whose data is
 #    deliberately not migrated); when the live db is non-empty, every live table must exist in
@@ -158,7 +159,7 @@ tables=$(grep -c . <<<"$counts" || true)
 [ "$tables" -gt 0 ] || die "staging $staging has no tables in public"
 
 is_excluded() { local t; for t in "${excluded[@]}"; do [ "$t" = "$1" ] && return 0; done; return 1; }
-filter_excluded() { local name n; while IFS=$'\t' read -r name n; do [ -n "$name" ] && ! is_excluded "$name" && printf '%s\t%s\n' "$name" "$n"; done; return 0; }
+filter_excluded() { local name rest; while IFS=$'\t' read -r name rest; do [ -n "$name" ] && ! is_excluded "$name" && printf '%s\t%s\n' "$name" "$rest"; done; return 0; }
 if ! diff_out=$(diff <(filter_excluded <"$manifest") <(filter_excluded <<<"$counts")); then
   printf '%s\n' "$diff_out" | head -n 40 >&2
   die "row counts in $staging differ from $(basename -- "$manifest") (< manifest, > staging)"
@@ -168,6 +169,18 @@ for t in "${excluded[@]}"; do
   [ "$n" = 0 ] || die "excluded table $t must exist in $staging with 0 rows (found: ${n:-missing})"
 done
 log "row counts match the manifest ($tables tables${exclude_csv:+, excluded: $exclude_csv})"
+
+# Content gate: when <dump>.checksums.tsv (table-checksums.sql on the SOURCE at dump time) exists,
+# every non-excluded table's content hash must match too (catches what counts cannot).
+if [ -f "$dump.checksums.tsv" ]; then
+  sums=$(docker exec -i -u postgres "$DB_CONTAINER" psql -X -q -At -F $'\t' -v ON_ERROR_STOP=1 -d "$staging" -f - \
+    <"$FLOWMATE_SQL_DIR/table-checksums.sql")
+  if ! diff_out=$(diff <(filter_excluded <"$dump.checksums.tsv") <(filter_excluded <<<"$sums")); then
+    printf '%s\n' "$diff_out" | cut -f1 | sed -nE 's/^[<>] /  /p' | sort -u >&2
+    die "table content checksums in $staging differ from $(basename -- "$dump").checksums.tsv (tables above)"
+  fi
+  log "table content checksums match ($(grep -c . <<<"$sums") tables${exclude_csv:+, excluded: $exclude_csv})"
+fi
 
 live_exists=$(db_psql -d postgres -At -c "/* live_exists */ SELECT count(*) FROM pg_database WHERE datname = '$LIVE_DB'")
 live_rels=0
@@ -206,14 +219,17 @@ if [ "$live_exists" = 1 ] && [ "$live_rels" != 0 ]; then
 fi
 
 fence_db() { # DB TAG: block new connections and terminate existing sessions
+  # On failure the db gets its connections back before dying (live: also via on_exit).
   local db=$1 tag=$2 left=""
   db_psql -d postgres -c "ALTER DATABASE $db WITH ALLOW_CONNECTIONS false"
-  for _ in $(seq 1 30); do
+  for _ in $(seq 1 "${FLOWMATE_FENCE_WAIT_SECONDS:-30}"); do
     left=$(db_psql -d postgres -At -c "/* $tag */ SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity WHERE datname = '$db' AND pid <> pg_backend_pid()")
     [ "$left" = 0 ] && return 0
     sleep 1
   done
-  die "sessions on $db did not terminate"
+  db_psql -d postgres -c "ALTER DATABASE $db WITH ALLOW_CONNECTIONS true" >/dev/null 2>&1 ||
+    log "ERROR: could not re-enable connections to $db (fix: ALTER DATABASE $db WITH ALLOW_CONNECTIONS true)"
+  die "sessions on $db did not terminate within ${FLOWMATE_FENCE_WAIT_SECONDS:-30} s; connections to $db re-enabled, nothing swapped"
 }
 
 log "swapping: $LIVE_DB -> $prev, $staging -> $LIVE_DB"

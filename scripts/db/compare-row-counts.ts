@@ -8,8 +8,12 @@
  * - Connection URLs are read from the NAMED environment variables and are never printed;
  *   connection errors are reported as a sanitized one-line message.
  * - Exit codes: 0 all equal, 1 at least one mismatch, 2 usage or connection/query error, or
- *   source and target resolving to the same host:port/database (a database compared with
- *   itself always "matches"; e.g. after .env.local was repointed to OCI).
+ *   source and target being the SAME database (a database compared with itself always
+ *   "matches"; e.g. after .env.local was repointed to OCI). Identity is established by query:
+ *   pg_control_system().system_identifier + the oid of current_database() on both connections
+ *   (so db.jerome87.com:6432, 127.0.0.1:5433 and flowmate-db:5432 are recognised as one db, and
+ *   two databases behind one shared pooler hostname are not confused). The URL comparison is
+ *   only a cheap pre-check.
  * - The SQL is shared with deploy/oci/db/row-counts.sql (also used by backup.sh and
  *   verify-restore.sh on the OCI host).
  */
@@ -264,11 +268,51 @@ export async function resolvesToSameTarget(a: string, b: string, lookup: HostLoo
   return ax.some((addr) => ay.includes(addr));
 }
 
+/** Who a connection really talks to. */
+export type DbIdentity = { systemIdentifier: string; databaseOid: string; method: "control" | "fallback" };
+export type IdentityReader = (url: string) => Promise<DbIdentity>;
+
+const IDENTITY_SQL =
+  "SELECT (SELECT system_identifier::text FROM pg_catalog.pg_control_system()) AS sysid, " +
+  "(SELECT oid::text FROM pg_catalog.pg_database WHERE datname = current_database()) AS dboid";
+// Fallback if pg_control_system() is not executable (it is for flowmate_app / flowmate_owner on
+// OCI and for Supabase's postgres role, checked 2026-11-02). Residual risk: two clusters started
+// in the same second, on the same server address/port and version, would look identical.
+const IDENTITY_FALLBACK_SQL =
+  "SELECT pg_catalog.pg_postmaster_start_time()::text || '|' || coalesce(host(inet_server_addr()), 'local') || ':' || " +
+  "coalesce(inet_server_port()::text, '') || '|' || version() AS sysid, " +
+  "(SELECT oid::text FROM pg_catalog.pg_database WHERE datname = current_database()) AS dboid";
+
+export async function readIdentityWithPrisma(url: string): Promise<DbIdentity> {
+  const { PrismaClient } = await import("@prisma/client");
+  const prisma = new PrismaClient({ datasourceUrl: url, errorFormat: "minimal", log: [] });
+  try {
+    try {
+      const [row] = await prisma.$queryRawUnsafe<Array<{ sysid: string; dboid: string }>>(IDENTITY_SQL);
+      return { systemIdentifier: String(row.sysid), databaseOid: String(row.dboid), method: "control" };
+    } catch {
+      const [row] = await prisma.$queryRawUnsafe<Array<{ sysid: string; dboid: string }>>(IDENTITY_FALLBACK_SQL);
+      return { systemIdentifier: String(row.sysid), databaseOid: String(row.dboid), method: "fallback" };
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
+export function sameIdentity(a: DbIdentity, b: DbIdentity): boolean {
+  return a.method === b.method && a.systemIdentifier === b.systemIdentifier && a.databaseOid === b.databaseOid;
+}
+
+export type MainDeps = { lookup: HostLookup; readIdentity: IdentityReader; readCounts: RowCountReader };
+
 export async function main(
   argv: readonly string[],
   env: NodeJS.ProcessEnv,
-  lookup: HostLookup = defaultLookup,
+  deps: Partial<MainDeps> = {},
 ): Promise<number> {
+  const lookup = deps.lookup ?? defaultLookup;
+  const readIdentity = deps.readIdentity ?? readIdentityWithPrisma;
+  const readCounts = deps.readCounts ?? readRowCountsWithPrisma;
   let opts: CliOptions;
   try {
     opts = parseCliArgs(argv, env);
@@ -288,11 +332,26 @@ export async function main(
     return 2;
   }
 
+  const secrets = [opts.sourceUrl, opts.targetUrl];
+  let ids: [DbIdentity, DbIdentity];
+  try {
+    ids = [await readIdentity(opts.sourceUrl), await readIdentity(opts.targetUrl)];
+  } catch (err) {
+    console.error(`error: could not identify the databases: ${sanitizeErrorMessage(err, secrets)}`);
+    return 2;
+  }
+  if (sameIdentity(ids[0], ids[1])) {
+    console.error(
+      `error: ${opts.sourceEnv} and ${opts.targetEnv} are the same database (same system identifier and ` +
+        "database oid); refusing to compare a database with itself",
+    );
+    return 2;
+  }
+
   let rows: RowCountRow[];
   try {
-    rows = await compareRowCounts(opts.sourceUrl, opts.targetUrl, { exclude: opts.exclude });
+    rows = await compareRowCounts(opts.sourceUrl, opts.targetUrl, { exclude: opts.exclude }, readCounts);
   } catch (err) {
-    const secrets = [opts.sourceUrl, opts.targetUrl];
     if (err instanceof RowCountReadError) {
       const name = err.side === "source" ? opts.sourceEnv : opts.targetEnv;
       console.error(`error: ${err.side} (${name}): ${sanitizeErrorMessage(err.cause, secrets)}`);

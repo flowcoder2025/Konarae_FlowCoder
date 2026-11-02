@@ -39,9 +39,11 @@ case "$args" in
   *"live_exists"*) echo "${STUB_LIVE_EXISTS:-1}" ;;
   *"live_relations"*) echo "${STUB_LIVE_NREL:-40}" ;;
   *"live_tables"*) printf '%b\n' "${STUB_LIVE_TABLES:-foo}" ;;
-  *"terminate_live"* | *"terminate_staging"*) echo 0 ;;
+  *"terminate_staging"*) [ "${STUB_STAGING_STUCK:-0}" = 1 ] && echo 1 || echo 0 ;;
+  *"terminate_live"*) echo 0 ;;
   *"-c ALTER DATABASE flowmate WITH ALLOW_CONNECTIONS true"*) [ "${STUB_REENABLE_FAIL:-0}" = 1 ] && exit 1; : ;;
-  *) if [[ $stdin == *"query_to_xml"* ]]; then [ -n "${STUB_COUNTS-foo\t5}" ] && printf '%b\n' "${STUB_COUNTS-foo\t5}"
+  *) if [[ $stdin == *"Order-independent content checksum"* ]]; then printf '%b\n' "${STUB_SUMS-foo\t5\tabc}"
+     elif [[ $stdin == *"query_to_xml"* ]]; then [ -n "${STUB_COUNTS-foo\t5}" ] && printf '%b\n' "${STUB_COUNTS-foo\t5}"
      elif [[ $stdin == *"\\getenv"* ]]; then echo "roles.sql: ok"
      elif [[ $stdin == *"Privilege self-check"* ]]; then [ "${STUB_PRIV_FAIL:-0}" = 1 ] && echo "table not owned by flowmate_owner: foo"
      elif [[ $stdin == *"RENAME TO flowmate_prev_"* ]] && [ "${STUB_RENAME_FAIL:-0}" = 1 ]; then
@@ -139,6 +141,16 @@ if run exclrows 1 "$CONFIRM" 'STUB_COUNTS=document_embeddings\t3\nfoo\t5' -- --m
 if run exclmissing 1 "$CONFIRM" 'STUB_COUNTS=foo\t5' -- --manifest-exclude document_embeddings; then
   ! touches_live exclmissing && ok "excluded table missing in staging: no swap" || bad "exclmissing swapped"; fi
 manifest 'foo\t5'
+# --- content checksums (cutover): must match when <dump>.checksums.tsv exists ---
+printf 'foo\t5\tabc\n' >"$D.checksums.tsv"
+if run sumsok 0 "$CONFIRM"; then has sumsok 'RENAME TO flowmate_prev_' && says sumsok 'content checksums match' && ok "checksums match: swap" || bad "checksums match: no swap"; fi
+if run sumsbad 1 "$CONFIRM" 'STUB_SUMS=foo\t5\tdifferent'; then
+  ! touches_live sumsbad && says sumsbad 'checksums in .* differ' && ok "checksum mismatch (same counts): no swap" || bad "checksum mismatch swapped"; fi
+rm -f "$D.checksums.tsv"
+# --- staging cannot be fenced: staging re-enabled, live untouched ---
+if run stagingstuck 1 "$CONFIRM" STUB_STAGING_STUCK=1 FLOWMATE_FENCE_WAIT_SECONDS=2; then
+  has stagingstuck 'ALTER DATABASE flowmate_restore_[0-9_]+ WITH ALLOW_CONNECTIONS true' && ! has stagingstuck 'RENAME|terminate_live|ALTER DATABASE flowmate WITH' &&
+    ok "staging fence timeout: staging re-enabled, live never fenced or renamed" || bad "staging fence failure"; fi
 if run badpriv 1 "$CONFIRM" STUB_PRIV_FAIL=1; then ! touches_live badpriv && ok "privilege check failure: no swap" || bad "privilege failure swapped"; fi
 if run badrestore 1 "$CONFIRM" STUB_RESTORE_FAIL=1; then ! touches_live badrestore && ok "pg_restore failure: no swap" || bad "restore failure swapped"; fi
 # --- failed rename: live gets its connections back ---
