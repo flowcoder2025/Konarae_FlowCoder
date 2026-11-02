@@ -292,6 +292,27 @@ describe("compare-row-counts identity guard (by query, not URL)", () => {
     expect(readCounts).toHaveBeenCalledTimes(2);
   });
 
+  it("mixed identity methods (pg_control_system on one side, fallback on the other) fail closed with exit 2", async () => {
+    const readCounts = jest.fn(async () => counts({ a: 1 }));
+    const out = quiet();
+    let code: number;
+    try {
+      code = await main(argv, env, {
+        lookup: async () => [],
+        readIdentity: async (url) =>
+          url === PGBOUNCER
+            ? { systemIdentifier: "7300000000000000001", databaseOid: "5", method: "control" }
+            : { systemIdentifier: "2026-11-01 22:17:37+00|172.21.0.2:5432|PostgreSQL 17.11", databaseOid: "5", method: "fallback" },
+        readCounts,
+      });
+    } finally {
+      out.restore();
+    }
+    expect(code).toBe(2);
+    expect(readCounts).not.toHaveBeenCalled();
+    expect(out.messages.join("\n")).toContain("control vs fallback");
+  });
+
   it("same cluster but different database oid is not the same database", () => {
     expect(
       sameIdentity(

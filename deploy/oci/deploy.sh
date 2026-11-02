@@ -2,7 +2,9 @@
 # FlowMate Worker Services - OCI Deployment
 # Usage: ./deploy.sh [build|check|start|stop|restart|status|logs]
 #
-# check/start/restart validate EVERYTHING before any container is stopped or started:
+# check/start/restart validate EVERYTHING before any container is stopped or started (start and
+# restart additionally `docker create` all three new containers first; only then are the old
+# ones stopped and removed):
 #   - docker network `flowmate` exists (workers reach Postgres as flowmate-db:5432)
 #   - $PROJECT_DIR/.env.production exists and its DATABASE_URL host is flowmate-db
 #     (the single source of truth after the DB cutover; deploy/oci/db/switch-workers.sh edits it).
@@ -33,21 +35,34 @@ log() { echo -e "${GREEN}[FlowMate]${NC} $1"; }
 warn() { echo -e "${YELLOW}[FlowMate]${NC} $1"; }
 error() { echo -e "${RED}[FlowMate]${NC} $1"; }
 
+# Host of a postgres URL on a strict parse only; anything else is reported as "unparseable"
+# (a guard message must never echo a raw value).
+db_url_host() {
+  local v=$1 re='^postgres(ql)?://[^@/[:space:]]+@([A-Za-z0-9.-]+)(:[0-9]{1,5})?/[A-Za-z0-9_.-]+([?][^[:space:]]*)?$'
+  v=${v#\"}
+  v=${v%\"}
+  if [[ $v =~ $re ]]; then printf '%s' "${BASH_REMATCH[2]}"; else printf 'unparseable'; fi
+}
+# DATABASE_URL as docker --env-file reads it (leading whitespace stripped, verbatim value).
+env_database_url_count() { sed -E 's/^[[:space:]]+//' "$ENV_FILE" | grep -c '^DATABASE_URL=' || true; }
+env_database_url() { sed -E 's/^[[:space:]]+//' "$ENV_FILE" | sed -n 's/^DATABASE_URL=//p' | tail -n 1; }
+
 # All start prerequisites; returns non-zero (with a message) before anything is touched.
 validate_start() {
-  local var ref host
+  local var ref host n
   "${DOCKER[@]}" network inspect flowmate >/dev/null 2>&1 || {
     error "docker network 'flowmate' missing: install deploy/oci/db first"
     return 1
   }
   [ -r "$ENV_FILE" ] || { error "$ENV_FILE not found or not readable"; return 1; }
-  host=$(sed -n 's/^DATABASE_URL=//p' "$ENV_FILE" | tail -n 1 | sed -E 's/^"//; s#^[a-z]+://[^@]*@([^:/?"]+).*#\1#')
-  [ -n "$host" ] || { error "$ENV_FILE has no DATABASE_URL"; return 1; }
+  n=$(env_database_url_count)
+  [ "$n" = 1 ] || { error "$ENV_FILE must define DATABASE_URL exactly once (found $n)"; return 1; }
+  host=$(db_url_host "$(env_database_url)")
   if [ "$host" != flowmate-db ]; then
     if [ "${FLOWMATE_ALLOW_NON_OCI_DB:-0}" = 1 ]; then
-      warn "DATABASE_URL host is '$host', not flowmate-db (allowed by FLOWMATE_ALLOW_NON_OCI_DB=1)"
+      warn "DATABASE_URL host is $host, not flowmate-db (allowed by FLOWMATE_ALLOW_NON_OCI_DB=1)"
     else
-      error "DATABASE_URL in $ENV_FILE points to '$host', not flowmate-db. After the DB cutover the workers must use the OCI DB; if this is intended (rollback), set FLOWMATE_ALLOW_NON_OCI_DB=1"
+      error "DATABASE_URL in $ENV_FILE: host is $host, not flowmate-db. After the DB cutover the workers must use the OCI DB; if this is intended (rollback), set FLOWMATE_ALLOW_NON_OCI_DB=1"
       return 1
     fi
   fi
@@ -60,6 +75,49 @@ validate_start() {
     "${DOCKER[@]}" image inspect "$ref" >/dev/null 2>&1 || { error "$var=$ref: image not found"; return 1; }
   done
   log "start prerequisites ok (network flowmate, DB host $host, images $CRAWLER_IMAGE $EMBEDDING_IMAGE $PARSER_IMAGE)"
+}
+
+# Create all three new containers under temporary names first (docker parses the env file,
+# images and every option here). Only if all three succeed is anything stopped.
+# --restart unless-stopped matches the running crawler and CLAUDE.md 9.5. Memory limits are
+# unchanged here (crawler 2g, embedding 1g, parser default); aligning them is Phase 1B.7.
+CANDIDATES=()
+create_candidates() {
+  local ts c
+  ts=$(date -u +%Y%m%dT%H%M%SZ)
+  CANDIDATES=()
+  c="flowmate-crawler-next-$ts"
+  "${DOCKER[@]}" create --name "$c" --restart unless-stopped --network flowmate --cap-drop NET_RAW \
+    -p 3001:3001 --memory 2g --memory-swap 2g --env-file "$ENV_FILE" \
+    -e PORT=3001 -e NODE_OPTIONS="--max-old-space-size=1024 --expose-gc" "$CRAWLER_IMAGE" >/dev/null || { drop_candidates; return 1; }
+  CANDIDATES+=("flowmate-crawler=$c")
+  c="flowmate-embedding-next-$ts"
+  "${DOCKER[@]}" create --name "$c" --restart unless-stopped --network flowmate --cap-drop NET_RAW \
+    -p 3002:3002 --memory 1g --memory-swap 1g --env-file "$ENV_FILE" \
+    -e PORT=3002 -e NODE_OPTIONS="--max-old-space-size=768 --expose-gc" "$EMBEDDING_IMAGE" >/dev/null || { drop_candidates; return 1; }
+  CANDIDATES+=("flowmate-embedding=$c")
+  c="flowmate-parser-next-$ts"
+  "${DOCKER[@]}" create --name "$c" --restart unless-stopped --network flowmate --cap-drop NET_RAW \
+    -p 8000:8000 --env-file "$ENV_FILE" -e PORT=8000 "$PARSER_IMAGE" >/dev/null || { drop_candidates; return 1; }
+  CANDIDATES+=("flowmate-parser=$c")
+}
+drop_candidates() {
+  local pair
+  for pair in ${CANDIDATES[@]+"${CANDIDATES[@]}"}; do "${DOCKER[@]}" rm -f "${pair#*=}" >/dev/null 2>&1 || true; done
+  CANDIDATES=()
+  error "creating the new containers failed; nothing was stopped (new containers removed)"
+}
+promote_candidates() { # stop + remove the old container, give the candidate its name, start it
+  local pair name cand
+  for pair in "${CANDIDATES[@]}"; do
+    name=${pair%%=*}
+    cand=${pair#*=}
+    "${DOCKER[@]}" stop "$name" >/dev/null 2>&1 || true
+    "${DOCKER[@]}" rm "$name" >/dev/null 2>&1 || true
+    "${DOCKER[@]}" rename "$cand" "$name"
+    "${DOCKER[@]}" start "$name" >/dev/null
+    log "started $name"
+  done
 }
 
 case "${1:-help}" in
@@ -92,43 +150,14 @@ case "${1:-help}" in
     # Workers reach Postgres as flowmate-db:5432 on the `flowmate` network (deploy/oci/db).
     # NET_RAW is dropped so a compromised worker cannot spoof traffic on that bridge.
     validate_start || exit 1
-
-    "${DOCKER[@]}" run -d \
-      --restart always \
-      --name flowmate-crawler \
-      --network flowmate \
-      --cap-drop NET_RAW \
-      -p 3001:3001 \
-      --memory 2g \
-      --memory-swap 2g \
-      --env-file "$ENV_FILE" \
-      -e PORT=3001 \
-      -e NODE_OPTIONS="--max-old-space-size=1024 --expose-gc" \
-      "$CRAWLER_IMAGE"
-
-    "${DOCKER[@]}" run -d \
-      --restart always \
-      --name flowmate-embedding \
-      --network flowmate \
-      --cap-drop NET_RAW \
-      -p 3002:3002 \
-      --memory 1g \
-      --memory-swap 1g \
-      --env-file "$ENV_FILE" \
-      -e PORT=3002 \
-      -e NODE_OPTIONS="--max-old-space-size=768 --expose-gc" \
-      "$EMBEDDING_IMAGE"
-
-    "${DOCKER[@]}" run -d \
-      --restart always \
-      --name flowmate-parser \
-      --network flowmate \
-      --cap-drop NET_RAW \
-      -p 8000:8000 \
-      --env-file "$ENV_FILE" \
-      -e PORT=8000 \
-      "$PARSER_IMAGE"
-
+    for name in flowmate-crawler flowmate-embedding flowmate-parser; do
+      if "${DOCKER[@]}" container inspect "$name" >/dev/null 2>&1; then
+        error "$name already exists: use '$0 restart'"
+        exit 1
+      fi
+    done
+    create_candidates || exit 1
+    promote_candidates
     log "All services started!"
     ;;
 
@@ -140,11 +169,12 @@ case "${1:-help}" in
     ;;
 
   restart)
-    # Validate before stopping anything: a failed start must not leave the workers deleted.
+    # Validate and create all new containers BEFORE stopping anything: a bad env file, image or
+    # option must not leave the workers deleted.
     validate_start || { error "restart aborted before stopping anything"; exit 1; }
-    "$0" stop
-    sleep "${FLOWMATE_RESTART_PAUSE:-2}"
-    "$0" start
+    create_candidates || { error "restart aborted before stopping anything"; exit 1; }
+    promote_candidates
+    log "All services restarted!"
     ;;
 
   status)

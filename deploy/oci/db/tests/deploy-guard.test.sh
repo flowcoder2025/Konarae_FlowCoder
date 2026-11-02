@@ -1,7 +1,10 @@
 #!/bin/bash
 # deploy/oci/deploy.sh guards, with a stub docker (no Docker needed; bash 3.2+):
-# start/restart/check validate everything (network, .env.production DB host = flowmate-db,
-# explicit image refs) BEFORE anything is stopped or started.
+#  - check/start/restart validate everything (network, exactly one DATABASE_URL whose host is
+#    flowmate-db, explicit image refs) before anything is created, stopped or started;
+#  - restart `docker create`s all three new containers first and only then stops/removes the
+#    old ones; a failed create stops nothing;
+#  - guard messages never echo any part of the URL except a strictly parsed host.
 #
 #   bash deploy/oci/db/tests/deploy-guard.test.sh
 # shellcheck disable=SC2015  # `check && ok ... || bad ...`: ok() always succeeds
@@ -13,9 +16,11 @@ mkdir -p "$work/proj"
 cat >"$work/docker" <<'STUB'
 #!/bin/bash
 echo "docker $*" >>"$STUB_LOG"
-case "$1 $2" in
-  "network inspect") exit "${STUB_NET_MISSING:-0}" ;;
-  "image inspect") case "$3" in *missing*) exit 1 ;; esac ;;
+case "$1" in
+  network) exit "${STUB_NET_MISSING:-0}" ;;
+  image) case "$3" in *missing*) exit 1 ;; esac ;;
+  container) exit "${STUB_EXISTS:-1}" ;;      # `container inspect NAME`: 1 = does not exist
+  create) case "$*" in *"${STUB_CREATE_FAIL:-@none@}"*) echo "invalid env file" >&2; exit 125 ;; esac; echo "id-$RANDOM" ;;
 esac
 exit 0
 STUB
@@ -24,41 +29,66 @@ pass=0
 fail=0
 ok() { echo "ok   $1"; pass=$((pass + 1)); }
 bad() { echo "FAIL $1"; fail=$((fail + 1)); }
-dbhost() { printf 'DATABASE_URL=postgresql://flowmate_app:pw@%s:5432/flowmate\nDIRECT_URL=x\nOTHER=1\n' "$1" >"$work/proj/.env.production"; }
+envf() { printf '%b' "$1" >"$work/proj/.env.production"; }
+dburl() { envf "DATABASE_URL=$1\nDIRECT_URL=x\nOTHER=1\n"; }
 run() { # NAME CMD [ENV=VAL...]
   local name=$1 cmd=$2
   shift 2
   export STUB_LOG="$work/$name.log"
   : >"$STUB_LOG"
-  env FLOWMATE_DOCKER="$work/docker" FLOWMATE_PROJECT_DIR="$work/proj" FLOWMATE_RESTART_PAUSE=0 \
+  env FLOWMATE_DOCKER="$work/docker" FLOWMATE_PROJECT_DIR="$work/proj" \
     CRAWLER_IMAGE=flowmate-crawler:pr9 EMBEDDING_IMAGE=flowmate-embedding:x PARSER_IMAGE=flowmate-parser:x "$@" \
     bash "$DEPLOY" "$cmd" >"$work/$name.out" 2>&1
 }
-touched() { grep -qE '^docker (stop|rm|run) ' "$work/$1.log"; }
+touched_live() { grep -qE '^docker (stop|rm|run|start|rename) flowmate-(crawler|embedding|parser)( |$)' "$work/$1.log"; }
+created_any() { grep -q '^docker create' "$work/$1.log"; }
 
-dbhost aws-1-ap-northeast-2.pooler.supabase.com
-run supa_check check && bad "check with Supabase host should fail" || { grep -q "not flowmate-db" "$work/supa_check.out" && ok "check: DATABASE_URL host not flowmate-db -> refused" || bad "check message"; }
-run supa_restart restart && bad "restart with Supabase host should fail" || { ! touched supa_restart && ok "restart: refused BEFORE stopping anything (Supabase host)" || bad "restart stopped workers"; }
-run supa_start start && bad "start with Supabase host should fail" || { ! touched supa_start && ok "start: refused, nothing started" || bad "start ran"; }
+# --- DB host guard + message hygiene ---
+dburl 'postgresql://postgres.abcdef:SUPERSECRETPW@aws-1-ap-northeast-2.pooler.supabase.com:6543/postgres?pgbouncer=true'
+run supa_check check && bad "check with Supabase host should fail" || {
+  grep -q 'host is aws-1-ap-northeast-2.pooler.supabase.com, not flowmate-db' "$work/supa_check.out" &&
+    ! grep -qE 'SUPERSECRETPW|abcdef|postgres\.|6543|pgbouncer=' "$work/supa_check.out" &&
+    ok "check: non-OCI host refused; message shows the parsed host only (no user/password/port/params)" || bad "check message"; }
+run supa_restart restart && bad "restart with Supabase host should fail" || { ! touched_live supa_restart && ! created_any supa_restart && ok "restart: refused before creating or stopping anything" || bad "restart touched"; }
+run supa_start start && bad "start with Supabase host should fail" || { ! touched_live supa_start && ok "start: refused, nothing started" || bad "start ran"; }
 run supa_allowed check FLOWMATE_ALLOW_NON_OCI_DB=1 && grep -q "allowed by FLOWMATE_ALLOW_NON_OCI_DB" "$work/supa_allowed.out" &&
   ok "check: FLOWMATE_ALLOW_NON_OCI_DB=1 override (rollback case)" || bad "override"
 
-dbhost flowmate-db
-run ok_check check && ok "check: flowmate-db host, network, images -> ok" || bad "check ok case"
-run noimg restart CRAWLER_IMAGE=flowmate-crawler:missing && bad "missing image should fail" || { ! touched noimg && ok "restart: missing image refused before stopping" || bad "restart stopped (image)"; }
-run unset restart CRAWLER_IMAGE= && bad "unset image should fail" || { ! touched unset && ok "restart: unset image ref refused before stopping" || bad "restart stopped (unset)"; }
-run nonet restart STUB_NET_MISSING=1 && bad "missing network should fail" || { ! touched nonet && ok "restart: missing network refused before stopping" || bad "restart stopped (network)"; }
+dburl 'postgresql://flowmate_app:SUPERSECRETPW@weird host name/flowmate'
+run unparse check && bad "unparseable URL should fail" || {
+  grep -q 'host is unparseable' "$work/unparse.out" && ! grep -qE 'SUPERSECRETPW|flowmate_app|weird|host name' "$work/unparse.out" &&
+    ok "unparseable DATABASE_URL: reported as 'unparseable', no part of the URL printed" || { cat "$work/unparse.out"; bad "unparseable message"; }; }
+
+envf 'DATABASE_URL=postgresql://flowmate_app:pw@flowmate-db:5432/flowmate\n   DATABASE_URL=postgresql://u:SUPERSECRETPW@aws.example:5432/postgres\n'
+run dup check && bad "duplicate DATABASE_URL should fail" || {
+  grep -q 'exactly once (found 2)' "$work/dup.out" && ! grep -q SUPERSECRETPW "$work/dup.out" && ok "indented duplicate DATABASE_URL: refused (docker would use the last one)" || bad "dup"; }
+
+# --- OCI host: everything else validated before stopping ---
+dburl 'postgresql://flowmate_app:SUPERSECRETPW@flowmate-db:5432/flowmate'
+run ok_check check && ! grep -q SUPERSECRETPW "$work/ok_check.out" && ok "check: flowmate-db host, network, images -> ok" || bad "check ok case"
+run noimg restart CRAWLER_IMAGE=flowmate-crawler:missing && bad "missing image should fail" || { ! touched_live noimg && ok "restart: missing image refused before stopping" || bad "restart (image)"; }
+run unset restart CRAWLER_IMAGE= && bad "unset image should fail" || { ! touched_live unset && ok "restart: unset image ref refused before stopping" || bad "restart (unset)"; }
+run nonet restart STUB_NET_MISSING=1 && bad "missing network should fail" || { ! touched_live nonet && ok "restart: missing network refused before stopping" || bad "restart (network)"; }
 mv "$work/proj/.env.production" "$work/proj/.env.saved"
-run noenv restart && bad "missing env file should fail" || { ! touched noenv && ok "restart: missing .env.production refused before stopping" || bad "restart stopped (env)"; }
+run noenv restart && bad "missing env file should fail" || { ! touched_live noenv && ok "restart: missing .env.production refused before stopping" || bad "restart (env)"; }
 mv "$work/proj/.env.saved" "$work/proj/.env.production"
 
+# --- (a) create-first: a failing create (e.g. docker rejects the env file) stops nothing ---
+run createfail restart STUB_CREATE_FAIL=flowmate-embedding-next && bad "create failure should fail" || {
+  ! touched_live createfail && grep -q '^docker rm -f flowmate-crawler-next-' "$work/createfail.log" &&
+    ok "restart: 2nd docker create fails -> nothing stopped, the 1st new container removed" || { cat "$work/createfail.log"; bad "create failure"; }; }
+
 if run good restart; then
-  s=$(grep -n '^docker stop' "$work/good.log" | head -n 1 | cut -d: -f1)
-  r=$(grep -n '^docker run' "$work/good.log" | head -n 1 | cut -d: -f1)
-  [ -n "$s" ] && [ -n "$r" ] && [ "$s" -lt "$r" ] && [ "$(grep -c '^docker run .*--network flowmate --cap-drop NET_RAW' "$work/good.log")" = 3 ] &&
-    grep -q 'flowmate-crawler:pr9$' "$work/good.log" && ! grep -q 'nginx' "$work/good.log" &&
-    ok "restart (valid): stop, then 3 runs with --network flowmate --cap-drop NET_RAW, explicit images, no nginx" || bad "restart valid case"
+  c=$(grep -n '^docker create' "$work/good.log" | tail -n 1 | cut -d: -f1)
+  s=$(grep -nE '^docker stop flowmate-(crawler|embedding|parser)$' "$work/good.log" | head -n 1 | cut -d: -f1)
+  [ "$(grep -c '^docker create' "$work/good.log")" = 3 ] && [ -n "$c" ] && [ -n "$s" ] && [ "$c" -lt "$s" ] &&
+    [ "$(grep -c '^docker create .*--restart unless-stopped --network flowmate --cap-drop NET_RAW' "$work/good.log")" = 3 ] &&
+    [ "$(grep -cE '^docker rename flowmate-(crawler|embedding|parser)-next-[0-9TZ]+ flowmate-(crawler|embedding|parser)$' "$work/good.log")" = 3 ] &&
+    grep -q 'flowmate-crawler:pr9$' "$work/good.log" && ! grep -q nginx "$work/good.log" && ! grep -q '^docker run' "$work/good.log" &&
+    ok "restart (valid): 3 creates (unless-stopped, network flowmate, NET_RAW dropped) BEFORE the first stop, then rename + start" ||
+    { cat "$work/good.log"; bad "restart valid case"; }
 else bad "restart valid case exited non-zero"; fi
+run startexists start STUB_EXISTS=0 && bad "start over existing containers should fail" || { ! touched_live startexists && ! created_any startexists && ok "start: refuses when the workers already exist (use restart)" || bad "start exists"; }
 
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

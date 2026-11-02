@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Restore a pg_dump -Fc archive as database `flowmate`, through a staging database.
 #
-#   restore.sh [--manifest-exclude t1,t2] [--allow-missing-live-tables] <dump>
+#   restore.sh [--manifest-exclude t1,t2] [--allow-missing-live-tables] [--require-checksums] <dump>
 #   FLOWMATE_CONFIRM_SWAP=<dump basename> restore.sh ... <dump>   # replace a non-empty live db
 #
 # Required next to the dump: <dump>.sha256 and <dump>.counts.tsv (row-counts.sql output of
@@ -14,7 +14,9 @@
 #    CREATE EXTENSION vector (as postgres), pg_restore -n public --no-owner --no-acl
 #    --role=flowmate_owner --single-transaction --exit-on-error, roles.sql (grants and the
 #    pgbouncer auth function live inside the db), privileges-check.sql, ANALYZE. If
-#    <dump>.checksums.tsv exists (cutover), every table's content checksum must match it too.
+#    <dump>.checksums.tsv exists, every table's content checksum must match it too;
+#    --require-checksums (used by the cutover) makes a missing checksums file an error, and a
+#    skipped content gate is always logged as a WARNING.
 # 3. Verify staging: > 0 tables; exact row counts == manifest, except tables listed in
 #    --manifest-exclude, which must exist with 0 rows (e.g. document_embeddings, whose data is
 #    deliberately not migrated); when the live db is non-empty, every live table must exist in
@@ -47,17 +49,19 @@ if [ -n "${FLOWMATE_BACKUP_CMD:-}" ]; then
 fi
 
 usage() {
-  echo "usage: [FLOWMATE_CONFIRM_SWAP=<dump basename>] $0 [--manifest-exclude t1,t2] [--allow-missing-live-tables] <dump>" >&2
+  echo "usage: [FLOWMATE_CONFIRM_SWAP=<dump basename>] $0 [--manifest-exclude t1,t2] [--allow-missing-live-tables] [--require-checksums] <dump>" >&2
   exit 2
 }
 exclude_csv=""
 allow_missing_live=0
+require_checksums=0
 dump=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --manifest-exclude) [ $# -ge 2 ] || usage; exclude_csv=$2; shift 2 ;;
     --manifest-exclude=*) exclude_csv=${1#*=}; shift ;;
     --allow-missing-live-tables) allow_missing_live=1; shift ;;
+    --require-checksums) require_checksums=1; shift ;;
     -*) usage ;;
     *) [ -z "$dump" ] || usage; dump=$1; shift ;;
   esac
@@ -109,6 +113,9 @@ while IFS= read -r line; do
   manifest_lines=$((manifest_lines + 1))
 done <"$manifest"
 [ "$manifest_lines" -gt 0 ] || die "manifest $(basename -- "$manifest") is empty"
+if [ "$require_checksums" = 1 ] && [ ! -s "$dump.checksums.tsv" ]; then
+  die "--require-checksums: missing $dump_name.checksums.tsv (table-checksums.sql of the source at dump time)"
+fi
 
 dump_kb=$(( ($(stat -c %s "$dump") + 1023) / 1024 ))
 need_kb=${FLOWMATE_RESTORE_MIN_FREE_KB:-$(( dump_kb * 10 + 1024 * 1024 ))}
@@ -180,6 +187,8 @@ if [ -f "$dump.checksums.tsv" ]; then
     die "table content checksums in $staging differ from $(basename -- "$dump").checksums.tsv (tables above)"
   fi
   log "table content checksums match ($(grep -c . <<<"$sums") tables${exclude_csv:+, excluded: $exclude_csv})"
+else
+  log "WARNING: content checksum gate SKIPPED: no $dump_name.checksums.tsv (only row counts were verified; the cutover uses --require-checksums)"
 fi
 
 live_exists=$(db_psql -d postgres -At -c "/* live_exists */ SELECT count(*) FROM pg_database WHERE datname = '$LIVE_DB'")

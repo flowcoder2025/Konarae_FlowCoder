@@ -340,6 +340,15 @@ export async function main(
     console.error(`error: could not identify the databases: ${sanitizeErrorMessage(err, secrets)}`);
     return 2;
   }
+  if (ids[0].method !== ids[1].method) {
+    // One side could not run pg_control_system(): the two identities are not comparable, so
+    // "different" cannot be proven. Fail closed rather than risk comparing a db with itself.
+    console.error(
+      `error: cannot establish the identity of ${opts.sourceEnv} and ${opts.targetEnv} the same way ` +
+        `(${ids[0].method} vs ${ids[1].method}); refusing to compare`,
+    );
+    return 2;
+  }
   if (sameIdentity(ids[0], ids[1])) {
     console.error(
       `error: ${opts.sourceEnv} and ${opts.targetEnv} are the same database (same system identifier and ` +

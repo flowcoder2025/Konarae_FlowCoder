@@ -6,19 +6,22 @@
 --
 --   psql -X -q -At -F '<TAB>' -v ON_ERROR_STOP=1 -f table-checksums.sql
 --
--- Text output is pinned for this session so both servers render values identically. Columns of
+-- Text output is pinned for this transaction so both servers render values identically. Columns of
 -- type vector are hashed as real[] (float4 output is defined by PostgreSQL, not by the pgvector
 -- version; vector_out formatting may differ between pgvector releases). Dropped columns are
 -- skipped, columns are taken in attnum order (pg_dump preserves it).
-SET TimeZone = 'UTC';
-SET DateStyle = 'ISO, MDY';
-SET IntervalStyle = 'postgres';
-SET extra_float_digits = 1;
-SET bytea_output = 'hex';
-SET lc_monetary = 'C';
-SET lc_numeric = 'C';
-SET standard_conforming_strings = on;
-SET search_path = pg_catalog;
+-- One transaction with SET LOCAL: the pinned settings hold for the SELECT even through PgBouncer
+-- transaction pooling (a plain SET could land on another server connection).
+BEGIN;
+SET LOCAL TimeZone = 'UTC';
+SET LOCAL DateStyle = 'ISO, MDY';
+SET LOCAL IntervalStyle = 'postgres';
+SET LOCAL extra_float_digits = 1;
+SET LOCAL bytea_output = 'hex';
+SET LOCAL lc_monetary = 'C';
+SET LOCAL lc_numeric = 'C';
+SET LOCAL standard_conforming_strings = on;
+SET LOCAL search_path = pg_catalog;
 SELECT
   c.relname::text AS table_name,
   (xpath('/row/n/text()', x.r))[1]::text AS row_count,
@@ -44,3 +47,4 @@ WHERE n.nspname = 'public'
   AND c.relkind IN ('r', 'p')
   AND NOT c.relispartition
 ORDER BY c.relname COLLATE "C";
+COMMIT;

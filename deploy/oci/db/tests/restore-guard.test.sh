@@ -147,6 +147,8 @@ if run sumsok 0 "$CONFIRM"; then has sumsok 'RENAME TO flowmate_prev_' && says s
 if run sumsbad 1 "$CONFIRM" 'STUB_SUMS=foo\t5\tdifferent'; then
   ! touches_live sumsbad && says sumsbad 'checksums in .* differ' && ok "checksum mismatch (same counts): no swap" || bad "checksum mismatch swapped"; fi
 rm -f "$D.checksums.tsv"
+if run sumsrequired 1 "$CONFIRM" -- --require-checksums; then ! created sumsrequired && ! touches_live sumsrequired && says sumsrequired 'missing x.dump.checksums.tsv' && ok "--require-checksums without a checksums file: nothing created" || bad "require-checksums"; fi
+if run sumsskipped 0 "$CONFIRM"; then says sumsskipped 'WARNING: content checksum gate SKIPPED' && ok "no checksums file (not required): gate skip logged as WARNING" || bad "skip warning"; fi
 # --- staging cannot be fenced: staging re-enabled, live untouched ---
 if run stagingstuck 1 "$CONFIRM" STUB_STAGING_STUCK=1 FLOWMATE_FENCE_WAIT_SECONDS=2; then
   has stagingstuck 'ALTER DATABASE flowmate_restore_[0-9_]+ WITH ALLOW_CONNECTIONS true' && ! has stagingstuck 'RENAME|terminate_live|ALTER DATABASE flowmate WITH' &&
