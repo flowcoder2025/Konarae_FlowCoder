@@ -13,6 +13,9 @@
 4. Start: `CRAWLER_IMAGE=flowmate-crawler:<tag> EMBEDDING_IMAGE=flowmate-embedding:<tag> PARSER_IMAGE=flowmate-parser:<tag> ./deploy/oci/deploy.sh start`
    (explicit refs are required; there is no implicit `:latest`. Currently running refs:
    `docker inspect -f '{{.Config.Image}}' flowmate-crawler`, etc.)
+   `start`/`restart` validate everything first (network `flowmate`, image refs, and `.env.production`'s
+   `DATABASE_URL` host must be `flowmate-db`; override for a rollback: `FLOWMATE_ALLOW_NON_OCI_DB=1`);
+   `./deploy/oci/deploy.sh check` runs only the validation. `restart` never stops a worker before it passes.
 5. Verify: `./deploy/oci/deploy.sh status`
 
 ## Services
@@ -40,7 +43,8 @@ the cutover runbook.
 Workers reach the DB as `flowmate-db:5432` on the `flowmate` network. At the cutover they are
 recreated by `deploy/oci/db/switch-workers.sh` (running image + env, DB URL swapped, `--network
 flowmate --cap-drop NET_RAW`, `--rollback` available). Later redeploys use `deploy.sh start`, which
-also runs the workers with `--network flowmate --cap-drop NET_RAW`.
+also runs the workers with `--network flowmate --cap-drop NET_RAW`. `.env.production` is the single
+source of the worker env: the cutover edits its DB URLs (backup kept), rollback restores it.
 
 ## Commands
 - `./deploy.sh build` - Build all Docker images
