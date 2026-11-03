@@ -109,8 +109,10 @@ root). Vercel never runs migrations; `DIRECT_URL` = `DATABASE_URL` is fine becau
 ```bash
 # from a checkout on the Mini (never use --delete: the target holds .env, data/, certs)
 rsync -a --exclude mini/ --exclude tests/ deploy/oci/db/ oci:flowmate-db/
-ssh oci ~/flowmate-db/install.sh
+ssh oci /home/ubuntu/flowmate-db/install.sh
 ```
+(Remote paths in `ssh` commands are written absolute or quoted: an unquoted `~` would be
+expanded on the Mini. `__tests__/scripts/runbook-lint.test.ts` enforces this.)
 
 `install.sh` (idempotent, `flock` shared with `restore.sh`): `~/healthcheck.env` must be 600 →
 dirs/perms → `.env` (generated if missing) → superuser password file → certificate (`renew-cert.sh`
@@ -189,7 +191,7 @@ the served certificate on PgBouncer 1.26.1. ACME account has no email.
 ## Restore
 
 ```bash
-ssh oci ~/flowmate-db/restore.sh [--manifest-exclude t1,t2] [--allow-missing-live-tables] <dump>
+ssh oci /home/ubuntu/flowmate-db/restore.sh [--manifest-exclude t1,t2] [--allow-missing-live-tables] [--require-checksums] <dump>
 ssh oci 'FLOWMATE_CONFIRM_SWAP=<dump basename> ~/flowmate-db/restore.sh ... <dump>'   # replace a non-empty live db
 ```
 
@@ -261,12 +263,24 @@ never "Supabase vs OCI" after the switch (legitimate logins make OCI diverge) an
    `flowmate-db:5432` are all recognised as one db and a repointed env cannot produce a fake
    "0 mismatches".
 
-   **0b. Deploy exactly this branch's scripts to OCI and verify them:**
+   **0b. Deploy exactly this branch's scripts to OCI and verify every script the runbook runs:**
+   `deploy/oci/db/*` go to `/home/ubuntu/flowmate-db/`, and the guarded `deploy/oci/deploy.sh` replaces
+   the `main` copy in the `~/flowmate` checkout (old copy backed up next to it; `git -C ~/flowmate status`
+   then shows it modified, which is expected). `switch-workers.sh` refuses to run unless that file
+   carries the `flowmate-deploy-guard: v1` marker.
    ```bash
+   TS=$(date -u +%Y%m%dT%H%M%SZ)
    rsync -a --exclude mini/ --exclude tests/ --exclude .DS_Store deploy/oci/db/ oci:flowmate-db/
-   (cd deploy/oci/db && find . -type f ! -path './mini/*' ! -path './tests/*' ! -name .DS_Store -print0 | xargs -0 shasum -a 256) |
-     ssh oci 'cd ~/flowmate-db && sha256sum -c --quiet' && echo "OCI scripts == branch"
-   ssh oci ~/flowmate-db/install.sh          # idempotent; must end with "install ok"
+   ssh oci "cp -p /home/ubuntu/flowmate/deploy/oci/deploy.sh /home/ubuntu/flowmate/deploy/oci/deploy.sh.pre-oci-$TS"
+   rsync deploy/oci/deploy.sh oci:/home/ubuntu/flowmate/deploy/oci/deploy.sh
+   { (cd deploy/oci/db && find . -type f ! -path './mini/*' ! -path './tests/*' ! -name .DS_Store -print0 | xargs -0 shasum -a 256 |
+       sed 's#  \./#  /home/ubuntu/flowmate-db/#')
+     shasum -a 256 deploy/oci/deploy.sh | sed 's#  deploy/oci/deploy.sh#  /home/ubuntu/flowmate/deploy/oci/deploy.sh#'
+   } | ssh oci 'sha256sum -c --quiet' && echo "OCI scripts (incl. deploy.sh) == branch"
+   ssh oci /home/ubuntu/flowmate-db/install.sh          # idempotent; must end with "install ok"
+   # validation only (no container is created, stopped or started); before the switch it MUST refuse,
+   # because .env.production still points at Supabase:
+   ssh oci 'R() { docker container inspect -f "{{.Config.Image}}" "$1"; }; CRAWLER_IMAGE=$(R flowmate-crawler) EMBEDDING_IMAGE=$(R flowmate-embedding) PARSER_IMAGE=$(R flowmate-parser) /home/ubuntu/flowmate/deploy/oci/deploy.sh check'
    ```
 1. **Supabase pre-check:** no running/pending jobs; mark the 10-30 hung crawl jobs failed now (a
    write — confirm first; after step 2 writes fail). Also list which roles hold sessions — every app
@@ -361,18 +375,22 @@ never "Supabase vs OCI" after the switch (legitimate logins make OCI diverge) an
    Config/HostConfig must equal the running one (only name, network, NET_RAW and env may differ) and
    its env must hold exactly one `DATABASE_URL` and one `DIRECT_URL`, both on `flowmate-db`. Progress
    is kept in `~/flowmate-db/workers/switch.state`; an interrupted run (lost SSH, Ctrl-C) is resumed
-   by `--apply` (only while the recorded direction is still "switch") or undone by `--rollback`. Run
-   it inside `tmux` anyway. Old containers stay stopped as `<name>-pre-oci-<ts>`. Later redeploys
-   (`deploy.sh start`/`restart`, CLAUDE.md §9.5) read the edited `.env.production`; `deploy.sh`
-   refuses when its `DATABASE_URL` host is not `flowmate-db` unless `FLOWMATE_ALLOW_NON_OCI_DB=1`.
+   by `--apply` (only while the recorded direction is still "switch") or undone by `--rollback`, also
+   from between its own renames. Old containers stay stopped as `<name>-pre-oci-<ts>`. Later
+   redeploys (`deploy.sh start`/`restart`, CLAUDE.md §9.5) read the edited `.env.production`;
+   `deploy.sh` refuses when its `DATABASE_URL` host is not `flowmate-db` unless
+   `FLOWMATE_ALLOW_NON_OCI_DB=1`. Run it in a tmux session on OCI, so a dropped SSH connection
+   does not interrupt it:
    ```bash
-   ssh oci ~/flowmate-db/switch-workers.sh            # dry run: preflight, candidates checked and removed, nothing changed
-   ssh oci ~/flowmate-db/switch-workers.sh --apply
+   ssh -t oci tmux new -A -s cutover
+   # inside the tmux session on OCI:
+   /home/ubuntu/flowmate-db/switch-workers.sh            # dry run: preflight, candidates checked and removed, nothing changed
+   /home/ubuntu/flowmate-db/switch-workers.sh --apply
    ```
    `--rollback` is valid **only until `switch-workers.sh --done` or the first `deploy.sh restart`,
    whichever comes first** (it refuses, without touching anything, if a container was replaced or an
-   original removed, and prints the manual path). After step 9 succeeds: `ssh oci
-   ~/flowmate-db/switch-workers.sh --done`.
+   original removed, and prints the manual path). After step 9 succeeds (in the tmux session):
+   `/home/ubuntu/flowmate-db/switch-workers.sh --done`.
    **Verify real DB connectivity** (`/health` only reports memory). Prints `db ok` / `db FAIL <code>`, never the URL:
    ```bash
    for c in flowmate-crawler flowmate-embedding; do
@@ -382,7 +400,7 @@ never "Supabase vs OCI" after the switch (legitimate logins make OCI diverge) an
    ```
    (The parser container has a SQLAlchemy module, but in the current image it fails to import —
    `Settings` has no `DEBUG` — so it holds no DB connection; check it with `/health` only.)
-   Any failure: `ssh oci ~/flowmate-db/switch-workers.sh --rollback` (restores the previous
+   Any failure: `/home/ubuntu/flowmate-db/switch-workers.sh --rollback` in the tmux session (restores the previous
    containers with their original env and network, and `.env.production` from the backup).
 7. **Vercel** (load the `vercel-account` skill first: flowcoder25 ↔ flowcoder25-1055): **Preview**
    `DATABASE_URL` and `DIRECT_URL` = the Vercel URL; preview deploy; check `/projects`,
@@ -404,15 +422,16 @@ never "Supabase vs OCI" after the switch (legitimate logins make OCI diverge) an
 
 ### Rollback
 
-1. **Dump OCI first** — it holds every write since the switch: `ssh oci ~/flowmate-db/backup.sh`
+1. **Dump OCI first** — it holds every write since the switch: `ssh oci /home/ubuntu/flowmate-db/backup.sh`
    (keep that file; reconcile those writes into Supabase by hand if they matter).
 2. Revert the env: Vercel Production (then Preview) back to the Supabase `DATABASE_URL`/`DIRECT_URL`
-   and redeploy; workers: `ssh oci ~/flowmate-db/switch-workers.sh --rollback` (also restores
+   and redeploy; workers: `ssh -t oci tmux new -A -s cutover`, then `/home/ubuntu/flowmate-db/switch-workers.sh --rollback` (also restores
    `~/flowmate/.env.production` from `.env.production.pre-cutover-<ts>`, sha256-checked; afterwards
    `deploy.sh` needs `FLOWMATE_ALLOW_NON_OCI_DB=1`, since the file points at Supabase again). If
    `--rollback` refuses (after `--done` or a `deploy.sh restart`), follow the manual path it prints:
    `cp -p ~/flowmate/.env.production.pre-cutover-<ts> ~/flowmate/.env.production`, then
-   `FLOWMATE_ALLOW_NON_OCI_DB=1 CRAWLER_IMAGE=… EMBEDDING_IMAGE=… PARSER_IMAGE=… ~/flowmate/deploy/oci/deploy.sh restart`.
+   `FLOWMATE_ALLOW_NON_OCI_DB=1 CRAWLER_IMAGE=… EMBEDDING_IMAGE=… PARSER_IMAGE=… /home/ubuntu/flowmate/deploy/oci/deploy.sh restart`
+   (on OCI; it is the guarded copy installed in step 0b).
    Mini: `cp -p ~/.flowmate-cutover.env.local /Volumes/포터블/Production/FlowMate/.env.local`.
 3. Lift the fence on Supabase — only now, so nothing writes to both sides. A new session is
    read-only, so the `RESET` must run in an explicit read-write transaction (a bare `ALTER ROLE ...
@@ -443,6 +462,8 @@ Keep the observation window short: every hour on OCI is an hour of writes to rec
 | Supabase dumps on the portable drive | `/Volumes/포터블/Backups/FlowMate/flowmate-public-*-20261101-2150.dump` + `SHA256SUMS-20261101-2150.txt` | keep until Phase 4 decides on Supabase |
 | `~/.flowmate-cutover.env` on the Mini | holds the Supabase URL (600) | delete after the observation window |
 | `.env.production.pre-cutover-<ts>` on OCI | `~/flowmate/` (600, Supabase credentials) | keep until rollback is no longer an option |
+| `.env.production.bak` on OCI (pre-existing, not ours) | `~/flowmate/.env.production.bak`, mode **664**, holds Supabase credentials | user decision: `chmod 600` or remove; also `.env.production` itself is 664 until the cutover makes it 600 |
+| Previous `deploy.sh` | `~/flowmate/deploy/oci/deploy.sh.pre-oci-<ts>` (from step 0b) | remove once the branch is merged and `~/flowmate` is updated |
 | `switch.state*` | `~/flowmate-db/workers/` | `.done-*` / `.failed-*` / `.rolledback-*` are history only (no env copies are kept there) |
 
 ## Ops quick reference
