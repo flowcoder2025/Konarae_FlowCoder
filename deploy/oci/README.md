@@ -23,7 +23,7 @@
    of every service with the commands to finish or undo it.
    After the DB runbook step 0b, `~/flowmate` holds a locally replaced `deploy/oci/deploy.sh`: check
    `git status --short` and update with the block in `db/README.md` ("Updating ~/flowmate after
-   step 0b") instead of a plain `git pull` / `build` (no `git stash`).
+   step 0b": fetch, then `merge --ff-only`) instead of a plain `git pull` / `build` (no `git stash`).
 5. Verify: `./deploy/oci/deploy.sh status`
 
 ## Services

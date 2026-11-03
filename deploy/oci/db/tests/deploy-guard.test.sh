@@ -27,6 +27,7 @@ case "$1" in
   start) case "$2" in "${STUB_START_FAIL:-@none@}") echo "Error: port is already allocated" >&2; exit 1 ;; esac ;;
   stop) case "$2" in "${STUB_STOP_FAIL:-@none@}") echo "Error: cannot stop container" >&2; exit 1 ;; esac ;;
   rm) case "$2" in "${STUB_RM_FAIL:-@none@}") echo "Error: removal in progress" >&2; exit 1 ;; esac ;;
+  rename) case "$3" in "${STUB_RENAME_FAIL:-@none@}") echo "Error: name already in use" >&2; exit 1 ;; esac ;;
   create) case "$*" in *"${STUB_CREATE_FAIL:-@none@}"*) echo "invalid env file" >&2; exit 125 ;; esac; echo "id-$RANDOM" ;;
 esac
 exit 0
@@ -125,6 +126,17 @@ for st in stop rm; do
     grep -q "flowmate-parser: untouched" "$O" &&
     ok "promotion fails at embedding's $st: recovery removes only $enext, no 'rm flowmate-embedding' / re-create hint" || { cat "$O"; bad "promo$st recovery text"; }
 done
+
+# --- promotion fails at embedding's rename: old removed, new still named <svc>-next-<ts> -> "rm <next>", never "rm flowmate-embedding" ---
+if run promorename restart STUB_EXISTS=0 STUB_RENAME_FAIL=flowmate-embedding; then bad "rename failure should exit non-zero"; else
+  L="$work/promorename.log"; O="$work/promorename.out"
+  enext=$(grep -oE 'flowmate-embedding-next-[0-9TZ]+' "$L" | head -n 1)
+  grep -q '^docker rm flowmate-embedding$' "$L" && ! grep -q '^docker start flowmate-embedding$' "$L" &&
+    grep -q "flowmate-embedding: the old container was removed; the new one is still named $enext" "$O" &&
+    grep -q "To go back instead: [^ ]*docker rm $enext, then re-create flowmate-embedding" "$O" &&
+    ! grep -qE 'rm flowmate-embedding( |$|,)' "$O" && grep -q "flowmate-parser: untouched" "$O" &&
+    ok "promotion fails at embedding's rename: go-back hint removes $enext (the new container), never 'rm flowmate-embedding'" || { cat "$O"; bad "promorename recovery text"; }
+fi
 
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

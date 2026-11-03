@@ -2,13 +2,16 @@
 # The "Updating ~/flowmate after step 0b" block from deploy/oci/db/README.md, run EXACTLY as the
 # operator pastes it (extracted between the flowmate-update-block markers; only the
 # R=/home/ubuntu/flowmate line is pointed at a throwaway clone) against throwaway git repos.
-# No network, no Docker; bash 3.2+ and git 2.25+.
+# No network, no Docker; bash 3.2+, git 2.25+, perl (resets SIGINT to default for the block).
 #
-# Every case asserts: the final deploy.sh carries the guard marker exactly once, passes bash -n
-# and has no conflict markers, and a pre-existing unrelated operator stash is untouched.
+# Every case asserts that a pre-existing unrelated operator stash is untouched; every case except
+# the two that are about an unguarded file (refused up front, restore failure) also asserts that
+# the final deploy.sh carries the guard marker exactly once, passes bash -n and has no conflict
+# markers. Ctrl-C is simulated with a git stub that sends SIGINT to the block's subshell and dies
+# of SIGINT itself (what a terminal's ^C does to the foreground process group).
 #
 #   bash deploy/oci/db/tests/update-checkout.test.sh
-# shellcheck disable=SC2015  # `check && ok ... || bad ...`: ok() always succeeds
+# shellcheck disable=SC2015,SC2016  # SC2015: ok() always succeeds; SC2016: single-quoted code for perl/bash -c
 set -u
 # English messages from git (the test greps them; OCI's default locale is Korean)
 export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 PYTHONUTF8=1 PYTHONIOENCODING=utf-8
@@ -29,13 +32,35 @@ sed '1d;$d' "$work/raw.md" >"$work/block.sh"
 ! grep -vE '^ *#' "$work/block.sh" | grep -qw stash &&
   ok "README block extracted ($(wc -l <"$work/block.sh" | tr -d ' ') lines); it never runs git stash" || bad "block uses git stash"
 
-# --- isolated git environment
+# --- isolated git environment + stubs (pass-through unless a STUB_* variable is set)
 export HOME="$work/home" XDG_CONFIG_HOME="$work/home/.config" GIT_CONFIG_NOSYSTEM=1
-mkdir -p "$HOME"
+mkdir -p "$HOME" "$work/stubs"
 git config --global user.name test
 git config --global user.email test@example.invalid
 git config --global commit.gpgsign false
 git config --global advice.detachedHead false
+REAL_GIT=$(command -v git)
+REAL_CP=$(command -v cp)
+export REAL_GIT REAL_CP
+cat >"$work/stubs/git" <<'STUB'
+#!/bin/bash
+# the block always calls `git -C <dir> <cmd> ...`; STUB_INT_ON=<cmd>: Ctrl-C while <cmd> runs
+if [ -n "${STUB_INT_ON:-}" ] && [ "${3:-}" = "$STUB_INT_ON" ]; then
+  kill -INT "$PPID"
+  kill -INT $$
+  sleep 5
+fi
+exec "$REAL_GIT" "$@"
+STUB
+cat >"$work/stubs/cp" <<'STUB'
+#!/bin/bash
+# STUB_CP_FAIL_RESTORE=1: the restore copy (*.restore.*) fails
+if [ -n "${STUB_CP_FAIL_RESTORE:-}" ]; then
+  case "$*" in *.restore.*) echo "cp: simulated failure" >&2; exit 1 ;; esac
+fi
+exec "$REAL_CP" "$@"
+STUB
+chmod +x "$work/stubs/git" "$work/stubs/cp"
 
 MARK='# flowmate-deploy-guard: v1'
 U1='#!/bin/bash\necho "old main, no guard"\n'
@@ -76,41 +101,46 @@ push_main() { # MSG [PATH CONTENT]...: commit on dev and push to origin main
   done
   git -C "$w/dev" add -A && git -C "$w/dev" commit -q -m "$msg" && git -C "$w/dev" push -q origin main
 }
-run_block() { # NAME: run the README block against $oci; sets rc, out
-  sed "s#^  R=/home/ubuntu/flowmate\$#  R=$oci#" "$work/block.sh" >"$work/$1.sh"
-  (cd "$work" && bash "$work/$1.sh") >"$work/$1.out" 2>&1
-  rc=$?
-  out="$work/$1.out"
+run_block() { # NAME [ENV=VAL...]: run the README block against $oci (bash, SIGINT at default); sets out
+  local name=$1
+  shift
+  sed "s#^  R=/home/ubuntu/flowmate\$#  R=$oci#" "$work/block.sh" >"$work/$name.sh"
+  (cd "$work" && env PATH="$work/stubs:$PATH" "$@" perl -e '$SIG{INT} = "DEFAULT"; exec @ARGV' bash "$work/$name.sh") >"$work/$name.out" 2>&1
+  out="$work/$name.out"
 }
-final_ok() { # NAME: invariants that must hold after every run
+succeeded() { grep -q '^OK: HEAD' "$out" && ! grep -q 'update block failed' "$out"; }
+failed_rc() { grep -q "^update block failed (rc=$1)" "$out" && ! grep -q '^OK: HEAD' "$out"; } # RC regex
+stash_ok() { [ "$(git -C "$oci" stash list --format='%H %gs'; git -C "$oci" rev-parse -q --verify refs/stash)" = "$stash_before" ] &&
+  [ "$(git -C "$oci" stash list | wc -l | tr -d ' ')" = 1 ] && ! git -C "$oci" diff --quiet 'stash@{0}' -- notes.txt 2>/dev/null; }
+final_ok() { # NAME: the final deploy.sh is guarded/parseable/clean, and the operator stash is untouched
   local d="$oci/$F"
-  [ "$(grep -c 'flowmate-deploy-guard: v1' "$d")" = 1 ] && bash -n "$d" 2>/dev/null && ! grep -qE '^(<<<<<<<|=======|>>>>>>>)' "$d" &&
-    [ "$(git -C "$oci" stash list --format='%H %gs'; git -C "$oci" rev-parse -q --verify refs/stash)" = "$stash_before" ] &&
-    [ "$(git -C "$oci" stash list | wc -l | tr -d ' ')" = 1 ] && ! git -C "$oci" diff --quiet 'stash@{0}' -- notes.txt 2>/dev/null ||
+  [ "$(grep -c 'flowmate-deploy-guard: v1' "$d")" = 1 ] && bash -n "$d" 2>/dev/null && ! grep -qE '^(<<<<<<<|=======|>>>>>>>)' "$d" && stash_ok ||
     { cat "$out"; bad "$1: final deploy.sh not guarded/parseable/clean, or the operator stash changed"; return 1; }
 }
 same() { cmp -s "$oci/$F" <(printf '%b' "$1"); }
 head_is_main() { [ "$(git -C "$oci" rev-parse HEAD)" = "$(git -C "$w/origin.git" rev-parse main)" ]; }
+no_saved() { ! ls "$oci/$F".pre-pull-* >/dev/null 2>&1; }
 
 # 0. the normal case: main now ships the same guarded deploy.sh
 world normal
 push_main "merge guarded deploy.sh" "$F" "$G1"
 run_block normal
-[ "$rc" = 0 ] && final_ok normal && same "$G1" && head_is_main && git -C "$oci" diff --quiet HEAD -- "$F" && grep -q '^OK: HEAD' "$out" &&
-  ok "main ships the step-0b deploy.sh: fast-forward, clean checkout, guarded, operator stash untouched" || bad "normal"
+succeeded && final_ok normal && same "$G1" && head_is_main && git -C "$oci" diff --quiet HEAD -- "$F" &&
+  ok "main ships the step-0b deploy.sh: fetch + fast-forward, clean checkout, guarded, operator stash untouched" || { cat "$out"; bad "normal"; }
 
 # 1. re-run after success: deploy.sh already equals HEAD; main moved on (unrelated change)
 push_main "unrelated" src/other.txt 'x\n'
 run_block rerun
-[ "$rc" = 0 ] && final_ok rerun && same "$G1" && head_is_main && grep -q 'nothing parked' "$out" &&
-  ok "re-run after success (deploy.sh == HEAD): nothing parked, fast-forward, still guarded, stash untouched" || bad "rerun"
+succeeded && final_ok rerun && same "$G1" && head_is_main && grep -q 'nothing parked' "$out" &&
+  ok "re-run after success (deploy.sh == HEAD): nothing parked, fast-forward, still guarded, stash untouched" || { cat "$out"; bad "rerun"; }
 
 # 2. main ships an UNGUARDED deploy.sh
 world unguarded
 push_main "unguarded change" "$F" "$U2"
 run_block unguarded
-[ "$rc" != 0 ] && final_ok unguarded && same "$G1" && head_is_main && grep -q 'WARNING: main.s deploy.sh is unguarded or broken' "$out" &&
-  ok "main's deploy.sh unguarded: pulled, guarded copy reinstalled, exit $rc + WARNING, stash untouched" || bad "unguarded"
+failed_rc 1 && final_ok unguarded && same "$G1" && head_is_main && grep -q "WARNING: main's deploy.sh is unguarded or broken. STOP" "$out" &&
+  grep -q 'guarded deploy.sh restored from .*pre-pull-' "$out" &&
+  ok "main's deploy.sh unguarded: merged, trap restored the guarded copy, rc=1 + WARNING (STOP), stash untouched" || { cat "$out"; bad "unguarded"; }
 
 # 2b. same, but nothing was parked (deploy.sh == HEAD, guarded) when main turns unguarded
 world unguarded_clean
@@ -118,22 +148,22 @@ push_main "merge guarded deploy.sh" "$F" "$G1"
 git -C "$oci" checkout -q -- "$F" && git -C "$oci" pull -q --ff-only origin main
 push_main "unguarded change" "$F" "$U2"
 run_block unguarded_clean
-[ "$rc" != 0 ] && final_ok unguarded_clean && same "$G1" && head_is_main && grep -q 'nothing parked' "$out" && grep -q 'WARNING' "$out" &&
-  ok "nothing parked, then main unguarded: the pre-pull copy is reinstalled, exit $rc" || bad "unguarded_clean"
+failed_rc 1 && final_ok unguarded_clean && same "$G1" && head_is_main && grep -q 'nothing parked' "$out" && grep -q 'WARNING' "$out" &&
+  ok "nothing parked, then main unguarded: the pre-merge copy is restored, rc=1" || { cat "$out"; bad "unguarded_clean"; }
 
 # 2c. main ships a guarded but unparseable deploy.sh
 world broken
 push_main "broken" "$F" "$BROKEN"
 run_block broken
-[ "$rc" != 0 ] && final_ok broken && same "$G1" && grep -q 'WARNING' "$out" &&
-  ok "main's deploy.sh guarded but bash -n fails: guarded copy reinstalled, exit $rc" || bad "broken"
+failed_rc 1 && final_ok broken && same "$G1" && grep -q 'WARNING' "$out" &&
+  ok "main's deploy.sh guarded but bash -n fails: guarded copy restored, rc=1" || { cat "$out"; bad "broken"; }
 
 # 3. main ships a NEWER guarded deploy.sh that differs from the parked one: keep main's (never roll back)
 world newer
 push_main "newer guarded" "$F" "$G2"
 run_block newer
-[ "$rc" = 0 ] && final_ok newer && same "$G2" && head_is_main && git -C "$oci" diff --quiet HEAD -- "$F" &&
-  ok "main's newer guarded deploy.sh differs from the parked one: main's kept, no conflict, stash untouched" || bad "newer"
+succeeded && final_ok newer && same "$G2" && head_is_main && git -C "$oci" diff --quiet HEAD -- "$F" &&
+  ok "main's newer guarded deploy.sh differs from the parked one: main's kept, no conflict, stash untouched" || { cat "$out"; bad "newer"; }
 
 # 4. an untracked file that main ships blocks the fast-forward
 world untracked
@@ -141,10 +171,10 @@ echo "local copy" >"$oci/src/lib/crawler/content-agency-parser.ts"
 before_head=$(git -C "$oci" rev-parse HEAD)
 push_main "ship parser + guarded deploy.sh" src/lib/crawler/content-agency-parser.ts 'shipped\n' "$F" "$G1"
 run_block untracked
-[ "$rc" != 0 ] && final_ok untracked && same "$G1" && [ "$(git -C "$oci" rev-parse HEAD)" = "$before_head" ] &&
-  grep -q 'PULL REFUSED' "$out" && grep -q '^?? src/lib/crawler/content-agency-parser.ts' "$out" && grep -q 'untracked working tree files would be overwritten' "$out" &&
-  [ "$(cat "$oci/src/lib/crawler/content-agency-parser.ts")" = "local copy" ] &&
-  ok "untracked path main ships: pull refused (git's error shown), status printed, guarded copy back, exit $rc" || bad "untracked"
+failed_rc 1 && final_ok untracked && same "$G1" && [ "$(git -C "$oci" rev-parse HEAD)" = "$before_head" ] &&
+  grep -q 'MERGE REFUSED' "$out" && grep -q '^?? src/lib/crawler/content-agency-parser.ts' "$out" && grep -q 'untracked working tree files would be overwritten' "$out" &&
+  grep -q 'guarded deploy.sh restored from' "$out" && [ "$(cat "$oci/src/lib/crawler/content-agency-parser.ts")" = "local copy" ] &&
+  ok "untracked path main ships: merge refused (git's error shown), status printed, guarded copy restored, rc=1" || { cat "$out"; bad "untracked"; }
 
 # 4b. a dirty tracked file that main also changes blocks the fast-forward
 world dirty
@@ -152,12 +182,68 @@ echo "local edit" >>"$oci/src/lib/crawler/worker.ts"
 before_head=$(git -C "$oci" rev-parse HEAD)
 push_main "worker change + guarded deploy.sh" src/lib/crawler/worker.ts 'worker v2\n' "$F" "$G1"
 run_block dirty
-[ "$rc" != 0 ] && final_ok dirty && same "$G1" && [ "$(git -C "$oci" rev-parse HEAD)" = "$before_head" ] &&
+failed_rc 1 && final_ok dirty && same "$G1" && [ "$(git -C "$oci" rev-parse HEAD)" = "$before_head" ] &&
   grep -q '^ M src/lib/crawler/worker.ts' "$out" && grep -q 'local edit' "$oci/src/lib/crawler/worker.ts" &&
-  ok "dirty worker.ts that main changes: pull refused, worker.ts untouched, guarded copy back, exit $rc" || bad "dirty"
+  ok "dirty worker.ts that main changes: merge refused, worker.ts untouched, guarded copy restored, rc=1" || { cat "$out"; bad "dirty"; }
 
-# 5. the operator stash is asserted untouched in every case above (final_ok); also: no new stash
-# was ever created anywhere
+# 6. Ctrl-C during the network step (fetch): deploy.sh never touched, nothing saved
+world int_fetch
+before_head=$(git -C "$oci" rev-parse HEAD)
+push_main "merge guarded deploy.sh" "$F" "$G1"
+run_block int_fetch STUB_INT_ON=fetch
+failed_rc 130 && final_ok int_fetch && same "$G1" && [ "$(git -C "$oci" rev-parse HEAD)" = "$before_head" ] && no_saved &&
+  ok "Ctrl-C during fetch: subshell dies (rc=130), deploy.sh untouched and guarded, nothing saved" || { cat "$out"; bad "int_fetch"; }
+
+# 7. Ctrl-C during the merge (after HEAD's unguarded copy was checked out): the trap restores
+world int_merge
+before_head=$(git -C "$oci" rev-parse HEAD)
+push_main "merge guarded deploy.sh" "$F" "$G2"
+run_block int_merge STUB_INT_ON=merge
+failed_rc 130 && final_ok int_merge && same "$G1" && [ "$(git -C "$oci" rev-parse HEAD)" = "$before_head" ] &&
+  grep -q 'parked as' "$out" && grep -q 'guarded deploy.sh restored from .*pre-pull-' "$out" &&
+  ok "Ctrl-C during merge (unguarded HEAD copy live): trap restored the guarded copy, rc=130" || { cat "$out"; bad "int_merge"; }
+
+# 8. the restore copy fails: RESTORE FAILED with the saved path, non-zero
+world restore_fail
+push_main "unguarded change" "$F" "$U2"
+run_block restore_fail STUB_CP_FAIL_RESTORE=1
+saved=""
+for f in "$oci/$F".pre-pull-*; do [ -e "$f" ] && saved=$f && break; done
+failed_rc 1 && grep -q "^RESTORE FAILED: .*may be unguarded.*Saved copy: $saved" "$out" && [ -n "$saved" ] && cmp -s "$saved" <(printf '%b' "$G1") &&
+  ! grep -q 'restored from' "$out" && stash_ok &&
+  ok "restore cp fails: 'RESTORE FAILED' + saved path ($(basename "$saved")) printed, rc=1, stash untouched" || { cat "$out"; bad "restore_fail"; }
+
+# 9. local commits on HEAD (e.g. `git commit -a` swept the guarded deploy.sh in): refused, untouched
+world local_commit
+git -C "$oci" commit -q -a -m "local: commit -a swept deploy.sh"
+before_head=$(git -C "$oci" rev-parse HEAD)
+push_main "merge guarded deploy.sh" "$F" "$G1"
+run_block local_commit
+failed_rc 1 && final_ok local_commit && same "$G1" && [ "$(git -C "$oci" rev-parse HEAD)" = "$before_head" ] && no_saved &&
+  grep -q 'REFUSED: ~/flowmate has local commits on main' "$out" && grep -q 'local: commit -a swept deploy.sh' "$out" &&
+  ok "local commit on HEAD: refused before touching deploy.sh, the commit listed, rc=1" || { cat "$out"; bad "local_commit"; }
+
+# 10. live deploy.sh unguarded at the start (e.g. an earlier interrupted run): refused up front
+world unguarded_live
+git -C "$oci" checkout -q -- "$F"
+before_head=$(git -C "$oci" rev-parse HEAD)
+push_main "merge guarded deploy.sh" "$F" "$G1"
+run_block unguarded_live
+failed_rc 1 && same "$U1" && [ "$(git -C "$oci" rev-parse HEAD)" = "$before_head" ] && no_saved && stash_ok &&
+  grep -q 'REFUSED: current .* is not the guarded copy; re-run step 0b first' "$out" && ! grep -q 'restored from' "$out" &&
+  ok "live deploy.sh unguarded: refused up front, nothing fetched/saved/restored, rc=1" || { cat "$out"; bad "unguarded_live"; }
+
+# 11. parent shell with `set -e`: the outer shell survives a failing block and prints the message
+world errexit
+echo "local copy" >"$oci/src/lib/crawler/content-agency-parser.ts"
+push_main "ship parser + guarded deploy.sh" src/lib/crawler/content-agency-parser.ts 'shipped\n' "$F" "$G1"
+sed "s#^  R=/home/ubuntu/flowmate\$#  R=$oci#" "$work/block.sh" >"$work/errexit.sh"
+(cd "$work" && env PATH="$work/stubs:$PATH" bash -e -c '. "$1"; echo OUTER_SHELL_SURVIVED' _ "$work/errexit.sh") >"$work/errexit.out" 2>&1
+out="$work/errexit.out"
+failed_rc 1 && grep -q '^OUTER_SHELL_SURVIVED$' "$out" && final_ok errexit && same "$G1" &&
+  ok "parent shell with set -e: block fails (rc=1), message printed, outer shell continues" || { cat "$out"; bad "errexit"; }
+
+# 5. the operator stash is asserted untouched in every case above; also: no stash was created anywhere
 for d in "$work"/*/oci; do [ "$(git -C "$d" stash list | wc -l | tr -d ' ')" = 1 ] || bad "stash count in $d"; done
 ok "every repo still has exactly its one operator stash"
 
