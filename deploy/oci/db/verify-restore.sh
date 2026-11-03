@@ -93,7 +93,7 @@ POSTGRES_PASSWORD=$(openssl rand -hex 24) \
   -e POSTGRES_PASSWORD -e POSTGRES_DB=flowmate -e POSTGRES_INITDB_ARGS="$initdb_args" \
   "$image" >/dev/null || fail "could not start throwaway container"
 
-own_volumes=$(docker inspect -f '{{range .Mounts}}{{if .Name}}{{.Name}} {{end}}{{end}}' "$cname")
+own_volumes=$(docker container inspect -f '{{range .Mounts}}{{if .Name}}{{.Name}} {{end}}{{end}}' "$cname")
 [ -n "$own_volumes" ] || fail "could not record the throwaway container's volumes"
 ready=0
 for _ in $(seq 1 90); do
@@ -102,7 +102,7 @@ for _ in $(seq 1 90); do
     ready=1
     break
   fi
-  [ "$(docker inspect -f '{{.State.Running}}' "$cname" 2>/dev/null)" = "true" ] || fail "throwaway container exited"
+  [ "$(docker container inspect -f '{{.State.Running}}' "$cname" 2>/dev/null)" = "true" ] || fail "throwaway container exited"
   sleep 2
 done
 [ "$ready" = 1 ] || fail "throwaway postgres not ready"

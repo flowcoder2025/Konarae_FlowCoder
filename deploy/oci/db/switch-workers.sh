@@ -33,7 +33,12 @@
 #              or the candidate; .env.production unchanged since the switch, backup intact) and
 #              refuses with zero mutations otherwise, printing the manual path. Valid only until
 #              --done or the first `deploy.sh restart`, whichever comes first.
-#   complete   requires `docker inspect -f '{{.Id}} {{.State.Running}}' <name>` == "<candidate> true".
+#   complete   requires `docker container inspect -f '{{.Id}} {{.State.Running}}' <name>` == "<candidate> true".
+#   rollback   records per-container sub-steps (c.<name>.rb: start -> cand_parked -> orig_named ->
+#              orig_restart_set -> orig_started -> finished) and reconciles by the recorded container ids,
+#              so a rollback killed between its two renames resumes.
+#   deploy.sh  dry run and --apply refuse unless $DEPLOY_SH (the script the manual recovery path and
+#              later redeploys use) carries the guard marker `flowmate-deploy-guard:` (runbook step 0b).
 # A failure during --apply rolls everything back and keeps switch.state.failed-<ts>.
 # Originals are kept stopped as <name>-pre-oci-<ts>; remove them only after --done.
 # Merged env files and inspect dumps live in $STATE_DIR/work.<pid> (700) and are deleted on exit.
@@ -53,6 +58,8 @@ TEST_MODE=${FLOWMATE_TEST_MODE:-0}
 PHASES=(planned restart_disabled stopped renamed new_named started ready)
 DB_KEYS=(DATABASE_URL DIRECT_URL)
 DB_TARGET=flowmate-db:5432/flowmate
+DEPLOY_SH=${FLOWMATE_DEPLOY_SH:-/home/ubuntu/flowmate/deploy/oci/deploy.sh}
+DEPLOY_GUARD_MARKER='flowmate-deploy-guard: v1'
 
 mode=dry-run
 containers=(flowmate-crawler flowmate-embedding flowmate-parser)
@@ -132,9 +139,11 @@ trap 'on_signal TERM' TERM
 trap on_exit EXIT
 
 # ---------------------------------------------------------------- helpers
-# di FALLBACK FORMAT OBJ: docker inspect -f, or FALLBACK if the object does not exist
-# (docker prints an empty line for a missing object, so `... || echo x` is not enough).
-di() { local out; if out=$(docker inspect -f "$2" "$3" 2>/dev/null); then printf '%s\n' "$out"; else printf '%s\n' "$1"; fi; }
+# di FALLBACK FORMAT OBJ: docker container inspect -f, or FALLBACK if no such CONTAINER exists.
+# Always `docker container inspect`: a plain `docker inspect flowmate-crawler` falls back to the
+# IMAGE of that name when no container has it (all worker names are image tags on OCI). Also,
+# docker prints an empty line for a missing object, so `... || echo x` is not enough.
+di() { local out; if out=$(docker container inspect -f "$2" "$3" 2>/dev/null); then printf '%s\n' "$out"; else printf '%s\n' "$1"; fi; }
 wait_ready() { # NAME_OR_ID -- running (and healthy if it has a healthcheck); fail fast on crash loops
   local c=$1 st rc health started st2 rc2 started2
   for _ in $(seq 1 "$READY_TIMEOUT"); do
@@ -221,11 +230,17 @@ env_check_db() { # LABEL then KEY=VALUE lines on stdin: exactly one of each DB k
   done
 }
 
+deploy_preflight() { # the deploy.sh that redeploys and the manual recovery path use must be the guarded one
+  if [ ! -r "$DEPLOY_SH" ] || ! grep -qF "$DEPLOY_GUARD_MARKER" "$DEPLOY_SH"; then
+    die "$DEPLOY_SH is not the guarded deploy.sh (marker '$DEPLOY_GUARD_MARKER' missing): install it first (README cutover step 0b)"
+  fi
+  log "deploy.sh preflight ok: $DEPLOY_SH carries '$DEPLOY_GUARD_MARKER'"
+}
 db_preflight() {
   if [ "$TEST_MODE" = 1 ] && [ "${FLOWMATE_WORKERS_SKIP_DB_PREFLIGHT:-0}" = 1 ]; then log "DB preflight skipped (test mode)"; return 0; fi
   docker network inspect flowmate >/dev/null 2>&1 || die "network flowmate missing"
   local img out
-  img=$(docker inspect -f '{{.Config.Image}}' "$DB_CONTAINER") || die "$DB_CONTAINER not found"
+  img=$(docker container inspect -f '{{.Config.Image}}' "$DB_CONTAINER") || die "$DB_CONTAINER not found"
   out=$(PGPASSWORD=$(secret_get FLOWMATE_APP_PASSWORD) timeout 60 docker run --rm --network flowmate -e PGPASSWORD "$img" \
     psql -X -At "host=flowmate-db port=5432 user=flowmate_app dbname=flowmate connect_timeout=10" -c "SELECT 'preflight-ok'" 2>&1 | tail -n 1) || true
   [ "$out" = preflight-ok ] || die "DB preflight failed: flowmate_app cannot log in to flowmate-db:5432 from network flowmate (${out:0:160})"
@@ -235,7 +250,7 @@ db_preflight() {
 # Build `docker create` args for NAME from the running container. Sets ARGS, CMD, IMAGE_ID.
 build_args() {
   local name=$1 cand=$2 envfile=$3 j ij line hip hport cport val
-  j=$(docker inspect "$name") || die "container $name not found"
+  j=$(docker container inspect "$name") || die "container $name not found"
   # Fail closed on mounts (bind, named or anonymous volumes from an image VOLUME): their data would
   # not follow a recreated container. The live workers have none (checked 2026-11-03).
   [ "$(jq -r '.[0].Mounts | length' <<<"$j")" = 0 ] ||
@@ -358,11 +373,11 @@ apply_container() {
   if [ "$ph" -lt "$(phase_idx restart_disabled)" ]; then docker update --restart no "$orig" >/dev/null || return 1; cphase_set "$name" restart_disabled; fi
   if [ "$ph" -lt "$(phase_idx stopped)" ]; then docker stop -t 30 "$orig" >/dev/null || return 1; cphase_set "$name" stopped; fi
   if [ "$ph" -lt "$(phase_idx renamed)" ]; then
-    [ "$(docker inspect -f '{{.Name}}' "$orig")" = "/$prev" ] || docker rename "$orig" "$prev" || return 1
+    [ "$(docker container inspect -f '{{.Name}}' "$orig")" = "/$prev" ] || docker rename "$orig" "$prev" || return 1
     cphase_set "$name" renamed
   fi
   if [ "$ph" -lt "$(phase_idx new_named)" ]; then
-    [ "$(docker inspect -f '{{.Name}}' "$cand")" = "/$name" ] || docker rename "$cand" "$name" || return 1
+    [ "$(docker container inspect -f '{{.Name}}' "$cand")" = "/$name" ] || docker rename "$cand" "$name" || return 1
     cphase_set "$name" new_named
   fi
   if [ "$ph" -lt "$(phase_idx started)" ]; then docker start "$cand" >/dev/null || return 1; cphase_set "$name" started; fi
@@ -372,26 +387,38 @@ apply_container() {
     log "$name: switched (network flowmate, NET_RAW dropped, DB -> flowmate-db); original kept as $prev"
   fi
 }
-rollback_container() {
-  local name=$1 orig cand restart ts ph
+rb_set() { # NAME SUBSTEP (+ test hook)
+  state_set "c.$1.rb" "$2"
+  if [ "$TEST_MODE" = 1 ] && [ "${FLOWMATE_WORKERS_CRASH_AFTER:-}" = "$1:rb:$2" ]; then kill -KILL $$; fi
+  return 0
+}
+rollback_container() { # idempotent, driven by the recorded container ids and the rb sub-step
+  local name=$1 orig cand restart ts park started
   orig=$(state_get "c.$name.orig_id"); cand=$(state_get "c.$name.cand_id")
   restart=$(state_get "c.$name.orig_restart"); ts=$(state_get ts)
-  ph=$(phase_idx "$(state_get "c.$name.phase")")
+  park="$name-oci-rolledback-$ts"
+  [ -n "$(state_get "c.$name.rb")" ] || rb_set "$name" start
   if [ -n "$cand" ] && docker container inspect "$cand" >/dev/null 2>&1; then
-    if [ "$ph" -ge "$(phase_idx started)" ]; then
+    started=$(di "" '{{.State.StartedAt}}' "$cand")
+    if [ "${started:0:4}" != 0001 ]; then
+      # It ran: keep it, stopped and out of the way.
       docker update --restart no "$cand" >/dev/null
       docker stop -t 30 "$cand" >/dev/null
-      [ "$(docker inspect -f '{{.Name}}' "$cand")" = "/$name-oci-rolledback-$ts" ] || docker rename "$cand" "$name-oci-rolledback-$ts"
-      log "$name: new container kept stopped as $name-oci-rolledback-$ts"
+      [ "$(di "" '{{.Name}}' "$cand")" = "/$park" ] || docker rename "$cand" "$park"
+      log "$name: new container kept stopped as $park"
     else
       docker rm -f "$cand" >/dev/null   # created, never started: holds nothing
     fi
   fi
-  [ "$(docker inspect -f '{{.Name}}' "$orig")" = "/$name" ] || docker rename "$orig" "$name"
+  rb_set "$name" cand_parked
+  [ "$(di "" '{{.Name}}' "$orig")" = "/$name" ] || docker rename "$orig" "$name"
+  rb_set "$name" orig_named
   docker update --restart "$restart" "$orig" >/dev/null
-  [ "$(docker inspect -f '{{.State.Running}}' "$orig")" = true ] || docker start "$orig" >/dev/null
+  rb_set "$name" orig_restart_set
+  [ "$(di false '{{.State.Running}}' "$orig")" = true ] || docker start "$orig" >/dev/null
   wait_ready "$orig" || die "$name: original container did not become ready again"
-  state_set "c.$name.phase" rolled_back
+  rb_set "$name" orig_started
+  state_set "c.$name.phase" rolled_back "c.$name.rb" finished
   log "$name: original restored (restart=$restart, original env and network)"
 }
 
@@ -402,14 +429,14 @@ manual_path() {
 Manual recovery (the automatic rollback is no longer safe):
   1. restore the worker env:  cp -p $b $ENV_SRC   (check: sha256sum $ENV_SRC == $(state_get env_sha_before | cut -c1-12)...)
   2. recreate the workers on that env:
-       FLOWMATE_ALLOW_NON_OCI_DB=1 CRAWLER_IMAGE=<ref> EMBEDDING_IMAGE=<ref> PARSER_IMAGE=<ref> ~/flowmate/deploy/oci/deploy.sh restart
-     (refs: docker inspect -f '{{.Config.Image}}' <name>-pre-oci-$(state_get ts))
+       FLOWMATE_ALLOW_NON_OCI_DB=1 CRAWLER_IMAGE=<ref> EMBEDDING_IMAGE=<ref> PARSER_IMAGE=<ref> $DEPLOY_SH restart
+     (refs: docker container inspect -f '{{.Config.Image}}' <name>-pre-oci-$(state_get ts))
   3. retire the state: mv $STATE $STATE.manual-$(state_get ts)
 EOF
 }
 # Every precondition of --rollback, for every container, BEFORE anything is touched.
 rollback_preflight() {
-  local c orig cand ph cur problems=() b
+  local c orig cand ph cur rb cand_ok problems=() b
   for c in "${containers[@]}"; do
     orig=$(state_get "c.$c.orig_id"); cand=$(state_get "c.$c.cand_id"); ph=$(state_get "c.$c.phase")
     [ -n "$orig" ] || continue   # not part of this run's plan
@@ -417,9 +444,15 @@ rollback_preflight() {
       *) problems+=("$c: unknown phase '$ph'"); continue ;; esac
     docker container inspect "$orig" >/dev/null 2>&1 || { problems+=("$c: original container ${orig:0:12} no longer exists"); continue; }
     cur=$(di none '{{.Id}}' "$c")
+    rb=$(state_get "c.$c.rb")
+    cand_ok=0
+    { [ -n "$cand" ] && docker container inspect "$cand" >/dev/null 2>&1; } && cand_ok=1
     if [ "$cur" = "$orig" ] || { [ -n "$cand" ] && [ "$cur" = "$cand" ]; }; then :
-    elif [ "$cur" = none ] && [ "$ph" = renamed ]; then :   # between the two renames
-    elif [ "$cur" = none ]; then problems+=("$c: no container named $c (phase $ph)")
+    elif [ "$cur" = none ] && [ "$ph" = renamed ]; then :          # between the two renames of --apply
+    elif [ "$cur" = none ] && [ -n "$rb" ] && { [ "$cand_ok" = 1 ] || [ "$rb" != start ]; }; then :
+      # between the two renames of an interrupted --rollback: the candidate has been parked
+      # (or removed, rb >= cand_parked) and the original still has to get its name back
+    elif [ "$cur" = none ]; then problems+=("$c: no container named $c (phase $ph${rb:+, rollback step $rb})")
     else problems+=("$c: '$c' is now container ${cur:0:12}, neither the original nor the candidate (redeployed?)"); fi
   done
   case "$(state_get env_phase)" in
@@ -476,7 +509,7 @@ config_diff() {
          HostConfig: (.HostConfig | del(.NetworkMode, .ConsoleSize, .ContainerIDFile, .MaskedPaths, .ReadonlyPaths)
            | .CapDrop = (((.CapDrop // []) - ["NET_RAW", "CAP_NET_RAW"]) | if length == 0 then null else . end))}
        | [paths(scalars) as $p | "\($p | map(tostring) | join("."))=\(getpath($p) | tostring)"] | sort | .[]'
-  docker inspect "$cand" >"$WORK/$name.cand.json"
+  docker container inspect "$cand" >"$WORK/$name.cand.json"
   jq -r "$norm" "$WORK/$name.old.json" >"$WORK/$name.old.flat"
   jq -r "$norm" "$WORK/$name.cand.json" >"$WORK/$name.cand.flat"
   if ! diff -q "$WORK/$name.old.flat" "$WORK/$name.cand.flat" >/dev/null; then
@@ -491,6 +524,7 @@ config_diff() {
 plan_fresh() { # dry-run / first --apply: everything validated before the state file exists
   [ -r "$ENV_SRC" ] || die "cannot read $ENV_SRC"
   env_file_lines "$ENV_SRC" >/dev/null
+  deploy_preflight
   db_preflight
   env_rewritten "$ENV_SRC" >"$WORK/env.new"
   env_file_lines "$WORK/env.new" | env_check_db "rewritten $ENV_SRC" || die "rewrite check failed"
@@ -506,7 +540,7 @@ plan_fresh() { # dry-run / first --apply: everything validated before the state 
     docker create "${ARGS[@]}" "$IMAGE_REF" "${CMD[@]}" >/dev/null || die "$c: docker create failed"
     created+=("$cand")
     config_diff "$c" "$cand" || die "$c: not reproducible; nothing was stopped"
-    docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$cand" | env_check_db "$c candidate Config.Env" ||
+    docker container inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$cand" | env_check_db "$c candidate Config.Env" ||
       die "$c: candidate env check failed; nothing was stopped"
     rm -f -- "$WORK/$c.env"   # read by `docker create`; no copy of the env is kept
     printf '== %s\n   image: %s (running image id %s; created from %s)\n   env:   from %s; running-only keys kept: %s; differ from running (file wins): %s\n   checks: config diff clean (besides name, network flowmate, NET_RAW, env); exactly one DATABASE_URL and DIRECT_URL, both on %s\n' \
@@ -514,7 +548,7 @@ plan_fresh() { # dry-run / first --apply: everything validated before the state 
       "$ENV_SRC" "${RUNNING_ONLY_KEYS:-<none>}" "${DIFF_KEYS:-<none>}" "$DB_TARGET"
     st_pairs+=("c.$c.orig_id" "$(jq -r '.[0].Id' "$WORK/$c.old.json")"
       "c.$c.orig_restart" "$(jq -r '.[0].HostConfig.RestartPolicy | if .Name == "on-failure" and .MaximumRetryCount > 0 then "on-failure:\(.MaximumRetryCount)" elif (.Name // "") == "" then "no" else .Name end' "$WORK/$c.old.json")"
-      "c.$c.prev" "$c-pre-oci-$ts" "c.$c.cand_id" "$(docker inspect -f '{{.Id}}' "$cand")" "c.$c.phase" planned)
+      "c.$c.prev" "$c-pre-oci-$ts" "c.$c.cand_id" "$(docker container inspect -f '{{.Id}}' "$cand")" "c.$c.phase" planned)
   done
 }
 
@@ -540,6 +574,7 @@ case "$mode" in
       state_set "${st_pairs[@]}"   # recovery metadata BEFORE any worker or the env file is touched
       created=()
     fi
+    deploy_preflight
     db_preflight
     mutating=1
     state_set phase switching

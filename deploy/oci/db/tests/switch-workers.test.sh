@@ -3,7 +3,7 @@
 # ~/flowmate/.env.production). Needs docker, jq, network `flowmate` and the pgbouncer image (no
 # VOLUME/HEALTHCHECK, like the workers). Run on OCI:
 #
-#   bash deploy/oci/db/tests/switch-workers.test.sh
+#   bash deploy/oci/db/tests/switch-workers.test.sh      (needs ../../deploy.sh next to it: copy deploy/oci/)
 # shellcheck disable=SC2015,SC2016,SC2046  # `check && ok || bad` (ok always succeeds); literal $DATABASE_URL in a fixture; ids word-split on purpose
 export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 PYTHONUTF8=1 PYTHONIOENCODING=utf-8
 set -uo pipefail
@@ -14,6 +14,7 @@ work=$(mktemp -d)
 cleanup() {
   for c in $(docker ps -a --filter "name=^${pfx}" --format '{{.Names}}'); do docker rm -f -v "$c" >/dev/null 2>&1 || true; done
   docker volume ls -q --filter "label=flowmate.swtest=$$" | xargs -r docker volume rm >/dev/null 2>&1 || true
+  docker image rm "$pfx-t:latest" >/dev/null 2>&1 || true   # our own tag only; the image itself stays
   rm -rf -- "$work"
 }
 trap cleanup EXIT
@@ -24,9 +25,9 @@ fail=0
 ok() { echo "ok   $1"; pass=$((pass + 1)); }
 bad() { echo "FAIL $1"; fail=$((fail + 1)); }
 sha() { sha256sum <"$1" | cut -d' ' -f1; }
-insp() { docker inspect -f "$2" "$1" 2>/dev/null; }
-envval() { docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$1" | sed -n "s/^$2=//p"; }
-envcount() { docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$1" | grep -c "^$2=" || true; }
+insp() { docker container inspect -f "$2" "$1" 2>/dev/null; }
+envval() { docker container inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$1" | sed -n "s/^$2=//p"; }
+envcount() { docker container inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$1" | grep -c "^$2=" || true; }
 target() { sed -E 's|^[a-z]+://[^@]*@([^/]+)/(.*)$|\1/\2|'; }   # host:port/db, never the password
 statephase() { sed -n "s/^$1=//p" "$sdir/state/switch.state" 2>/dev/null | tail -n 1; }
 
@@ -55,7 +56,9 @@ fixture() { # NAME [extra docker run args...] -- a running "worker" built like d
   echo "fixture $n did not start"; return 1
 }
 extra_env=()
-sw() { env FLOWMATE_ENV_FILE="$work/.env" FLOWMATE_WORKERS_STATE_DIR="$sdir/state" FLOWMATE_WORKERS_ENV_FILE="$sdir/.env.production" \
+DEPLOY_SH=$(cd -- "$DB_DIR/.." && pwd)/deploy.sh
+deploy_sh=$DEPLOY_SH
+sw() { env FLOWMATE_ENV_FILE="$work/.env" FLOWMATE_WORKERS_STATE_DIR="$sdir/state" FLOWMATE_WORKERS_ENV_FILE="$sdir/.env.production" FLOWMATE_DEPLOY_SH="$deploy_sh" \
   FLOWMATE_WORKERS_READY_TIMEOUT=60 FLOWMATE_WORKERS_SETTLE_SECONDS=5 FLOWMATE_TEST_MODE=1 FLOWMATE_WORKERS_SKIP_DB_PREFLIGHT=1 \
   "${extra_env[@]}" bash "$DB_DIR/switch-workers.sh" "$@"; }
 snapshot() { # everything a "no mutation" claim covers: containers of this scenario, env file, state file
@@ -257,9 +260,57 @@ scenario h
 n="$pfx-h"
 fixture "$n" --init "$image" sleep 86400
 before=$(snapshot "$n")
-env FLOWMATE_ENV_FILE="$work/.env" FLOWMATE_WORKERS_STATE_DIR="$sdir/state" FLOWMATE_WORKERS_ENV_FILE="$sdir/.env.production" \
+env FLOWMATE_ENV_FILE="$work/.env" FLOWMATE_WORKERS_STATE_DIR="$sdir/state" FLOWMATE_WORKERS_ENV_FILE="$sdir/.env.production" FLOWMATE_DEPLOY_SH="$DEPLOY_SH" \
   bash "$DB_DIR/switch-workers.sh" --apply --containers "$n" >"$work/h.out" 2>&1 && bad "preflight: apply should fail"
 [ "$(snapshot "$n")" = "$before" ] && grep -q 'DB preflight failed' "$work/h.out" && ok "DB preflight with a wrong password: nothing touched" || { cat "$work/h.out"; bad "H"; }
+rm_all "$n"
+
+# ================================================================ Q: unguarded deploy.sh -> refused
+scenario q
+n="$pfx-q"
+fixture "$n" --init "$image" sleep 86400
+printf '#!/bin/bash\n# main-branch deploy.sh without the guard\nsudo docker run -d flowmate-crawler\n' >"$work/old-deploy.sh"
+before=$(snapshot "$n")
+deploy_sh="$work/old-deploy.sh"
+sw --containers "$n" >"$work/q1.out" 2>&1 && bad "dry run with an unguarded deploy.sh should fail"
+sw --apply --containers "$n" >"$work/q2.out" 2>&1 && bad "apply with an unguarded deploy.sh should fail"
+deploy_sh="$DEPLOY_SH"
+[ "$(snapshot "$n")" = "$before" ] && grep -q 'is not the guarded deploy.sh' "$work/q1.out" && grep -q 'is not the guarded deploy.sh' "$work/q2.out" &&
+  ok "deploy.sh without the guard marker: dry run and --apply refused, no mutation" || { cat "$work/q2.out"; bad "Q"; }
+rm_all "$n"
+
+# ================================================================ R: rollback killed between its two renames -> --rollback resumes
+scenario r
+n="$pfx-r"
+fixture "$n" --init "$image" sleep 86400
+orig_id=$(insp "$n" '{{.Id}}')
+sw --apply --containers "$n" >/dev/null 2>&1 || bad "R: apply"
+extra_env=(FLOWMATE_WORKERS_CRASH_AFTER="$n:rb:cand_parked")
+sw --rollback >"$work/r1.out" 2>&1
+extra_env=()
+[ -z "$(docker ps -a -q --filter "name=^$n\$")" ] && [ "$(statephase "c.$n.rb")" = cand_parked ] && [ "$(statephase phase)" = rolling_back ] &&
+  ok "rollback SIGKILLed between its renames: no container named $n, state says cand_parked" || bad "R crash state"
+sw --rollback >"$work/r2.out" 2>&1 || { cat "$work/r2.out"; bad "R resume"; }
+[ "$(insp "$n" '{{.Id}} {{.State.Status}} {{.HostConfig.RestartPolicy.Name}} {{.HostConfig.NetworkMode}}')" = "$orig_id running always bridge" ] &&
+  [ "$(sha "$sdir/.env.production")" = "$orig_sha" ] && ls "$sdir"/state/switch.state.rolledback-* >/dev/null 2>&1 &&
+  ok "--rollback resumed from between the renames: original back, env restored" || bad "R"
+rm_all "$n"
+
+# ================================================================ T: the service name is also an IMAGE tag
+scenario t
+n="$pfx-t"
+docker tag "$image" "$n:latest"
+fixture "$n" --init "$image" sleep 86400
+orig_id=$(insp "$n" '{{.Id}}')
+sw --apply --containers "$n" >"$work/t0.out" 2>&1 || { cat "$work/t0.out"; bad "T: apply"; }
+extra_env=(FLOWMATE_WORKERS_CRASH_AFTER="$n:rb:cand_parked")
+sw --rollback >/dev/null 2>&1
+extra_env=()
+docker image inspect "$n:latest" >/dev/null 2>&1 && [ -z "$(docker ps -a -q --filter "name=^$n\$")" ] &&
+  ok "T setup: no container named $n, but an image $n:latest exists" || bad "T setup"
+sw --rollback >"$work/t1.out" 2>&1 || { cat "$work/t1.out"; bad "T resume"; }
+[ "$(insp "$n" '{{.Id}} {{.State.Status}}')" = "$orig_id running" ] &&
+  ok "name shadowed by an image tag: rollback resumes (container lookups never resolve the image)" || bad "T"
 rm_all "$n"
 
 echo "$pass passed, $fail failed"

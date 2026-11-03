@@ -74,13 +74,13 @@ secret_get() {
 }
 
 container_running() {
-  [ "$(docker inspect -f '{{.State.Running}}' "$1" 2>/dev/null || true)" = "true" ]
+  [ "$(docker container inspect -f '{{.State.Running}}' "$1" 2>/dev/null || true)" = "true" ]
 }
 
 wait_db_healthy() {
   local status=""
   for _ in $(seq 1 60); do
-    status=$(docker inspect -f '{{.State.Health.Status}}' "$DB_CONTAINER" 2>/dev/null || true)
+    status=$(docker container inspect -f '{{.State.Health.Status}}' "$DB_CONTAINER" 2>/dev/null || true)
     [ "$status" = "healthy" ] && return 0
     sleep 2
   done
@@ -137,9 +137,9 @@ require_private_file() {
 }
 
 # Image reference of the running db container (verify-restore uses the same one).
-db_image() { docker inspect -f '{{.Config.Image}}' "$DB_CONTAINER"; }
+db_image() { docker container inspect -f '{{.Config.Image}}' "$DB_CONTAINER"; }
 
 db_initdb_args() {
-  docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$DB_CONTAINER" |
+  docker container inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$DB_CONTAINER" |
     sed -n 's/^POSTGRES_INITDB_ARGS=//p'
 }

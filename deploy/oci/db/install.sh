@@ -2,7 +2,7 @@
 # Install / re-apply the FlowMate DB stack on the OCI VM. Idempotent; safe to rerun.
 #
 #   rsync -a --exclude mini/ deploy/oci/db/ oci:flowmate-db/     # from a checkout (never --delete)
-#   ssh oci ~/flowmate-db/install.sh
+#   ssh oci /home/ubuntu/flowmate-db/install.sh
 #
 # Steps: dirs/perms -> .env (generate once) -> superuser pw file -> TLS cert
 # (renew-cert.sh) -> render pgbouncer.ini + pgbouncer_hba.conf + userlist.txt

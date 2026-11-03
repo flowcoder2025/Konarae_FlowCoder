@@ -1,5 +1,7 @@
 #!/bin/bash
 # FlowMate Worker Services - OCI Deployment
+# flowmate-deploy-guard: v1  (validated, create-first start/restart; switch-workers.sh refuses
+#                             to run unless the installed deploy.sh carries this marker)
 # Usage: ./deploy.sh [build|check|start|stop|restart|status|logs]
 #
 # check/start/restart validate EVERYTHING before any container is stopped or started (start and
@@ -79,8 +81,10 @@ validate_start() {
 
 # Create all three new containers under temporary names first (docker parses the env file,
 # images and every option here). Only if all three succeed is anything stopped.
-# --restart unless-stopped matches the running crawler and CLAUDE.md 9.5. Memory limits are
-# unchanged here (crawler 2g, embedding 1g, parser default); aligning them is Phase 1B.7.
+# --restart unless-stopped matches the running crawler and CLAUDE.md 9.5. NOTE: embedding and
+# parser currently run with `always`; the first redeploy through this script moves them to
+# unless-stopped (they then stay down after a manual `docker stop`, also across reboots).
+# Memory limits are unchanged here (crawler 2g, embedding 1g, parser default); Phase 1B.7.
 CANDIDATES=()
 create_candidates() {
   local ts c
@@ -107,6 +111,10 @@ drop_candidates() {
   CANDIDATES=()
   error "creating the new containers failed; nothing was stopped (new containers removed)"
 }
+# If this fails half-way (e.g. a port still busy), the services already promoted run the new
+# containers, the rest are stopped/removed and their new container is left created but not started
+# as flowmate-<svc>-next-<ts>. Manual recovery: `docker rename flowmate-<svc>-next-<ts> flowmate-<svc>`
+# then `docker start flowmate-<svc>` for each left-over -next- container (`docker ps -a | grep -- -next-`).
 promote_candidates() { # stop + remove the old container, give the candidate its name, start it
   local pair name cand
   for pair in "${CANDIDATES[@]}"; do

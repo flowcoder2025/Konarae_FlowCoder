@@ -26,8 +26,8 @@ printf 'docker %s\n' "$args" >>"$STUB_LOG"
 stdin=""
 if [[ " $args " == *" -f - "* ]]; then stdin=$(cat); printf '%s\n' "$stdin" | sed 's/^/  | /' >>"$STUB_LOG"; fi
 case "$args" in
-  "inspect -f {{.State.Running}} "*) echo true ;;
-  "inspect -f {{.State.Health.Status}} "*) echo healthy ;;
+  "container inspect -f {{.State.Running}} "*) echo true ;;
+  "container inspect -f {{.State.Health.Status}} "*) echo healthy ;;
   cp\ *) : ;;
   *"pg_restore -l "*)
     [ "${STUB_TOC_FAIL:-0}" = 1 ] && exit 1
