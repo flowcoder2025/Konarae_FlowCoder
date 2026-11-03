@@ -279,6 +279,33 @@ deploy_sh="$DEPLOY_SH"
   ok "deploy.sh without the guard marker: dry run and --apply refused, no mutation" || { cat "$work/q2.out"; bad "Q"; }
 rm_all "$n"
 
+# ================================================================ V: guarded but conflicted / unparseable deploy.sh -> refused
+scenario v
+n="$pfx-v"
+fixture "$n" --init "$image" sleep 86400
+{ printf '#!/bin/bash
+# flowmate-deploy-guard: v1
+<<<<<<< Updated upstream
+echo main
+=======
+echo guarded
+>>>>>>> Stashed changes
+'; } >"$work/conflict-deploy.sh"
+{ sed -n '1,3p' "$DEPLOY_SH"; printf 'if then
+'; } >"$work/broken-deploy.sh"
+grep -qF 'flowmate-deploy-guard: v1' "$work/broken-deploy.sh" || bad "V fixture: broken copy lost the marker"
+before=$(snapshot "$n")
+deploy_sh="$work/conflict-deploy.sh"
+sw --containers "$n" >"$work/v1.out" 2>&1 && bad "dry run with a conflicted deploy.sh should fail"
+sw --apply --containers "$n" >"$work/v2.out" 2>&1 && bad "apply with a conflicted deploy.sh should fail"
+deploy_sh="$work/broken-deploy.sh"
+sw --apply --containers "$n" >"$work/v3.out" 2>&1 && bad "apply with an unparseable deploy.sh should fail"
+deploy_sh="$DEPLOY_SH"
+[ "$(snapshot "$n")" = "$before" ] && grep -q 'contains git conflict markers' "$work/v1.out" && grep -q 'contains git conflict markers' "$work/v2.out" &&
+  grep -q 'does not parse (bash -n failed)' "$work/v3.out" && [ ! -e "$sdir/state/switch.state" ] &&
+  ok "guarded deploy.sh with conflict markers / bash -n failure: dry run and --apply refused, no state, no mutation" || { cat "$work/v2.out" "$work/v3.out"; bad "V"; }
+rm_all "$n"
+
 # ================================================================ R: rollback killed between its two renames -> --rollback resumes
 scenario r
 n="$pfx-r"

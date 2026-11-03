@@ -25,6 +25,8 @@ case "$1" in
     [ "$3" = -f ] && echo "${5}:old-tag (sha256:old-$5)"
     exit 0 ;;
   start) case "$2" in "${STUB_START_FAIL:-@none@}") echo "Error: port is already allocated" >&2; exit 1 ;; esac ;;
+  stop) case "$2" in "${STUB_STOP_FAIL:-@none@}") echo "Error: cannot stop container" >&2; exit 1 ;; esac ;;
+  rm) case "$2" in "${STUB_RM_FAIL:-@none@}") echo "Error: removal in progress" >&2; exit 1 ;; esac ;;
   create) case "$*" in *"${STUB_CREATE_FAIL:-@none@}"*) echo "invalid env file" >&2; exit 125 ;; esac; echo "id-$RANDOM" ;;
 esac
 exit 0
@@ -110,6 +112,19 @@ if run promofail restart STUB_EXISTS=0 STUB_START_FAIL=flowmate-embedding; then 
     ! grep -q 'rename flowmate-parser-next' "$O" &&
     ok "printed recovery matches it: crawler nothing to do, 'docker start flowmate-embedding' (+ previous image), parser 'docker rm $pnext'" || { cat "$O"; bad "promofail recovery text"; }
 fi
+
+# --- (C) promotion fails at embedding's stop / rm: the old container is still there -> never "rm flowmate-embedding" ---
+for st in stop rm; do
+  if [ "$st" = stop ]; then failenv=STUB_STOP_FAIL=flowmate-embedding; else failenv=STUB_RM_FAIL=flowmate-embedding; fi
+  if run "promo$st" restart STUB_EXISTS=0 "$failenv"; then bad "$st failure should exit non-zero"; continue; fi
+  L="$work/promo$st.log"; O="$work/promo$st.out"
+  enext=$(grep -oE 'flowmate-embedding-next-[0-9TZ]+' "$L" | head -n 1)
+  ! grep -qE '^docker (rename|start) [^ ]* ?flowmate-embedding$' "$L" && ! grep -qE '^docker rename flowmate-embedding-next' "$L" &&
+    grep -q "flowmate-crawler: promoted" "$O" && grep -q "rm $enext" "$O" &&
+    ! grep -qE 'rm flowmate-embedding( |$|\))' "$O" && ! grep -q 'To go back instead' "$O" &&
+    grep -q "flowmate-parser: untouched" "$O" &&
+    ok "promotion fails at embedding's $st: recovery removes only $enext, no 'rm flowmate-embedding' / re-create hint" || { cat "$O"; bad "promo$st recovery text"; }
+done
 
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

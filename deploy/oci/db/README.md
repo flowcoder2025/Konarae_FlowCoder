@@ -270,8 +270,8 @@ never "Supabase vs OCI" after the switch (legitimate logins make OCI diverge) an
    then shows it modified, which is expected). `switch-workers.sh` refuses to run unless that file
    carries the `flowmate-deploy-guard: v1` marker. Re-running 0b stacks backups
    (`deploy.sh.pre-oci-<ts>`); the oldest one is the original `main` copy. After the branch is merged,
-   `~/flowmate` needs the update sequence in "Updating ~/flowmate after step 0b" below before any
-   `git pull` / `deploy.sh build`.
+   update `~/flowmate` only with the block in "Updating ~/flowmate after step 0b" below (not a plain
+   `git pull` / `deploy.sh build`, and no `git stash`).
    ```bash
    # on Mini
    TS=$(date -u +%Y%m%dT%H%M%SZ)
@@ -517,43 +517,77 @@ Keep the observation window short: every hour on OCI is an hour of writes to rec
 | `~/.flowmate-cutover.env` on the Mini | holds the Supabase URL (600) | delete after the observation window |
 | `.env.production.pre-cutover-<ts>` on OCI | `~/flowmate/` (600, Supabase credentials) | keep until rollback is no longer an option |
 | `.env.production.bak` on OCI (pre-existing, not ours) | `~/flowmate/.env.production.bak`, mode **664**, holds Supabase credentials | user decision: `chmod 600` or remove; also `.env.production` itself is 664 until the cutover makes it 600 |
-| Previous `deploy.sh` | `~/flowmate/deploy/oci/deploy.sh.pre-oci-<ts>` (from step 0b; re-runs stack them, the oldest is the original) | after the branch is merged, update `~/flowmate` with the sequence below (NOT `git checkout`), then remove them |
+| Previous `deploy.sh` copies | `~/flowmate/deploy/oci/deploy.sh.pre-oci-<ts>` (step 0b; re-runs stack them, the oldest is the original) and `deploy.sh.pre-pull-<ts>` (update block) | after the branch is merged and `~/flowmate` is updated with the block below, and the 0b sha check passes |
 | `switch.state*` | `~/flowmate-db/workers/` | `.done-*` / `.failed-*` / `.rolledback-*` are history only (no env copies are kept there) |
 
 ### Updating ~/flowmate after step 0b
 
-Step 0b overwrites the tracked `~/flowmate/deploy/oci/deploy.sh`. Once this branch is on `main`,
-`git pull` (CLAUDE.md §9.5) and `deploy.sh build` (it runs `git pull origin main`) abort with
-"Please commit your changes or stash them", even though the content is identical. Separately,
-`src/lib/crawler/worker.ts` on OCI has pre-existing uncommitted changes (not ours) that block the
-pull too as soon as `main` touches that file: the operator decides what to do with them **before**
-this sequence; it does not touch them.
-1. Park the local copy and pull (if the pull fails or `main` has no guard yet, this block itself puts
-   the guarded copy back):
-   ```bash
-   # on OCI
-   git -C ~/flowmate stash push -- deploy/oci/deploy.sh
-   if git -C ~/flowmate pull --ff-only origin main &&
-      [ "$(grep -c 'flowmate-deploy-guard: v1' ~/flowmate/deploy/oci/deploy.sh)" = 1 ]; then
-     echo "pull ok, guard present: run the step 0b sha check from the Mini, then step 3"
-   else
-     git -C ~/flowmate stash pop   # guarded copy live again; stop here
-   fi
-   ```
-2. Re-run the step 0b sha check (the `{ ... } | ssh oci 'sha256sum -c --quiet'` command) from a Mini
-   checkout of the same `main` commit; it must print "OCI scripts (incl. deploy.sh) == branch":
-   ```bash
-   # on Mini (FlowMate checkout at origin/main)
-   git -C /Volumes/포터블/Production/FlowMate rev-parse HEAD; ssh oci 'git -C ~/flowmate rev-parse HEAD'   # same commit
-   ```
-3. Only if step 1 printed "pull ok" AND the step 2 sha check passed (if the sha check failed, run
-   `git -C ~/flowmate stash pop` instead and investigate):
-   ```bash
-   # on OCI
-   git -C ~/flowmate stash drop    # main now carries the guarded deploy.sh
-   ```
-Do **not** start with `git checkout -- deploy/oci/deploy.sh`: it reinstates the unguarded script,
-and if the pull then fails (e.g. on `worker.ts`) the unguarded script stays live.
+Step 0b overwrites the tracked `~/flowmate/deploy/oci/deploy.sh`, so a plain `git pull` (CLAUDE.md
+§9.5) or `deploy.sh build` (it runs `git pull origin main`) refuses as soon as `main` changes that
+file. Use the block below instead. It never uses `git stash` (an operator's own stashes are left
+alone), keeps a copy of the live deploy.sh, and ends with a guarded deploy.sh that parses: main's
+when main's qualifies, otherwise the copy from before the pull.
+
+**Current blockers on OCI** (checked read-only on 2026-11-03; the operator decides how to resolve
+them **before** running the block, the block does not touch them):
+- `src/lib/crawler/worker.ts` has uncommitted changes and already differs from `main`.
+- `src/lib/crawler/content-agency-parser.ts` is untracked on OCI while `origin/main` ships it: git
+  refuses the fast-forward for an untracked path that `main` adds, whatever its content.
+- `~/flowmate` is about 17 commits behind `origin/main`.
+
+Any other `M`/`??` path in `git -C /home/ubuntu/flowmate status --short` blocks the pull only if
+`main` also touches it.
+
+<!-- flowmate-update-block:begin -->
+```bash
+# on OCI: fast-forward ~/flowmate to origin/main, keep a guarded deploy.sh live (no git stash)
+(
+  R=/home/ubuntu/flowmate
+  F=deploy/oci/deploy.sh
+  usable() { [ "$(grep -c 'flowmate-deploy-guard: v1' "$1" 2>/dev/null)" = 1 ] && bash -n "$1" 2>/dev/null && ! grep -qE '^(<<<<<<<|>>>>>>>)' "$1"; }
+  SAVED="$R/$F.pre-pull-$(date -u +%Y%m%dT%H%M%SZ)"
+  cp -p "$R/$F" "$SAVED" || exit 1
+  if git -C "$R" diff --quiet HEAD -- "$F"; then
+    echo "deploy.sh equals HEAD: nothing parked"
+  else
+    git -C "$R" checkout -- "$F" || exit 1
+    echo "local deploy.sh parked as $SAVED; HEAD's copy is back for the pull"
+  fi
+  if ! git -C "$R" pull --ff-only origin main; then
+    cp -p "$SAVED" "$R/$F"
+    git -C "$R" status --short
+    echo "PULL REFUSED; deploy.sh is back as before. Any M/?? path above that main also touches blocks the pull; resolve it first."
+    exit 1
+  fi
+  if usable "$R/$F"; then
+    echo "OK: HEAD $(git -C "$R" rev-parse --short HEAD); main's deploy.sh is guarded and parses. Next: the step 0b sha check from the Mini."
+  elif usable "$SAVED"; then
+    cp -p "$SAVED" "$R/$F"
+    echo "WARNING: main's deploy.sh is unguarded or broken; the guarded copy from before the pull is live again. Fix main before any deploy."
+    exit 1
+  else
+    echo "WARNING: neither main's nor the previous deploy.sh is guarded and parses: run step 0b before any deploy."
+    exit 1
+  fi
+)
+```
+<!-- flowmate-update-block:end -->
+
+The block runs in a subshell, so its `exit` does not close the SSH session. It refuses (exit 1,
+nothing lost) when the pull is refused or main's deploy.sh is unusable; it is safe to re-run, also
+after a success (deploy.sh then equals HEAD and nothing is parked). Each run leaves a
+`deploy.sh.pre-pull-<ts>` copy (cleanup checklist). `deploy/oci/db/tests/update-checkout.test.sh`
+runs exactly this block (extracted between the markers) against throwaway git repos.
+
+Then re-run the step 0b sha check (the `{ ... } | ssh oci 'sha256sum -c --quiet'` command) from a
+Mini checkout at the same `main` commit; it must print "OCI scripts (incl. deploy.sh) == branch":
+```bash
+# on Mini (FlowMate checkout at origin/main)
+git -C /Volumes/포터블/Production/FlowMate rev-parse HEAD; ssh oci 'git -C /home/ubuntu/flowmate rev-parse HEAD'   # same commit
+```
+If it does not match, the OCI copies (`/home/ubuntu/flowmate-db/*`) are older than `main`: re-run
+step 0b's rsync and sha check from that Mini checkout at `main`. Never copy an older deploy.sh back
+over main's guarded one.
 
 ## Ops quick reference
 

@@ -21,8 +21,9 @@
    `--restart unless-stopped`; their memory limits are revisited in Phase 1B.7.
    If promotion fails half-way (e.g. a port still in use), `deploy.sh` stops and prints the actual state
    of every service with the commands to finish or undo it.
-   After the DB runbook step 0b, `~/flowmate` holds a locally replaced `deploy/oci/deploy.sh`; `git pull`
-   and `build` need the sequence in `db/README.md` ("Updating ~/flowmate after step 0b").
+   After the DB runbook step 0b, `~/flowmate` holds a locally replaced `deploy/oci/deploy.sh`: check
+   `git status --short` and update with the block in `db/README.md` ("Updating ~/flowmate after
+   step 0b") instead of a plain `git pull` / `build` (no `git stash`).
 5. Verify: `./deploy/oci/deploy.sh status`
 
 ## Services

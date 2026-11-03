@@ -234,7 +234,14 @@ deploy_preflight() { # the deploy.sh that redeploys and the manual recovery path
   if [ ! -r "$DEPLOY_SH" ] || ! grep -qF "$DEPLOY_GUARD_MARKER" "$DEPLOY_SH"; then
     die "$DEPLOY_SH is not the guarded deploy.sh (marker '$DEPLOY_GUARD_MARKER' missing): install it first (README cutover step 0b)"
   fi
-  log "deploy.sh preflight ok: $DEPLOY_SH carries '$DEPLOY_GUARD_MARKER'"
+  # A merge/stash conflict can leave a file that still carries the marker but is not a usable script.
+  if grep -qE '^(<<<<<<<|>>>>>>>)' "$DEPLOY_SH"; then
+    die "$DEPLOY_SH contains git conflict markers: reinstall the guarded deploy.sh (README cutover step 0b)"
+  fi
+  if ! bash -n "$DEPLOY_SH" 2>/dev/null; then
+    die "$DEPLOY_SH does not parse (bash -n failed): reinstall the guarded deploy.sh (README cutover step 0b)"
+  fi
+  log "deploy.sh preflight ok: $DEPLOY_SH carries '$DEPLOY_GUARD_MARKER' and parses"
 }
 db_preflight() {
   if [ "$TEST_MODE" = 1 ] && [ "${FLOWMATE_WORKERS_SKIP_DB_PREFLIGHT:-0}" = 1 ]; then log "DB preflight skipped (test mode)"; return 0; fi

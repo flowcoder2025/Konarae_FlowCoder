@@ -18,9 +18,10 @@
 # flowmate-crawler:pr9 while flowmate-crawler:latest is older):
 #   CRAWLER_IMAGE=flowmate-crawler:pr9 EMBEDDING_IMAGE=... PARSER_IMAGE=... ./deploy.sh start
 # Current refs: docker container inspect -f '{{.Config.Image}}' flowmate-crawler (etc.)
-# build: runs `git pull origin main` in ~/flowmate; it fails (with a hint) while the checkout has
-# local changes, e.g. this guarded deploy.sh installed by the DB runbook step 0b or a modified
-# src/lib/crawler/worker.ts. Update procedure: deploy/oci/db/README.md, "Updating ~/flowmate after step 0b".
+# build: runs `git pull origin main` in ~/flowmate; it fails (with a hint) when a local M/?? path
+# that main also touches is in the way, e.g. this guarded deploy.sh installed by the DB runbook
+# step 0b, a modified src/lib/crawler/worker.ts or an untracked src/lib/crawler/content-agency-parser.ts.
+# Check `git status --short`, then use deploy/oci/db/README.md, "Updating ~/flowmate after step 0b".
 # Host nginx (systemd) owns :80; this script does not run an nginx container.
 # For the DB cutover use deploy/oci/db/switch-workers.sh instead (keeps the running config).
 
@@ -143,11 +144,16 @@ print_promotion_recovery() { # FAILED_INDEX STEP OLD_IMAGE
         rename) echo "  - $name: $gone; the new one is still named $cand. Finish: ${DOCKER[*]} rename $cand $name && ${DOCKER[*]} start $name" ;;
         start) echo "  - $name: $gone; the new one is named $name but NOT started (Created). Fix the cause (e.g. free its port), then: ${DOCKER[*]} start $name" ;;
       esac
-      if [ -n "$old_image" ]; then
-        echo "      previous image of $name: $old_image. To go back instead: ${DOCKER[*]} rm $name, then re-create it from that image (same options as in this script). Use the sha256 id: the tag may already point at the new build."
-      else
-        echo "      to undo instead: ${DOCKER[*]} rm $name (or $cand if the rename did not happen)"
-      fi
+      # Only after rename/start does $name hold the NEW container; at stop/rm it is still the old
+      # one (maybe running), so "rm $name" there would destroy the service.
+      case "$step" in
+        rename | start)
+          if [ -n "$old_image" ]; then
+            echo "      previous image of $name: $old_image. To go back instead: ${DOCKER[*]} rm $name, then re-create it from that image (same options as in this script). Use the sha256 id: the tag may already point at the new build."
+          else
+            echo "      to undo instead: ${DOCKER[*]} rm $name (or $cand if the rename did not happen)"
+          fi ;;
+      esac
     fi
   done
 }
@@ -174,7 +180,7 @@ case "${1:-help}" in
     log "Building Docker images..."
     cd "$PROJECT_DIR"
     git pull origin main || {
-      error "git pull failed. If ~/flowmate has local changes (the guarded deploy/oci/deploy.sh from DB runbook step 0b, src/lib/crawler/worker.ts, ...), follow deploy/oci/db/README.md 'Updating ~/flowmate after step 0b'. Do NOT 'git checkout -- deploy/oci/deploy.sh' first."
+      error "git pull failed. Check 'git -C $PROJECT_DIR status --short': any M/?? path that main also touches blocks the pull (e.g. the guarded deploy/oci/deploy.sh from DB runbook step 0b, src/lib/crawler/worker.ts, untracked src/lib/crawler/content-agency-parser.ts). Update with the block in deploy/oci/db/README.md 'Updating ~/flowmate after step 0b' (no git stash; do not discard the guarded deploy.sh by hand)."
       exit 1
     }
 
