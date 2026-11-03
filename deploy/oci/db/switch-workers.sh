@@ -34,7 +34,7 @@
 #              refuses with zero mutations otherwise, printing the manual path. Valid only until
 #              --done or the first `deploy.sh restart`, whichever comes first.
 #   complete   requires `docker container inspect -f '{{.Id}} {{.State.Running}}' <name>` == "<candidate> true".
-#   rollback   records per-container sub-steps (c.<name>.rb: start -> cand_parked -> orig_named ->
+#   rollback   records per-container sub-steps (c.<name>.rb: start [-> cand_removing] -> cand_parked -> orig_named ->
 #              orig_restart_set -> orig_started -> finished) and reconciles by the recorded container ids,
 #              so a rollback killed between its two renames resumes.
 #   deploy.sh  dry run and --apply refuse unless $DEPLOY_SH (the script the manual recovery path and
@@ -140,7 +140,7 @@ trap on_exit EXIT
 
 # ---------------------------------------------------------------- helpers
 # di FALLBACK FORMAT OBJ: docker container inspect -f, or FALLBACK if no such CONTAINER exists.
-# Always `docker container inspect`: a plain `docker inspect flowmate-crawler` falls back to the
+# Always `docker container inspect`: the generic docker-inspect of flowmate-crawler falls back to the
 # IMAGE of that name when no container has it (all worker names are image tags on OCI). Also,
 # docker prints an empty line for a missing object, so `... || echo x` is not enough.
 di() { local out; if out=$(docker container inspect -f "$2" "$3" 2>/dev/null); then printf '%s\n' "$out"; else printf '%s\n' "$1"; fi; }
@@ -387,10 +387,13 @@ apply_container() {
     log "$name: switched (network flowmate, NET_RAW dropped, DB -> flowmate-db); original kept as $prev"
   fi
 }
-rb_set() { # NAME SUBSTEP (+ test hook)
-  state_set "c.$1.rb" "$2"
-  if [ "$TEST_MODE" = 1 ] && [ "${FLOWMATE_WORKERS_CRASH_AFTER:-}" = "$1:rb:$2" ]; then kill -KILL $$; fi
+test_crash_point() { # LABEL -- test mode only: SIGKILL ourselves here (no trap runs)
+  if [ "$TEST_MODE" = 1 ] && [ "${FLOWMATE_WORKERS_CRASH_AFTER:-}" = "$1" ]; then kill -KILL $$; fi
   return 0
+}
+rb_set() { # NAME SUBSTEP
+  state_set "c.$1.rb" "$2"
+  test_crash_point "$1:rb:$2"
 }
 rollback_container() { # idempotent, driven by the recorded container ids and the rb sub-step
   local name=$1 orig cand restart ts park started
@@ -407,7 +410,13 @@ rollback_container() { # idempotent, driven by the recorded container ids and th
       [ "$(di "" '{{.Name}}' "$cand")" = "/$park" ] || docker rename "$cand" "$park"
       log "$name: new container kept stopped as $park"
     else
-      docker rm -f "$cand" >/dev/null   # created, never started: holds nothing
+      # Created, never started: holds nothing. Record the step first: if we die right after the
+      # rm, the name resolves to nothing and the candidate is gone; rb=cand_removing tells the
+      # preflight that this is our own half-done rollback (safe to resume: the original is
+      # renamed back next), not an outside change.
+      rb_set "$name" cand_removing
+      docker rm -f "$cand" >/dev/null
+      test_crash_point "$name:rb:cand_removed"
     fi
   fi
   rb_set "$name" cand_parked

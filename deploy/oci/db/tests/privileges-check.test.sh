@@ -7,7 +7,7 @@
 export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 PYTHONUTF8=1 PYTHONIOENCODING=utf-8
 set -euo pipefail
 DB_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-image=${1:-$(docker inspect -f '{{.Config.Image}}' flowmate-db)}
+image=${1:-$(docker container inspect -f '{{.Config.Image}}' flowmate-db)}
 name="flowmate-privtest-$$"
 trap 'docker rm -f -v "$name" >/dev/null 2>&1 || true' EXIT
 

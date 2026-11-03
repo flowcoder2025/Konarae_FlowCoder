@@ -8,7 +8,7 @@
 export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 PYTHONUTF8=1 PYTHONIOENCODING=utf-8
 set -uo pipefail
 DB_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-image=$(docker inspect -f '{{.Config.Image}}' flowmate-pgbouncer)
+image=$(docker container inspect -f '{{.Config.Image}}' flowmate-pgbouncer)
 pfx="flowmate-swtest-$$"
 work=$(mktemp -d)
 cleanup() {
@@ -311,6 +311,24 @@ docker image inspect "$n:latest" >/dev/null 2>&1 && [ -z "$(docker ps -a -q --fi
 sw --rollback >"$work/t1.out" 2>&1 || { cat "$work/t1.out"; bad "T resume"; }
 [ "$(insp "$n" '{{.Id}} {{.State.Status}}')" = "$orig_id running" ] &&
   ok "name shadowed by an image tag: rollback resumes (container lookups never resolve the image)" || bad "T"
+rm_all "$n"
+
+# ================================================================ U: rollback killed right after removing a never-started candidate
+scenario u
+n="$pfx-u"
+fixture "$n" --init "$image" sleep 86400
+orig_id=$(insp "$n" '{{.Id}}')
+extra_env=(FLOWMATE_WORKERS_CRASH_AFTER="$n:new_named")      # candidate holds the name, never started
+sw --apply --containers "$n" >/dev/null 2>&1
+cand_id=$(statephase "c.$n.cand_id")
+extra_env=(FLOWMATE_WORKERS_CRASH_AFTER="$n:rb:cand_removed") # die between the rm and the next sub-step
+sw --rollback >/dev/null 2>&1
+extra_env=()
+[ -z "$(docker ps -a -q --filter "name=^$n\$")" ] && ! docker container inspect "$cand_id" >/dev/null 2>&1 && [ "$(statephase "c.$n.rb")" = cand_removing ] &&
+  ok "rollback SIGKILLed right after removing the never-started candidate: name resolves to nothing, rb=cand_removing" || bad "U crash state"
+sw --rollback >"$work/u.out" 2>&1 || { cat "$work/u.out"; bad "U resume"; }
+[ "$(insp "$n" '{{.Id}} {{.State.Status}} {{.HostConfig.RestartPolicy.Name}}')" = "$orig_id running always" ] && [ "$(sha "$sdir/.env.production")" = "$orig_sha" ] &&
+  ok "--rollback resumed from rb=cand_removing: original back under its name" || bad "U"
 rm_all "$n"
 
 echo "$pass passed, $fail failed"

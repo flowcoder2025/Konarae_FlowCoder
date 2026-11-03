@@ -17,7 +17,10 @@
 # start needs explicit image refs (no implicit :latest -- e.g. the live crawler runs
 # flowmate-crawler:pr9 while flowmate-crawler:latest is older):
 #   CRAWLER_IMAGE=flowmate-crawler:pr9 EMBEDDING_IMAGE=... PARSER_IMAGE=... ./deploy.sh start
-# Current refs: docker inspect -f '{{.Config.Image}}' flowmate-crawler (etc.)
+# Current refs: docker container inspect -f '{{.Config.Image}}' flowmate-crawler (etc.)
+# build: runs `git pull origin main` in ~/flowmate; it fails (with a hint) while the checkout has
+# local changes, e.g. this guarded deploy.sh installed by the DB runbook step 0b or a modified
+# src/lib/crawler/worker.ts. Update procedure: deploy/oci/db/README.md, "Updating ~/flowmate after step 0b".
 # Host nginx (systemd) owns :80; this script does not run an nginx container.
 # For the DB cutover use deploy/oci/db/switch-workers.sh instead (keeps the running config).
 
@@ -71,7 +74,7 @@ validate_start() {
   for var in CRAWLER_IMAGE EMBEDDING_IMAGE PARSER_IMAGE; do
     ref="${!var:-}"
     if [ -z "$ref" ]; then
-      error "$var is not set: pass an explicit image ref (see: docker inspect -f '{{.Config.Image}}' <container>)"
+      error "$var is not set: pass an explicit image ref (see: docker container inspect -f '{{.Config.Image}}' <container>)"
       return 1
     fi
     "${DOCKER[@]}" image inspect "$ref" >/dev/null 2>&1 || { error "$var=$ref: image not found"; return 1; }
@@ -111,19 +114,57 @@ drop_candidates() {
   CANDIDATES=()
   error "creating the new containers failed; nothing was stopped (new containers removed)"
 }
-# If this fails half-way (e.g. a port still busy), the services already promoted run the new
-# containers, the rest are stopped/removed and their new container is left created but not started
-# as flowmate-<svc>-next-<ts>. Manual recovery: `docker rename flowmate-<svc>-next-<ts> flowmate-<svc>`
-# then `docker start flowmate-<svc>` for each left-over -next- container (`docker ps -a | grep -- -next-`).
-promote_candidates() { # stop + remove the old container, give the candidate its name, start it
-  local pair name cand
-  for pair in "${CANDIDATES[@]}"; do
+# Promotion, per service in order: stop old -> rm old -> rename candidate -> start. If a step
+# fails, the script stops there and prints the ACTUAL state of every service with the commands to
+# finish or undo it (print_promotion_recovery): services before the failed one are promoted;
+# the failed one depends on the step (e.g. a failed start leaves the old container removed and
+# the new one named <service> but only "Created"); services after it are untouched (old container
+# still running) and only their unused <service>-next-<ts> candidate has to be removed.
+print_promotion_recovery() { # FAILED_INDEX STEP OLD_IMAGE
+  local failed_idx=$1 step=$2 old_image=$3 i pair name cand gone="the old container was removed"
+  [ -n "$old_image" ] || gone="there was no old container"
+  error "promotion stopped at step '$step'. Actual state and recovery, per service:"
+  for i in "${!CANDIDATES[@]}"; do
+    pair=${CANDIDATES[$i]}
     name=${pair%%=*}
     cand=${pair#*=}
-    "${DOCKER[@]}" stop "$name" >/dev/null 2>&1 || true
-    "${DOCKER[@]}" rm "$name" >/dev/null 2>&1 || true
-    "${DOCKER[@]}" rename "$cand" "$name"
-    "${DOCKER[@]}" start "$name" >/dev/null
+    if [ "$i" -lt "$failed_idx" ]; then
+      echo "  - $name: promoted (new container running). Nothing to do."
+    elif [ "$i" -gt "$failed_idx" ]; then
+      if "${DOCKER[@]}" container inspect "$name" >/dev/null 2>&1; then
+        echo "  - $name: untouched (old container still running). Remove the unused new container: ${DOCKER[*]} rm $cand"
+      else # `start` path: there was no old container
+        echo "  - $name: no old container; the new one is still named $cand (not started). Finish: ${DOCKER[*]} rename $cand $name && ${DOCKER[*]} start $name ; or remove it: ${DOCKER[*]} rm $cand"
+      fi
+    else
+      case "$step" in
+        stop) echo "  - $name: FAILED to stop the old container (it may still be running). The new container was not used: ${DOCKER[*]} rm $cand" ;;
+        rm) echo "  - $name: FAILED to remove the old container; it is stopped. Bring it back: ${DOCKER[*]} start $name ; remove the unused new container: ${DOCKER[*]} rm $cand" ;;
+        rename) echo "  - $name: $gone; the new one is still named $cand. Finish: ${DOCKER[*]} rename $cand $name && ${DOCKER[*]} start $name" ;;
+        start) echo "  - $name: $gone; the new one is named $name but NOT started (Created). Fix the cause (e.g. free its port), then: ${DOCKER[*]} start $name" ;;
+      esac
+      if [ -n "$old_image" ]; then
+        echo "      previous image of $name: $old_image. To go back instead: ${DOCKER[*]} rm $name, then re-create it from that image (same options as in this script). Use the sha256 id: the tag may already point at the new build."
+      else
+        echo "      to undo instead: ${DOCKER[*]} rm $name (or $cand if the rename did not happen)"
+      fi
+    fi
+  done
+}
+promote_candidates() { # stop + remove the old container, give the candidate its name, start it
+  local i pair name cand old_image
+  for i in "${!CANDIDATES[@]}"; do
+    pair=${CANDIDATES[$i]}
+    name=${pair%%=*}
+    cand=${pair#*=}
+    old_image=""
+    if "${DOCKER[@]}" container inspect "$name" >/dev/null 2>&1; then
+      old_image=$("${DOCKER[@]}" container inspect -f '{{.Config.Image}} ({{.Image}})' "$name" 2>/dev/null || true)
+      "${DOCKER[@]}" stop "$name" >/dev/null || { print_promotion_recovery "$i" stop "$old_image"; exit 1; }
+      "${DOCKER[@]}" rm "$name" >/dev/null || { print_promotion_recovery "$i" rm "$old_image"; exit 1; }
+    fi
+    "${DOCKER[@]}" rename "$cand" "$name" || { print_promotion_recovery "$i" rename "$old_image"; exit 1; }
+    "${DOCKER[@]}" start "$name" >/dev/null || { print_promotion_recovery "$i" start "$old_image"; exit 1; }
     log "started $name"
   done
 }
@@ -132,7 +173,10 @@ case "${1:-help}" in
   build)
     log "Building Docker images..."
     cd "$PROJECT_DIR"
-    git pull origin main
+    git pull origin main || {
+      error "git pull failed. If ~/flowmate has local changes (the guarded deploy/oci/deploy.sh from DB runbook step 0b, src/lib/crawler/worker.ts, ...), follow deploy/oci/db/README.md 'Updating ~/flowmate after step 0b'. Do NOT 'git checkout -- deploy/oci/deploy.sh' first."
+      exit 1
+    }
 
     TAG="${IMAGE_TAG:-$(git rev-parse --short HEAD)}"
 

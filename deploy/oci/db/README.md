@@ -250,6 +250,7 @@ never "Supabase vs OCI" after the switch (legitimate logins make OCI diverge) an
    paused (Phase 0). Note the `/projects` TTFB. In the operator shell on the Mini (bash or zsh),
    **before any `.env.local` change**:
    ```bash
+   # on Mini
    cd /Volumes/포터블/Production/FlowMate && set -a && source .env.local && set +a
    umask 077; cp -p .env.local ~/.flowmate-cutover.env.local && chmod 600 ~/.flowmate-cutover.env.local   # rollback restores it
    printf 'SUPABASE_SOURCE_URL=%q\n' "$DIRECT_URL" > ~/.flowmate-cutover.env   # %q: safe to `source` (& # spaces); never echoed
@@ -267,8 +268,12 @@ never "Supabase vs OCI" after the switch (legitimate logins make OCI diverge) an
    `deploy/oci/db/*` go to `/home/ubuntu/flowmate-db/`, and the guarded `deploy/oci/deploy.sh` replaces
    the `main` copy in the `~/flowmate` checkout (old copy backed up next to it; `git -C ~/flowmate status`
    then shows it modified, which is expected). `switch-workers.sh` refuses to run unless that file
-   carries the `flowmate-deploy-guard: v1` marker.
+   carries the `flowmate-deploy-guard: v1` marker. Re-running 0b stacks backups
+   (`deploy.sh.pre-oci-<ts>`); the oldest one is the original `main` copy. After the branch is merged,
+   `~/flowmate` needs the update sequence in "Updating ~/flowmate after step 0b" below before any
+   `git pull` / `deploy.sh build`.
    ```bash
+   # on Mini
    TS=$(date -u +%Y%m%dT%H%M%SZ)
    rsync -a --exclude mini/ --exclude tests/ --exclude .DS_Store deploy/oci/db/ oci:flowmate-db/
    ssh oci "cp -p /home/ubuntu/flowmate/deploy/oci/deploy.sh /home/ubuntu/flowmate/deploy/oci/deploy.sh.pre-oci-$TS"
@@ -278,14 +283,21 @@ never "Supabase vs OCI" after the switch (legitimate logins make OCI diverge) an
      shasum -a 256 deploy/oci/deploy.sh | sed 's#  deploy/oci/deploy.sh#  /home/ubuntu/flowmate/deploy/oci/deploy.sh#'
    } | ssh oci 'sha256sum -c --quiet' && echo "OCI scripts (incl. deploy.sh) == branch"
    ssh oci /home/ubuntu/flowmate-db/install.sh          # idempotent; must end with "install ok"
-   # validation only (no container is created, stopped or started); before the switch it MUST refuse,
-   # because .env.production still points at Supabase:
+   # `deploy.sh check` = validate_start only: it inspects the network and images and reads
+   # .env.production; it never creates, stops or starts a container.
+   # Run 1: before the switch it MUST refuse, because .env.production still points at Supabase.
+   # It stops at the DB-host check, i.e. BEFORE the image refs and `docker image inspect` are checked,
+   # so run 1 proves only the guard.
    ssh oci 'R() { docker container inspect -f "{{.Config.Image}}" "$1"; }; CRAWLER_IMAGE=$(R flowmate-crawler) EMBEDDING_IMAGE=$(R flowmate-embedding) PARSER_IMAGE=$(R flowmate-parser) /home/ubuntu/flowmate/deploy/oci/deploy.sh check'
+   # Run 2 (same validation, DB-host check overridden): proves the network exists and the three
+   # image refs resolve; must end with "start prerequisites ok".
+   ssh oci 'R() { docker container inspect -f "{{.Config.Image}}" "$1"; }; FLOWMATE_ALLOW_NON_OCI_DB=1 CRAWLER_IMAGE=$(R flowmate-crawler) EMBEDDING_IMAGE=$(R flowmate-embedding) PARSER_IMAGE=$(R flowmate-parser) /home/ubuntu/flowmate/deploy/oci/deploy.sh check'
    ```
 1. **Supabase pre-check:** no running/pending jobs; mark the 10-30 hung crawl jobs failed now (a
    write — confirm first; after step 2 writes fail). Also list which roles hold sessions — every app
    role must be covered by the fence (expected: only `postgres` via the pooler):
    ```bash
+   # on Mini
    SB psql -X -v ON_ERROR_STOP=1 <<'SQL'
    SELECT 'CrawlJob', status, count(*) FROM "CrawlJob" WHERE status IN ('running','pending') GROUP BY 2
    UNION ALL SELECT 'pipeline_jobs', status, count(*) FROM pipeline_jobs WHERE status IN ('running','pending') GROUP BY 2;
@@ -295,6 +307,7 @@ never "Supabase vs OCI" after the switch (legitimate logins make OCI diverge) an
 2. **Write fence on Supabase.** Run it in an explicit `BEGIN READ WRITE` transaction so the admin
    session can never get stuck read-only, then end the existing sessions (they keep their old default):
    ```bash
+   # on Mini
    SB psql -X -v ON_ERROR_STOP=1 <<'SQL'
    BEGIN READ WRITE;
    ALTER ROLE postgres IN DATABASE postgres SET default_transaction_read_only = on;
@@ -306,6 +319,7 @@ never "Supabase vs OCI" after the switch (legitimate logins make OCI diverge) an
    Check from a **new** session (the default applies at session start; no ON_ERROR_STOP, the
    UPDATE is expected to fail):
    ```bash
+   # on Mini
    SB psql -X <<'SQL'
    SHOW default_transaction_read_only;                              -- on
    UPDATE "CrawlSource" SET "updatedAt" = "updatedAt" WHERE false;  -- ERROR: cannot execute UPDATE in a read-only transaction
@@ -323,6 +337,7 @@ never "Supabase vs OCI" after the switch (legitimate logins make OCI diverge) an
    timestamps cannot (e.g. `credits` balances, `Account` tokens). Runtime on Supabase: ~38 s (~11 s
    without `document_embeddings`), measured 2026-11-02.
    ```bash
+   # on Mini
    STAMP=$(date -u +%Y%m%d-%H%M); OUT=/Volumes/포터블/Backups/FlowMate
    M="$OUT/flowmate-public-migrate-$STAMP.dump"; FULL="$OUT/flowmate-public-full-$STAMP.dump"
    TAB=$(printf '\t'); Q() { SB psql -X -q -At -F "$TAB" -v ON_ERROR_STOP=1 -f - < "deploy/oci/db/$1"; }
@@ -342,6 +357,7 @@ never "Supabase vs OCI" after the switch (legitimate logins make OCI diverge) an
    staging against the counts manifest AND the content checksums: that is the proof "OCI staging ==
    Supabase at dump time" (`document_embeddings` excluded and required to be empty):
    ```bash
+   # on Mini
    rsync -t --chmod=F600 "$M" "$M.sha256" "$M.counts.tsv" "$M.latest.tsv" "$M.checksums.tsv" oci:backup/flowmate-migrate/
    B=$(basename "$M")
    ssh oci "~/flowmate-db/restore.sh --require-checksums --manifest-exclude document_embeddings ~/backup/flowmate-migrate/$B"          # stage + verify, prints the token
@@ -350,6 +366,7 @@ never "Supabase vs OCI" after the switch (legitimate logins make OCI diverge) an
 5. **Extra pre-switch checks** (Supabase is fenced, so it is still at the dump state). Tunnel and
    admin URL, the password read over SSH into the variable, never printed:
    ```bash
+   # on Mini
    ssh -f -N -o ControlMaster=no -o ControlPath=none -L 5433:127.0.0.1:5433 oci
    export OCI_OWNER_URL="postgresql://flowmate_owner:$(ssh oci "sed -n 's/^FLOWMATE_OWNER_PASSWORD=//p' ~/flowmate-db/.env")@127.0.0.1:5433/flowmate?sslmode=disable"
    npx tsx scripts/db/compare-row-counts.ts --source-env SUPABASE_SOURCE_URL --target-env OCI_OWNER_URL --exclude document_embeddings   # exit 0
@@ -382,17 +399,21 @@ never "Supabase vs OCI" after the switch (legitimate logins make OCI diverge) an
    `FLOWMATE_ALLOW_NON_OCI_DB=1`. Run it in a tmux session on OCI, so a dropped SSH connection
    does not interrupt it:
    ```bash
+   # on Mini: open (or re-attach to) the tmux session on OCI
    ssh -t oci tmux new -A -s cutover
-   # inside the tmux session on OCI:
+   ```
+   ```bash
+   # on OCI (inside tmux cutover)
    /home/ubuntu/flowmate-db/switch-workers.sh            # dry run: preflight, candidates checked and removed, nothing changed
    /home/ubuntu/flowmate-db/switch-workers.sh --apply
    ```
+   Then **detach with `Ctrl-b d`** (the session keeps running) and continue in the Mini shell.
    `--rollback` is valid **only until `switch-workers.sh --done` or the first `deploy.sh restart`,
    whichever comes first** (it refuses, without touching anything, if a container was replaced or an
-   original removed, and prints the manual path). After step 9 succeeds (in the tmux session):
-   `/home/ubuntu/flowmate-db/switch-workers.sh --done`.
+   original removed, and prints the manual path).
    **Verify real DB connectivity** (`/health` only reports memory). Prints `db ok` / `db FAIL <code>`, never the URL:
    ```bash
+   # on Mini (detached from tmux)
    for c in flowmate-crawler flowmate-embedding; do
      ssh oci "docker exec $c node -e 'const t=setTimeout(()=>{console.log(\"db FAIL timeout\");process.exit(2)},15000);let P;try{P=require(\"@prisma/client\").PrismaClient}catch(e){console.log(\"db FAIL no-prisma-client\");process.exit(2)}const p=new P({errorFormat:\"minimal\"});p.\$queryRawUnsafe(\"SELECT 1 AS ok\").then(()=>{console.log(\"db ok\")},e=>{console.log(\"db FAIL \"+(e.errorCode||e.code||e.name));process.exitCode=1}).finally(()=>{clearTimeout(t);return p.\$disconnect()})' 2>/dev/null"
    done
@@ -400,8 +421,12 @@ never "Supabase vs OCI" after the switch (legitimate logins make OCI diverge) an
    ```
    (The parser container has a SQLAlchemy module, but in the current image it fails to import —
    `Settings` has no `DEBUG` — so it holds no DB connection; check it with `/health` only.)
-   Any failure: `/home/ubuntu/flowmate-db/switch-workers.sh --rollback` in the tmux session (restores the previous
-   containers with their original env and network, and `.env.production` from the backup).
+   Any failure: re-attach (`ssh -t oci tmux new -A -s cutover`, on Mini) and roll back (restores the
+   previous containers with their original env and network, and `.env.production` from the backup):
+   ```bash
+   # on OCI (inside tmux cutover)
+   /home/ubuntu/flowmate-db/switch-workers.sh --rollback
+   ```
 7. **Vercel** (load the `vercel-account` skill first: flowcoder25 ↔ flowcoder25-1055): **Preview**
    `DATABASE_URL` and `DIRECT_URL` = the Vercel URL; preview deploy; check `/projects`,
    `/projects/[id]`, `/admin`. Then Production env + redeploy. Only now update the Mini
@@ -410,6 +435,7 @@ never "Supabase vs OCI" after the switch (legitimate logins make OCI diverge) an
    window): Supabase must still equal the dump-time manifest, i.e. nothing was written there after
    the dump. Do not compare against OCI here.
    ```bash
+   # on Mini
    Q row-counts.sql      | diff "$M.counts.tsv" -      # no output
    Q latest-writes.sql   | diff "$M.latest.tsv" -      # no output
    Q table-checksums.sql | diff "$M.checksums.tsv" -   # no output: no row of any table changed on Supabase
@@ -418,26 +444,54 @@ never "Supabase vs OCI" after the switch (legitimate logins make OCI diverge) an
    before going on (or roll back).
 9. After: `/projects` TTFB within +100ms of before (~0.7s), the step-6 DB checks, `/admin` opens,
    logins work (writes now go to OCI), 24h of logs (`docker logs flowmate-pgbouncer`,
-   `docker logs flowmate-db`, Vercel).
+   `docker logs flowmate-db`, Vercel). When all of that holds, retire the switch state (this ends
+   `--rollback`):
+   ```bash
+   # on Mini
+   ssh -t oci tmux new -A -s cutover
+   ```
+   ```bash
+   # on OCI (inside tmux cutover)
+   /home/ubuntu/flowmate-db/switch-workers.sh --done
+   ```
 
 ### Rollback
 
-1. **Dump OCI first** — it holds every write since the switch: `ssh oci /home/ubuntu/flowmate-db/backup.sh`
-   (keep that file; reconcile those writes into Supabase by hand if they matter).
+1. **Dump OCI first** — it holds every write since the switch (keep that file; reconcile those
+   writes into Supabase by hand if they matter):
+   ```bash
+   # on Mini
+   ssh oci /home/ubuntu/flowmate-db/backup.sh
+   ```
 2. Revert the env: Vercel Production (then Preview) back to the Supabase `DATABASE_URL`/`DIRECT_URL`
-   and redeploy; workers: `ssh -t oci tmux new -A -s cutover`, then `/home/ubuntu/flowmate-db/switch-workers.sh --rollback` (also restores
-   `~/flowmate/.env.production` from `.env.production.pre-cutover-<ts>`, sha256-checked; afterwards
-   `deploy.sh` needs `FLOWMATE_ALLOW_NON_OCI_DB=1`, since the file points at Supabase again). If
-   `--rollback` refuses (after `--done` or a `deploy.sh restart`), follow the manual path it prints:
-   `cp -p ~/flowmate/.env.production.pre-cutover-<ts> ~/flowmate/.env.production`, then
-   `FLOWMATE_ALLOW_NON_OCI_DB=1 CRAWLER_IMAGE=… EMBEDDING_IMAGE=… PARSER_IMAGE=… /home/ubuntu/flowmate/deploy/oci/deploy.sh restart`
-   (on OCI; it is the guarded copy installed in step 0b).
-   Mini: `cp -p ~/.flowmate-cutover.env.local /Volumes/포터블/Production/FlowMate/.env.local`.
+   and redeploy. Workers — `--rollback` also restores `~/flowmate/.env.production` from
+   `.env.production.pre-cutover-<ts>` (sha256-checked); afterwards `deploy.sh` needs
+   `FLOWMATE_ALLOW_NON_OCI_DB=1`, since the file points at Supabase again:
+   ```bash
+   # on Mini
+   ssh -t oci tmux new -A -s cutover
+   ```
+   ```bash
+   # on OCI (inside tmux cutover)
+   /home/ubuntu/flowmate-db/switch-workers.sh --rollback
+   ```
+   If `--rollback` refuses (after `--done` or a `deploy.sh restart`), follow the manual path it prints:
+   ```bash
+   # on OCI (inside tmux cutover); <ts> and the refs as printed by --rollback
+   cp -p ~/flowmate/.env.production.pre-cutover-<ts> ~/flowmate/.env.production
+   FLOWMATE_ALLOW_NON_OCI_DB=1 CRAWLER_IMAGE=<ref> EMBEDDING_IMAGE=<ref> PARSER_IMAGE=<ref> /home/ubuntu/flowmate/deploy/oci/deploy.sh restart
+   ```
+   (`deploy.sh` there is the guarded copy installed in step 0b.) Detach (`Ctrl-b d`), then:
+   ```bash
+   # on Mini
+   cp -p ~/.flowmate-cutover.env.local /Volumes/포터블/Production/FlowMate/.env.local
+   ```
 3. Lift the fence on Supabase — only now, so nothing writes to both sides. A new session is
    read-only, so the `RESET` must run in an explicit read-write transaction (a bare `ALTER ROLE ...
    RESET` fails with "cannot execute ALTER ROLE in a read-only transaction"); then end the pooled
    sessions so they reconnect writable:
    ```bash
+   # on Mini
    SB psql -X -v ON_ERROR_STOP=1 <<'SQL'
    BEGIN READ WRITE;
    ALTER ROLE postgres IN DATABASE postgres RESET default_transaction_read_only;
@@ -463,12 +517,48 @@ Keep the observation window short: every hour on OCI is an hour of writes to rec
 | `~/.flowmate-cutover.env` on the Mini | holds the Supabase URL (600) | delete after the observation window |
 | `.env.production.pre-cutover-<ts>` on OCI | `~/flowmate/` (600, Supabase credentials) | keep until rollback is no longer an option |
 | `.env.production.bak` on OCI (pre-existing, not ours) | `~/flowmate/.env.production.bak`, mode **664**, holds Supabase credentials | user decision: `chmod 600` or remove; also `.env.production` itself is 664 until the cutover makes it 600 |
-| Previous `deploy.sh` | `~/flowmate/deploy/oci/deploy.sh.pre-oci-<ts>` (from step 0b) | remove once the branch is merged and `~/flowmate` is updated |
+| Previous `deploy.sh` | `~/flowmate/deploy/oci/deploy.sh.pre-oci-<ts>` (from step 0b; re-runs stack them, the oldest is the original) | after the branch is merged, update `~/flowmate` with the sequence below (NOT `git checkout`), then remove them |
 | `switch.state*` | `~/flowmate-db/workers/` | `.done-*` / `.failed-*` / `.rolledback-*` are history only (no env copies are kept there) |
+
+### Updating ~/flowmate after step 0b
+
+Step 0b overwrites the tracked `~/flowmate/deploy/oci/deploy.sh`. Once this branch is on `main`,
+`git pull` (CLAUDE.md §9.5) and `deploy.sh build` (it runs `git pull origin main`) abort with
+"Please commit your changes or stash them", even though the content is identical. Separately,
+`src/lib/crawler/worker.ts` on OCI has pre-existing uncommitted changes (not ours) that block the
+pull too as soon as `main` touches that file: the operator decides what to do with them **before**
+this sequence; it does not touch them.
+1. Park the local copy and pull (if the pull fails or `main` has no guard yet, this block itself puts
+   the guarded copy back):
+   ```bash
+   # on OCI
+   git -C ~/flowmate stash push -- deploy/oci/deploy.sh
+   if git -C ~/flowmate pull --ff-only origin main &&
+      [ "$(grep -c 'flowmate-deploy-guard: v1' ~/flowmate/deploy/oci/deploy.sh)" = 1 ]; then
+     echo "pull ok, guard present: run the step 0b sha check from the Mini, then step 3"
+   else
+     git -C ~/flowmate stash pop   # guarded copy live again; stop here
+   fi
+   ```
+2. Re-run the step 0b sha check (the `{ ... } | ssh oci 'sha256sum -c --quiet'` command) from a Mini
+   checkout of the same `main` commit; it must print "OCI scripts (incl. deploy.sh) == branch":
+   ```bash
+   # on Mini (FlowMate checkout at origin/main)
+   git -C /Volumes/포터블/Production/FlowMate rev-parse HEAD; ssh oci 'git -C ~/flowmate rev-parse HEAD'   # same commit
+   ```
+3. Only if step 1 printed "pull ok" AND the step 2 sha check passed (if the sha check failed, run
+   `git -C ~/flowmate stash pop` instead and investigate):
+   ```bash
+   # on OCI
+   git -C ~/flowmate stash drop    # main now carries the guarded deploy.sh
+   ```
+Do **not** start with `git checkout -- deploy/oci/deploy.sh`: it reinstates the unguarded script,
+and if the pull then fails (e.g. on `worker.ts`) the unguarded script stays live.
 
 ## Ops quick reference
 
 ```bash
+# on Mini
 ssh oci 'docker ps --filter name=flowmate-'                         # both healthy
 ssh oci 'docker logs --tail 50 flowmate-pgbouncer'
 ssh oci 'docker exec -u postgres flowmate-db psql -d flowmate'      # superuser, local socket

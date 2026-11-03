@@ -4,7 +4,8 @@
 #    flowmate-db, explicit image refs) before anything is created, stopped or started;
 #  - restart `docker create`s all three new containers first and only then stops/removes the
 #    old ones; a failed create stops nothing;
-#  - guard messages never echo any part of the URL except a strictly parsed host.
+#  - guard messages never echo any part of the URL except a strictly parsed host;
+#  - a promotion that fails half-way prints the ACTUAL per-service state and recovery commands.
 #
 #   bash deploy/oci/db/tests/deploy-guard.test.sh
 # shellcheck disable=SC2015  # `check && ok ... || bad ...`: ok() always succeeds
@@ -19,7 +20,11 @@ echo "docker $*" >>"$STUB_LOG"
 case "$1" in
   network) exit "${STUB_NET_MISSING:-0}" ;;
   image) case "$3" in *missing*) exit 1 ;; esac ;;
-  container) exit "${STUB_EXISTS:-1}" ;;      # `container inspect NAME`: 1 = does not exist
+  container) # `container inspect [-f FMT] NAME`; STUB_EXISTS=0: the old workers exist, 1: none exist
+    [ "${STUB_EXISTS:-1}" = 0 ] || exit 1
+    [ "$3" = -f ] && echo "${5}:old-tag (sha256:old-$5)"
+    exit 0 ;;
+  start) case "$2" in "${STUB_START_FAIL:-@none@}") echo "Error: port is already allocated" >&2; exit 1 ;; esac ;;
   create) case "$*" in *"${STUB_CREATE_FAIL:-@none@}"*) echo "invalid env file" >&2; exit 125 ;; esac; echo "id-$RANDOM" ;;
 esac
 exit 0
@@ -78,7 +83,7 @@ run createfail restart STUB_CREATE_FAIL=flowmate-embedding-next && bad "create f
   ! touched_live createfail && grep -q '^docker rm -f flowmate-crawler-next-' "$work/createfail.log" &&
     ok "restart: 2nd docker create fails -> nothing stopped, the 1st new container removed" || { cat "$work/createfail.log"; bad "create failure"; }; }
 
-if run good restart; then
+if run good restart STUB_EXISTS=0; then
   c=$(grep -n '^docker create' "$work/good.log" | tail -n 1 | cut -d: -f1)
   s=$(grep -nE '^docker stop flowmate-(crawler|embedding|parser)$' "$work/good.log" | head -n 1 | cut -d: -f1)
   [ "$(grep -c '^docker create' "$work/good.log")" = 3 ] && [ -n "$c" ] && [ -n "$s" ] && [ "$c" -lt "$s" ] &&
@@ -89,6 +94,22 @@ if run good restart; then
     { cat "$work/good.log"; bad "restart valid case"; }
 else bad "restart valid case exited non-zero"; fi
 run startexists start STUB_EXISTS=0 && bad "start over existing containers should fail" || { ! touched_live startexists && ! created_any startexists && ok "start: refuses when the workers already exist (use restart)" || bad "start exists"; }
+
+# --- (I1) promotion fails at embedding's start (e.g. port busy): recovery text == real end state ---
+if run promofail restart STUB_EXISTS=0 STUB_START_FAIL=flowmate-embedding; then bad "promotion failure should exit non-zero"; else
+  L="$work/promofail.log"; O="$work/promofail.out"
+  # end state according to the stub log
+  grep -q '^docker start flowmate-crawler$' "$L" && grep -qE '^docker rename flowmate-embedding-next-[0-9TZ]+ flowmate-embedding$' "$L" &&
+    grep -q '^docker rm flowmate-embedding$' "$L" && grep -q '^docker start flowmate-embedding$' "$L" &&
+    ! grep -qE '^docker (stop|rm|rename|start) flowmate-parser( |$)' "$L" && pnext=$(grep -oE 'flowmate-parser-next-[0-9TZ]+' "$L" | head -n 1) && [ -n "$pnext" ] &&
+    ok "stub end state: crawler promoted, embedding old removed + candidate renamed but start failed, parser untouched with orphan $pnext" || bad "promofail end state"
+  # printed recovery must describe exactly that state
+  grep -q 'flowmate-crawler: promoted' "$O" && grep -q 'flowmate-embedding: the old container was removed; the new one is named flowmate-embedding but NOT started' "$O" &&
+    grep -q "start flowmate-embedding" "$O" && grep -q 'previous image of flowmate-embedding: flowmate-embedding:old-tag' "$O" &&
+    grep -q "flowmate-parser: untouched (old container still running)" "$O" && grep -q "rm $pnext" "$O" &&
+    ! grep -q 'rename flowmate-parser-next' "$O" &&
+    ok "printed recovery matches it: crawler nothing to do, 'docker start flowmate-embedding' (+ previous image), parser 'docker rm $pnext'" || { cat "$O"; bad "promofail recovery text"; }
+fi
 
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

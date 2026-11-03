@@ -12,13 +12,17 @@
 3. Build: `./deploy/oci/deploy.sh build` (tags images with the git short SHA and prints the start command)
 4. Start: `CRAWLER_IMAGE=flowmate-crawler:<tag> EMBEDDING_IMAGE=flowmate-embedding:<tag> PARSER_IMAGE=flowmate-parser:<tag> ./deploy/oci/deploy.sh start`
    (explicit refs are required; there is no implicit `:latest`. Currently running refs:
-   `docker inspect -f '{{.Config.Image}}' flowmate-crawler`, etc.)
+   `docker container inspect -f '{{.Config.Image}}' flowmate-crawler`, etc.)
    `check`, `start` and `restart` all need the three `*_IMAGE` variables. They validate everything first
    (network `flowmate`, image refs, exactly one `DATABASE_URL` in `.env.production` whose host is
    `flowmate-db`; override for a rollback: `FLOWMATE_ALLOW_NON_OCI_DB=1`); `check` runs only the
    validation. `start`/`restart` then `docker create` all three new containers (so docker parses the env
    file and options) and only after that stop and remove the old ones. Workers run with
    `--restart unless-stopped`; their memory limits are revisited in Phase 1B.7.
+   If promotion fails half-way (e.g. a port still in use), `deploy.sh` stops and prints the actual state
+   of every service with the commands to finish or undo it.
+   After the DB runbook step 0b, `~/flowmate` holds a locally replaced `deploy/oci/deploy.sh`; `git pull`
+   and `build` need the sequence in `db/README.md` ("Updating ~/flowmate after step 0b").
 5. Verify: `./deploy/oci/deploy.sh status`
 
 ## Services
