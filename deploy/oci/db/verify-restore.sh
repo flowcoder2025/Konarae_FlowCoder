@@ -11,7 +11,8 @@
 # separately from the restore result (exit 3).
 # Counts are compared with the manifest produced by the same row-counts.sql (the
 # plan's compare-row-counts.ts can't run on OCI: no node_modules there).
-# Appends one line to ~/backup/flowmate-db/verify.log. Exit 0 only on exact match.
+# Appends one line to ~/backup/flowmate-db/verify.log. Exit 0 only on exact match AND a recorded
+# success line; a verified restore whose OK line cannot be written is alerted and exits 4.
 export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 PYTHONUTF8=1 PYTHONIOENCODING=utf-8
 set -Eeuo pipefail
 umask 077
@@ -21,7 +22,7 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
 VERIFY_LOG="$FLOWMATE_BACKUP_DIR/verify.log"
 dump_label="?"
-# Best effort: a failing verify.log write must never stop the alert.
+# Failure path, best effort: a failing verify.log write must never stop the alert.
 record() {
   { printf '%s %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" >>"$VERIFY_LOG"; } 2>/dev/null ||
     log "could not write $VERIFY_LOG"
@@ -123,7 +124,15 @@ if ! diff_out=$(diff "$manifest" "$tmp_counts"); then
   fail "row counts differ ($(printf '%s\n' "$diff_out" | grep -c '^[<>]') lines)"
 fi
 
-record OK "$dump_label tables=$tables rows=$rows duration=$(($(date +%s) - started))s"
+# Success must be recorded: the monthly cron's only trace is this line (no alert on success).
+ok_recorded=1
+{ printf '%s %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" OK "$dump_label tables=$tables rows=$rows duration=$(($(date +%s) - started))s" >>"$VERIFY_LOG"; } 2>/dev/null ||
+  ok_recorded=0
 log "verify-restore ok: $dump_label tables=$tables rows=$rows"
+if [ "$ok_recorded" = 0 ]; then
+  log "verified OK but $VERIFY_LOG not writable"
+  alert "[FlowMate DB] restore of $dump_label verified OK on $(hostname -s), but $VERIFY_LOG is not writable"
+fi
 remove_container || exit 3
 log "cleanup ok: removed $cname and its volume(s) $own_volumes"
+[ "$ok_recorded" = 1 ] || exit 4

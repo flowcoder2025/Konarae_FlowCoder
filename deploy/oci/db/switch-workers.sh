@@ -42,7 +42,8 @@
 #              so a rollback killed between its two renames resumes.
 #   deploy.sh  dry run and --apply refuse unless $DEPLOY_SH (the script the manual recovery path and
 #              later redeploys use) carries the guard marker `flowmate-deploy-guard:` (runbook step 0b).
-# A failure during --apply rolls everything back and keeps switch.state.failed-<ts>.
+# A failure during --apply rolls everything back and keeps switch.state.failed-<ts>, except a failed
+# state-file write: that stops the run at once, without a rollback, and reports the last recorded step.
 # Originals are kept stopped as <name>-pre-oci-<ts>; remove them only after --done.
 # Merged env files and inspect dumps live in $STATE_DIR/work.<pid> (700) and are deleted on exit.
 export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 PYTHONUTF8=1 PYTHONIOENCODING=utf-8
@@ -86,21 +87,46 @@ WORK="$STATE_DIR/work.$$"
 install -d -m 700 "$WORK"
 created=()   # candidates created by THIS run that are not yet recorded in a state file
 mutating=0   # set once workers/env may have been changed; refusals before that leave the state untouched
+STATE_BROKEN=""   # set by state_fail: the record that could not be written (state file is stale from there on)
+IN_EXIT=0         # on_exit/on_signal are running: state_fail returns instead of exiting
 
 # ---------------------------------------------------------------- state file
 state_get() { [ -f "$STATE" ] && sed -n "s/^$(printf '%s' "$1" | sed 's/[.[\*^$/]/\\&/g')=//p" "$STATE" | tail -n 1 || true; }
-state_set() { # KEY VALUE [KEY VALUE ...] -- atomic rewrite
-  local tmp="$STATE.tmp.$$" k v
-  { [ -f "$STATE" ] && cat "$STATE"; true; } >"$tmp"
+# Every state write must succeed: the recorded phases drive --apply resume and --rollback, so a
+# container step must never run past a record that was not written (disk full, failed rename).
+# state_set therefore checks every I/O step and calls state_fail, which stops the script at once
+# (exit 1) -- also inside functions called from an `if` (errexit is off there, `exit` is not).
+# on_exit then reports instead of rolling back (an automatic rollback would need the same file).
+state_fail() { # WHAT REASON
+  STATE_BROKEN=$1
+  rm -f -- "$STATE.tmp.$$" "$STATE.tmp.$$.2" 2>/dev/null
+  log "STATE FILE UNWRITABLE: could not record '$1' in $STATE ($2); stopping before any further container or env change"
+  [ "$IN_EXIT" = 1 ] && return 1
+  exit 1
+}
+state_set() { # KEY VALUE [KEY VALUE ...] -- atomic rewrite (tmp + mv); any failure -> state_fail
+  local tmp="$STATE.tmp.$$" k v i j what=""
+  for ((i = 1; i < $#; i += 2)); do j=$((i + 1)); what+="${what:+ }${!i}=${!j}"; done
+  what=${what:0:240}
+  if [ "$TEST_MODE" = 1 ] && [ -n "${FLOWMATE_WORKERS_STATE_FAIL_AT:-}" ]; then   # test hook: KEY or KEY=VALUE
+    for ((i = 1; i < $#; i += 2)); do
+      j=$((i + 1))
+      if [ "$FLOWMATE_WORKERS_STATE_FAIL_AT" = "${!i}" ] || [ "$FLOWMATE_WORKERS_STATE_FAIL_AT" = "${!i}=${!j}" ]; then
+        state_fail "$what" "simulated write failure (FLOWMATE_WORKERS_STATE_FAIL_AT)"; return 1
+      fi
+    done
+  fi
+  if [ -f "$STATE" ]; then cat -- "$STATE" >"$tmp" || { state_fail "$what" "copy to $tmp failed"; return 1; }
+  else : >"$tmp" || { state_fail "$what" "cannot create $tmp"; return 1; }; fi
   while [ $# -ge 2 ]; do
     k=$1 v=$2
     shift 2
-    awk -v k="$k" -F= '{ key=$1 } key != k' "$tmp" >"$tmp.2"
-    printf '%s=%s\n' "$k" "$v" >>"$tmp.2"
-    mv -f "$tmp.2" "$tmp"
+    awk -v k="$k" -F= '{ key=$1 } key != k' "$tmp" >"$tmp.2" || { state_fail "$what" "rewrite failed"; return 1; }
+    printf '%s=%s\n' "$k" "$v" >>"$tmp.2" || { state_fail "$what" "append failed"; return 1; }
+    mv -f -- "$tmp.2" "$tmp" || { state_fail "$what" "rename of $tmp.2 failed"; return 1; }
   done
-  chmod 600 "$tmp"
-  mv -f "$tmp" "$STATE"
+  chmod 600 "$tmp" || { state_fail "$what" "chmod failed"; return 1; }
+  mv -f -- "$tmp" "$STATE" || { state_fail "$what" "rename to $STATE failed"; return 1; }
 }
 phase_idx() { local i; for i in "${!PHASES[@]}"; do [ "${PHASES[$i]}" = "$1" ] && { echo "$i"; return; }; done; echo -1; }
 cphase_set() { # NAME PHASE (+ test hooks)
@@ -116,22 +142,36 @@ signaled=0
 on_signal() {
   local sig=$1
   signaled=1
-  if [ -f "$STATE" ] && [ "$mutating" = 1 ]; then state_set interrupted "$sig at $(date -u +%Y-%m-%dT%H:%M:%SZ)"; fi
-  log "INTERRUPTED by $sig: state kept in $STATE; '$0 --apply' resumes a switch, '$0 --rollback' undoes it"
-  exit 130
+  IN_EXIT=1
+  if [ -f "$STATE" ] && [ "$mutating" = 1 ] && [ -z "$STATE_BROKEN" ]; then state_set interrupted "$sig at $(date -u +%Y-%m-%dT%H:%M:%SZ)"; fi
+  [ -n "$STATE_BROKEN" ] || log "INTERRUPTED by $sig: state kept in $STATE; '$0 --apply' resumes a switch, '$0 --rollback' undoes it"
+  exit 130   # on_exit reports a broken state file
+}
+state_broken_report() { # after a failed state write: what is known (reads only, writes nothing)
+  local c rb cs
+  read -r -a cs <<<"$(state_get containers)"
+  log "the state file stopped at: phase=$(state_get phase) env_phase=$(state_get env_phase)$(for c in "${cs[@]}"; do rb=$(state_get "c.$c.rb"); printf ' %s=%s%s' "$c" "$(state_get "c.$c.phase")" "${rb:+/rb:$rb}"; done)"
+  log "not recorded: '$STATE_BROKEN' -- the docker or env step it describes may already have happened"
+  log "no automatic rollback (it would have to write the same file). Make $STATE_DIR writable again (disk space, permissions), then run '$0 --rollback': its preflight compares the recorded container ids with the real ones and refuses, printing the manual path, if they no longer match. Do not run --apply before that."
 }
 on_exit() {
   local rc=$? c
   trap - ERR
   set +e
+  IN_EXIT=1
   if [ ! -f "$STATE" ]; then
-    # Nothing recorded yet: candidates of this run would otherwise be orphaned.
+    # Nothing recorded yet (also: the first state write failed): this run changed no worker and no
+    # env file, and its candidates would otherwise be orphaned.
     for c in "${created[@]}"; do docker rm -f "$c" >/dev/null 2>&1; done
+    [ -z "$STATE_BROKEN" ] || log "no state file was written; nothing was changed and this run's candidates were removed"
+  elif [ -n "$STATE_BROKEN" ]; then
+    state_broken_report
   elif [ "$rc" != 0 ] && [ "$signaled" = 0 ] && [ "$mutating" = 1 ]; then
     case "$(state_get phase)" in
       complete) ;;
       *) state_set interrupted "exit $rc at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-         log "stopped with exit $rc; state kept in $STATE (phase $(state_get phase))" ;;
+         log "stopped with exit $rc; state kept in $STATE (phase $(state_get phase))"
+         [ -z "$STATE_BROKEN" ] || state_broken_report ;;
     esac
   fi
   rm -rf -- "$WORK"

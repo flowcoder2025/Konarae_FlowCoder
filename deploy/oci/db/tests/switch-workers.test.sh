@@ -426,5 +426,66 @@ sw --apply --containers "$n" >"$work/yu.out" 2>&1 && bad "YU: apply with an unpa
   ok "YU: worker on flowmate with an unparseable DATABASE_URL refused, value not shown, no mutation" || { cat "$work/yu.out"; bad "YU"; }
 rm_all "$n"
 
+# ================================================================ SF1: state write fails at a container phase mid-apply
+scenario sf1
+n="$pfx-sf1"
+fixture "$n" --init "$image" sleep 86400
+orig_id=$(insp "$n" '{{.Id}}')
+extra_env=(FLOWMATE_WORKERS_STATE_FAIL_AT="c.$n.phase=stopped")
+sw --apply --containers "$n" >"$work/sf1.out" 2>&1; rc=$?
+extra_env=()
+cand=$(docker ps -a --filter "name=^$n-oci-candidate-" --format '{{.Names}}')
+[ "$rc" != 0 ] && grep -q "STATE FILE UNWRITABLE: could not record 'c.$n.phase=stopped'" "$work/sf1.out" &&
+  grep -q "state file stopped at: phase=switching env_phase=edited $n=restart_disabled" "$work/sf1.out" && grep -q 'no automatic rollback' "$work/sf1.out" &&
+  [ "$(insp "$n" '{{.Id}} {{.State.Status}} {{.HostConfig.RestartPolicy.Name}}')" = "$orig_id exited no" ] &&
+  [ -n "$cand" ] && [ "$(insp "$cand" '{{.State.Status}}')" = created ] && [ -z "$(docker ps -a -q --filter "name=^$n-pre-oci-")" ] &&
+  [ "$(statephase "c.$n.phase")" = restart_disabled ] && [ -z "$(statephase interrupted)" ] && [ -f "$sdir/state/switch.state" ] &&
+  ! ls "$sdir"/state/switch.state.failed-* >/dev/null 2>&1 && [ -z "$(find "$sdir/state" -name 'switch.state.tmp.*')" ] &&
+  ok "SF1: state write fails after 'docker stop': exit $rc, stops there (no rename/start, no auto-rollback, state untouched), report names the step" || { cat "$work/sf1.out"; bad "SF1"; }
+sw --rollback >"$work/sf1b.out" 2>&1 && [ "$(insp "$n" '{{.Id}} {{.State.Status}} {{.HostConfig.RestartPolicy.Name}}')" = "$orig_id running always" ] &&
+  [ "$(sha "$sdir/.env.production")" = "$orig_sha" ] &&
+  ok "SF1: once writable, --rollback recovers (original running, env restored)" || { cat "$work/sf1b.out"; bad "SF1 rollback"; }
+rm_all "$n"
+
+# ================================================================ SF2: state write fails during the env switch
+scenario sf2
+n="$pfx-sf2"
+fixture "$n" --init "$image" sleep 86400
+orig_id=$(insp "$n" '{{.Id}}')
+extra_env=(FLOWMATE_WORKERS_STATE_FAIL_AT="env_phase=edited")
+sw --apply --containers "$n" >"$work/sf2.out" 2>&1; rc=$?
+extra_env=()
+cand=$(docker ps -a --filter "name=^$n-oci-candidate-" --format '{{.Names}}')
+[ "$rc" != 0 ] && grep -q "STATE FILE UNWRITABLE: could not record 'env_phase=edited env_sha_after=" "$work/sf2.out" &&
+  [ "$(statephase env_phase)" = backed_up ] && [ "$(sha "$sdir/.env.production")" != "$orig_sha" ] &&
+  [ "$(insp "$n" '{{.Id}} {{.State.Status}} {{.HostConfig.RestartPolicy.Name}}')" = "$orig_id running always" ] &&
+  [ "$(insp "$cand" '{{.State.Status}}')" = created ] && [ "$(statephase "c.$n.phase")" = planned ] &&
+  ok "SF2: state write fails after the env rewrite: exit $rc, no container touched, state says backed_up" || { cat "$work/sf2.out"; bad "SF2"; }
+sw --rollback >"$work/sf2b.out" 2>&1 && [ "$(sha "$sdir/.env.production")" = "$orig_sha" ] &&
+  [ "$(insp "$n" '{{.Id}} {{.State.Status}}')" = "$orig_id running" ] &&
+  ok "SF2: --rollback restores .env.production from the backup" || { cat "$work/sf2b.out"; bad "SF2 rollback"; }
+rm_all "$n"
+
+# ================================================================ SF3: state write fails at a rollback sub-step
+scenario sf3
+n="$pfx-sf3"
+fixture "$n" --init "$image" sleep 86400
+orig_id=$(insp "$n" '{{.Id}}')
+sw --apply --containers "$n" >/dev/null 2>&1 || bad "SF3: apply"
+cand_id=$(statephase "c.$n.cand_id")
+extra_env=(FLOWMATE_WORKERS_STATE_FAIL_AT="c.$n.rb=orig_named")
+sw --rollback >"$work/sf3.out" 2>&1; rc=$?
+extra_env=()
+[ "$rc" != 0 ] && grep -q "STATE FILE UNWRITABLE: could not record 'c.$n.rb=orig_named'" "$work/sf3.out" &&
+  grep -q "$n=ready/rb:cand_parked" "$work/sf3.out" &&
+  [ "$(insp "$n" '{{.Id}} {{.State.Status}} {{.HostConfig.RestartPolicy.Name}}')" = "$orig_id exited no" ] &&
+  [ "$(insp "$cand_id" '{{.State.Status}} {{.Name}}')" = "exited /$n-oci-rolledback-$(statephase ts)" ] &&
+  [ "$(statephase "c.$n.rb")" = cand_parked ] && [ "$(statephase phase)" = rolling_back ] &&
+  ok "SF3: state write fails after the rename back: exit $rc, original not restarted (restart policy still 'no'), report shows rb:cand_parked" || { cat "$work/sf3.out"; bad "SF3"; }
+sw --rollback >"$work/sf3b.out" 2>&1 && [ "$(insp "$n" '{{.Id}} {{.State.Status}} {{.HostConfig.RestartPolicy.Name}}')" = "$orig_id running always" ] &&
+  [ "$(sha "$sdir/.env.production")" = "$orig_sha" ] &&
+  ok "SF3: a second --rollback resumes from cand_parked and finishes" || { cat "$work/sf3b.out"; bad "SF3 resume"; }
+rm_all "$n"
+
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

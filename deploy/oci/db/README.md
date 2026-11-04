@@ -171,8 +171,9 @@ the served certificate on PgBouncer 1.26.1. ACME account has no email.
   restores, runs `row-counts.sql`, diffs with `<dump>.counts.tsv`; then `docker rm -f -v` and proves
   the container and exactly those volumes are gone (they hold PII). A cleanup failure is alerted and
   logged as `CLEANUP-FAIL` separately from the restore result (exit 3). Result lines in
-  `~/backup/flowmate-db/verify.log` (best effort, the Telegram alert is sent first); exit 0 only on
-  exact match and clean removal.
+  `~/backup/flowmate-db/verify.log` (failure lines best effort, the Telegram alert is sent first); exit
+  0 only on exact match, a written `OK` line and clean removal. A verified restore whose `OK` line
+  cannot be written is alerted ("verified OK but … not writable") and exits 4.
   *Deviation from the plan:* the plan says verify-restore calls `compare-row-counts`; OCI has no
   `node_modules`, so it compares manifests produced by the same `row-counts.sql`.
 - Mini (`mini/`): `install-launchd.sh` installs `~/.local/bin/flowmate-db-pull-backups.sh` and
@@ -392,7 +393,10 @@ never "Supabase vs OCI" after the switch (legitimate logins make OCI diverge) an
    its env must hold exactly one `DATABASE_URL` and one `DIRECT_URL`, both on `flowmate-db`. Progress
    is kept in `~/flowmate-db/workers/switch.state`; an interrupted run (lost SSH, Ctrl-C) is resumed
    by `--apply` (only while the recorded direction is still "switch") or undone by `--rollback`, also
-   from between its own renames. Old containers stay stopped as `<name>-pre-oci-<ts>`. Later
+   from between its own renames. A failed write of the state file (disk full, permissions) stops the
+   run at once without a rollback and prints the last recorded step: make the state dir writable,
+   then `--rollback` (its preflight refuses and prints the manual path if the containers no longer
+   match the record). Old containers stay stopped as `<name>-pre-oci-<ts>`. Later
    redeploys (`deploy.sh start`/`restart`, CLAUDE.md §9.5) read the edited `.env.production`;
    `deploy.sh` refuses when its `DATABASE_URL` host is not `flowmate-db` unless
    `FLOWMATE_ALLOW_NON_OCI_DB=1`. Run it in a tmux session on OCI, so a dropped SSH connection
@@ -456,16 +460,11 @@ never "Supabase vs OCI" after the switch (legitimate logins make OCI diverge) an
 
 ### Rollback
 
-1. **Dump OCI first** — it holds every write since the switch (keep that file; reconcile those
-   writes into Supabase by hand if they matter):
-   ```bash
-   # on Mini
-   ssh oci /home/ubuntu/flowmate-db/backup.sh
-   ```
-2. Revert the env: Vercel Production (then Preview) back to the Supabase `DATABASE_URL`/`DIRECT_URL`
-   and redeploy. Workers — `--rollback` also restores `~/flowmate/.env.production` from
-   `.env.production.pre-cutover-<ts>` (sha256-checked); afterwards `deploy.sh` needs
-   `FLOWMATE_ALLOW_NON_OCI_DB=1`, since the file points at Supabase again:
+1. **Revert the writers first** (OCI keeps every write until the dump in step 2). Vercel Production
+   (then Preview) back to the Supabase `DATABASE_URL`/`DIRECT_URL` and redeploy. Workers —
+   `--rollback` also restores `~/flowmate/.env.production` from `.env.production.pre-cutover-<ts>`
+   (sha256-checked); afterwards `deploy.sh` needs `FLOWMATE_ALLOW_NON_OCI_DB=1`, since the file points
+   at Supabase again:
    ```bash
    # on Mini
    ssh -t oci tmux new -A -s cutover
@@ -504,6 +503,26 @@ never "Supabase vs OCI" after the switch (legitimate logins make OCI diverge) an
    # on Mini
    cp -p ~/.flowmate-cutover.env.local /Volumes/포터블/Production/FlowMate/.env.local
    ```
+2. **Close OCI to writers, then take the final dump** — it holds every write since the switch (keep
+   that file; reconcile those writes into Supabase by hand if they matter). Stopping PgBouncer closes
+   the Vercel path; its `restart: unless-stopped` keeps a manually stopped container down, also across
+   a Docker or VM restart, until `docker start`. The workers point at Supabase since step 1, so no
+   `flowmate_app` session may remain: the step-6 query without its address filter covers every source
+   `pg_hba.conf` allows for it (172.21.0.0/24: workers .128/25, PgBouncer .3, the host's tunnel via
+   the gateway .1). `backup.sh` reads flowmate-db through `docker exec`, not PgBouncer:
+   ```bash
+   # on Mini
+   ssh oci docker stop flowmate-pgbouncer
+   ssh oci "docker exec -u postgres flowmate-db psql -X -At -d flowmate -c \"SELECT usename, client_addr, count(*) FROM pg_stat_activity WHERE usename = 'flowmate_app' GROUP BY 1, 2\""   # no rows
+   ssh oci /home/ubuntu/flowmate-db/backup.sh
+   ```
+   If the query returns rows, find and stop that writer before dumping. While PgBouncer is down, the
+   daily `renew-cert.sh` (03:17) only alerts that it is not running and does not start it; `install.sh`
+   (`docker compose up -d`) would start it, so do not run it before a retry. Writes keep failing on the
+   fenced Supabase from step 1 to step 3; this order adds only this step to that window (the dump took
+   ~5 s on 2026-11-04). If you do not retry, decide about PgBouncer after step 3: leave it stopped (OCI
+   stays closed; `renew-cert.sh` then alerts every day) or `ssh oci docker start flowmate-pgbouncer`
+   (once Vercel and the workers use Supabase this only reopens 6432).
 3. Lift the fence on Supabase — only now, so nothing writes to both sides. A new session is
    read-only, so the `RESET` must run in an explicit read-write transaction (a bare `ALTER ROLE ...
    RESET` fails with "cannot execute ALTER ROLE in a read-only transaction"); then end the pooled
@@ -528,7 +547,10 @@ step 3), retry from cutover step 6: OCI holds a superset, unless the rollback wa
 difference (a write that reached Supabase after the dump), in which case restart from step 2 as well.
 For the step-6 path, step 8 also needs `M` set to that dump's path and the `TAB=…; Q() …` line from
 step 3. Once the fence is lifted, restart from cutover step 2: re-fence, fresh manifests and dumps (3),
-restore (4), extra checks (5), then step 6. Either way `switch-workers.sh` accepts workers the manual path left on network
+restore (4), extra checks (5), then step 6. On both paths PgBouncer is still stopped from Rollback step 2:
+start it before cutover step 7 (Vercel) and wait for `healthy` (probe every 15 s):
+`ssh oci docker start flowmate-pgbouncer` and `ssh oci 'docker container inspect -f "{{.State.Health.Status}}" flowmate-pgbouncer'`.
+Either way `switch-workers.sh` accepts workers the manual path left on network
 flowmate with a Supabase env; it refuses a worker on network flowmate whose running `DATABASE_URL` is
 already on flowmate-db, missing, duplicated or unparseable. Known limitation: if only some workers are
 already switched (mixed state), the default run refuses as a whole; switch the rest with
@@ -547,10 +569,11 @@ Keep the observation window short: every hour on OCI is an hour of writes to rec
 | Rehearsal migrate dump | `~/backup/flowmate-migrate/flowmate-public-migrate-20261101-2150.dump*` | PII |
 | Supabase dumps on the portable drive | `/Volumes/포터블/Backups/FlowMate/flowmate-public-*-20261101-2150.dump` + `SHA256SUMS-20261101-2150.txt` | keep until Phase 4 decides on Supabase |
 | `~/.flowmate-cutover.env` on the Mini | holds the Supabase URL (600) | keep as long as `.env.production.pre-cutover-<ts>` (Rollback step 3 needs it to lift the fence) |
-| `~/.flowmate-cutover.env.local` on the Mini | step-0 copy of the Supabase `.env.local` (600) | same lifetime as `~/.flowmate-cutover.env` (Rollback step 2 restores it) |
+| `~/.flowmate-cutover.env.local` on the Mini | step-0 copy of the Supabase `.env.local` (600) | same lifetime as `~/.flowmate-cutover.env` (Rollback step 1 restores it) |
 | `.env.production.pre-cutover-<ts>` on OCI | `~/flowmate/` (600, Supabase credentials) | keep until no rollback to Supabase is wanted any more (the manual path still needs it after `--done`) |
 | `.env.production.bak` on OCI (pre-existing, not ours) | `~/flowmate/.env.production.bak`, mode **664**, holds Supabase credentials | user decision: `chmod 600` or remove; also `.env.production` itself is 664 until the cutover makes it 600 |
 | Previous `deploy.sh` copies | `~/flowmate/deploy/oci/deploy.sh.pre-oci-<ts>` (step 0b; re-runs stack them, the oldest is the original) | only after the follow-up reconciliation of `~/flowmate` (see "`~/flowmate` after step 0b (deferred)") |
+| PgBouncer stopped by a rollback | `flowmate-pgbouncer` (Rollback step 2) | stays down across reboots until `docker start flowmate-pgbouncer`; `renew-cert.sh` alerts daily while it is down |
 | `switch.state*` | `~/flowmate-db/workers/` | `.done-*` / `.failed-*` / `.rolledback-*` are history only (no env copies are kept there) |
 
 ### `~/flowmate` after step 0b (deferred)
