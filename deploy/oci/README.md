@@ -10,7 +10,7 @@
 1. Clone repo: `git clone <repo> /home/ubuntu/flowmate`
 2. Copy env: `cp .env.example .env.production` and fill values
 3. Build: `./deploy/oci/deploy.sh build` (tags images with the git short SHA and prints the start command)
-4. Start (first deploy only; when the workers exist, use `restart`): `CRAWLER_IMAGE=flowmate-crawler:<tag> EMBEDDING_IMAGE=flowmate-embedding:<tag> PARSER_IMAGE=flowmate-parser:<tag> ./deploy/oci/deploy.sh start`
+4. Start (first deploy only, no worker exists yet; otherwise use `restart`): `CRAWLER_IMAGE=flowmate-crawler:<tag> EMBEDDING_IMAGE=flowmate-embedding:<tag> PARSER_IMAGE=flowmate-parser:<tag> ./deploy/oci/deploy.sh start`
    (explicit refs are required; there is no implicit `:latest`. Currently running refs:
    `docker container inspect -f '{{.Config.Image}}' flowmate-crawler`, etc.)
    `check`, `start` and `restart` all need the three `*_IMAGE` variables. They validate everything first
@@ -51,8 +51,8 @@ the cutover runbook.
 Workers reach the DB as `flowmate-db:5432` on the `flowmate` network. At the cutover they are
 recreated by `deploy/oci/db/switch-workers.sh` (running image + env, DB URL swapped, `--network
 flowmate --cap-drop NET_RAW`, `--rollback` available). Later redeploys, after the cutover and
-`switch-workers.sh --done`, use `deploy.sh restart` with explicit `*_IMAGE` refs (`start` only creates
-workers that don't exist yet); both run the workers with `--network flowmate --cap-drop NET_RAW`. `.env.production` is the single
+`switch-workers.sh --done`, use `deploy.sh restart` with explicit `*_IMAGE` refs (`start` is refused when
+any worker already exists; use `restart`, also when only some are missing); both run the workers with `--network flowmate --cap-drop NET_RAW`. `.env.production` is the single
 source of the worker env: the cutover edits its DB URLs (backup kept), rollback restores it.
 
 ## Commands
