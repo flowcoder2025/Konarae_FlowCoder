@@ -442,13 +442,19 @@ Cloudflare (SSL) → Nginx (호스트, port 80) → Docker 컨테이너
 
 **배포 절차**:
 ```bash
+# on Mini
 ssh oci
-# 지금 돌아가는 이미지로 재배포(pull 없음). 실행 옵션의 기준은 deploy.sh다.
+```
+```bash
+# on OCI(위 ssh 셸 안): 지금 돌아가는 이미지로 재배포(pull 없음). 실행 옵션의 기준은 deploy.sh다.
+# DB 전환(런북 6단계)과 `switch-workers.sh --done` 뒤에만 쓴다:
+#  - 6단계 전: deploy.sh가 거부한다(DB가 아직 Supabase). 강행하면 워커가 network flowmate로 옮겨져 6단계 switch-workers.sh가 거부한다.
+#    전환 전 단순 재시작은 `docker restart <name>`.
+#  - 6단계 뒤 --done 전: `switch-workers.sh --rollback`을 더 쓸 수 없게 된다.
 R() { docker container inspect -f '{{.Config.Image}}' "$1"; }
 CRAWLER_IMAGE=$(R flowmate-crawler) EMBEDDING_IMAGE=$(R flowmate-embedding) PARSER_IMAGE=$(R flowmate-parser) ~/flowmate/deploy/oci/deploy.sh restart
-# DB 전환(런북 6단계) 전에는 앞에 FLOWMATE_ALLOW_NON_OCI_DB=1을 붙인다(.env.production이 아직 Supabase를 가리킨다).
-# 맨 이름을 쓰지 않는다: flowmate-crawler(= :latest)는 지금 돌아가는 :pr9보다 오래됐다.
-# 새 코드 배포(새 clone, deploy.sh build → start, deploy/oci/README.md Setup)는 Phase 1B 체크아웃 정리와 함께 한다.
+# 맨 이름을 직접 쓰지 않는다: flowmate-crawler(= :latest)는 지금 돌아가는 :pr9보다 오래됐다.
+# 새 코드 배포(새 clone, deploy.sh build → restart)는 Phase 1B 체크아웃 정리와 함께 한다.
 ```
 - DB 런북 0b 단계 뒤 OCI의 `~/flowmate`는 가드된 `deploy/oci/deploy.sh` 때문에 일부러 dirty 상태로 둔다. 체크아웃을 main에 맞추는 후속 작업(Phase 1B 워커 배포, 새 clone + 디렉터리 교체) 전까지 그 체크아웃에서 `git pull`·`deploy.sh build`를 포함해 pull·merge·stash·checkout·reset·clean·`commit -a`·`add -A`를 쓰지 않는다. 현재 이미지 재배포(위 블록, `switch-workers.sh`)는 pull이 필요 없다. 상세: `deploy/oci/db/README.md` "`~/flowmate` after step 0b (deferred)".
 - 워커 env의 기준은 `~/flowmate/.env.production` 하나다. DB 전환 때 `deploy/oci/db/switch-workers.sh`가 이 파일의 `DATABASE_URL`/`DIRECT_URL`을 `flowmate-db`로 바꾼다(백업 `.env.production.pre-cutover-<ts>`). `deploy.sh start`/`restart`는 이 값이 `flowmate-db`가 아니면 거부하고(롤백 뒤에는 `FLOWMATE_ALLOW_NON_OCI_DB=1`), 새 컨테이너 3개를 먼저 `docker create`한 뒤에야 기존 것을 멈춘다. `switch-workers.sh --rollback`은 `--done` 또는 첫 `deploy.sh restart` 전까지만 쓸 수 있다. OCI의 `~/flowmate/deploy/oci/deploy.sh`는 이 가드가 든 판(`flowmate-deploy-guard: v1` 마커)이어야 하며, 런북 0b 단계가 설치·sha 확인한다(`switch-workers.sh`는 마커가 없으면 실행을 거부).
