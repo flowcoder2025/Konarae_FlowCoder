@@ -450,7 +450,10 @@ ssh oci
 # DB 전환(런북 6단계)과 `switch-workers.sh --done`을 모두 마친 뒤에만 쓴다. 그 전에는 쓰지 않는다:
 #  - 6단계 전: deploy.sh가 거부한다(DB가 아직 Supabase). 강행하면 워커가 network flowmate로 옮겨져 6단계 switch-workers.sh가 거부한다.
 #  - 6단계 뒤 --done 전: 컨테이너 id가 바뀌어 switch-workers.sh --done과 --rollback이 모두 거부한다.
+#    재배포를 피할 수 없으면 6단계 점검이 통과한 뒤 --done부터 실행한다. 이미 재배포했다면 --rollback이 거부하며
+#    출력하는 manual_path 3단계로 상태만 정리한다: mv $STATE $STATE.manual-$(state_get ts)
 #  - --done 전의 단순 재시작은 `docker restart <name>`(컨테이너 id·네트워크가 그대로라 전환 단계에 영향이 없다).
+#    단 6단계가 중단된 상태(`switch.state`가 진행 중)에서는 쓰지 않는다 — `--apply` 또는 `--rollback`으로 먼저 끝낸다.
 R() { docker container inspect -f '{{.Config.Image}}' "$1"; }
 CRAWLER_IMAGE=$(R flowmate-crawler) EMBEDDING_IMAGE=$(R flowmate-embedding) PARSER_IMAGE=$(R flowmate-parser) ~/flowmate/deploy/oci/deploy.sh restart
 # 맨 이름을 직접 쓰지 않는다: flowmate-crawler(= :latest)는 지금 돌아가는 :pr9보다 오래됐다.

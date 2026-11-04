@@ -479,6 +479,7 @@ never "Supabase vs OCI" after the switch (legitimate logins make OCI diverge) an
    # on OCI (inside tmux cutover); <ts> and the refs as printed by --rollback
    cp -p ~/flowmate/.env.production.pre-cutover-<ts> ~/flowmate/.env.production
    FLOWMATE_ALLOW_NON_OCI_DB=1 CRAWLER_IMAGE=<ref> EMBEDDING_IMAGE=<ref> PARSER_IMAGE=<ref> /home/ubuntu/flowmate/deploy/oci/deploy.sh restart
+   mv /home/ubuntu/flowmate-db/workers/switch.state /home/ubuntu/flowmate-db/workers/switch.state.manual-<ts>
    ```
    (`deploy.sh` there is the guarded copy installed in step 0b.) Detach (`Ctrl-b d`), then:
    ```bash
