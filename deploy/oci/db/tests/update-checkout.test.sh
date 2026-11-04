@@ -23,12 +23,18 @@ fail=0
 ok() { echo "ok   $1"; pass=$((pass + 1)); }
 bad() { echo "FAIL $1"; fail=$((fail + 1)); }
 
-# --- extract the pasted block
-awk '/^<!-- flowmate-update-block:begin -->$/ {f = 1; next} /^<!-- flowmate-update-block:end -->$/ {f = 0} f' "$README" >"$work/raw.md"
-[ "$(head -n 1 "$work/raw.md")" = '```bash' ] && [ "$(tail -n 1 "$work/raw.md")" = '```' ] &&
-  [ "$(grep -c '^  R=/home/ubuntu/flowmate$' "$work/raw.md")" = 1 ] && [ "$(grep -c 'flowmate-update-block:begin' "$README")" = 1 ] ||
-  { echo "FAIL README block not found or not in the expected shape"; exit 1; }
-sed '1d;$d' "$work/raw.md" >"$work/block.sh"
+# --- extract the pasted blocks (update block + the two "Current blockers" blocks)
+extract() { # MARKER OUT
+  awk -v m="$1" '$0 == "<!-- " m ":begin -->" {f = 1; next} $0 == "<!-- " m ":end -->" {f = 0} f' "$README" >"$work/raw.md"
+  [ "$(head -n 1 "$work/raw.md")" = '```bash' ] && [ "$(tail -n 1 "$work/raw.md")" = '```' ] &&
+    [ "$(grep -c '^  R=/home/ubuntu/flowmate$' "$work/raw.md")" = 1 ] && [ "$(grep -c "$1:begin" "$README")" = 1 ] ||
+    { echo "FAIL README block $1 not found or not in the expected shape"; exit 1; }
+  sed '1d;$d' "$work/raw.md" >"$2"
+}
+extract flowmate-update-block "$work/block.sh"
+extract flowmate-blockers-check "$work/check.sh"
+extract flowmate-blockers-fix "$work/fix.sh"
+[ "$(grep -c '^  H=/home/ubuntu$' "$work/fix.sh")" = 1 ] || { echo "FAIL fix block: no single H=/home/ubuntu line"; exit 1; }
 ! grep -vE '^ *#' "$work/block.sh" | grep -qw stash &&
   ok "README block extracted ($(wc -l <"$work/block.sh" | tr -d ' ') lines); it never runs git stash" || bad "block uses git stash"
 
@@ -41,7 +47,8 @@ git config --global commit.gpgsign false
 git config --global advice.detachedHead false
 REAL_GIT=$(command -v git)
 REAL_CP=$(command -v cp)
-export REAL_GIT REAL_CP
+REAL_BASH=$(command -v bash)
+export REAL_GIT REAL_CP REAL_BASH
 cat >"$work/stubs/git" <<'STUB'
 #!/bin/bash
 # the block always calls `git -C <dir> <cmd> ...`; STUB_INT_ON=<cmd>: Ctrl-C while <cmd> runs
@@ -60,7 +67,21 @@ if [ -n "${STUB_CP_FAIL_RESTORE:-}" ]; then
 fi
 exec "$REAL_CP" "$@"
 STUB
-chmod +x "$work/stubs/git" "$work/stubs/cp"
+cat >"$work/stubs/bash" <<'STUB'
+#!/bin/sh
+# STUB_INT_ON_BASH_N=<n>: Ctrl-C at the n-th `bash -n` (usable() check) of the block; counter in $STUB_COUNTER
+if [ -n "${STUB_INT_ON_BASH_N:-}" ] && [ "${1:-}" = -n ]; then
+  c=$(($(cat "$STUB_COUNTER" 2>/dev/null || echo 0) + 1))
+  echo "$c" >"$STUB_COUNTER"
+  if [ "$c" = "$STUB_INT_ON_BASH_N" ]; then
+    kill -INT "$PPID"
+    kill -INT $$
+    sleep 5
+  fi
+fi
+exec "$REAL_BASH" "$@"
+STUB
+chmod +x "$work/stubs/git" "$work/stubs/cp" "$work/stubs/bash"
 
 MARK='# flowmate-deploy-guard: v1'
 U1='#!/bin/bash\necho "old main, no guard"\n'
@@ -104,7 +125,7 @@ push_main() { # MSG [PATH CONTENT]...: commit on dev and push to origin main
 run_block() { # NAME [ENV=VAL...]: run the README block against $oci (bash, SIGINT at default); sets out
   local name=$1
   shift
-  sed "s#^  R=/home/ubuntu/flowmate\$#  R=$oci#" "$work/block.sh" >"$work/$name.sh"
+  sed "s#^  R=/home/ubuntu/flowmate\$#  R=$oci#" "${BLOCK:-$work/block.sh}" >"$work/$name.sh"
   (cd "$work" && env PATH="$work/stubs:$PATH" "$@" perl -e '$SIG{INT} = "DEFAULT"; exec @ARGV' bash "$work/$name.sh") >"$work/$name.out" 2>&1
   out="$work/$name.out"
 }
@@ -200,8 +221,23 @@ before_head=$(git -C "$oci" rev-parse HEAD)
 push_main "merge guarded deploy.sh" "$F" "$G2"
 run_block int_merge STUB_INT_ON=merge
 failed_rc 130 && final_ok int_merge && same "$G1" && [ "$(git -C "$oci" rev-parse HEAD)" = "$before_head" ] &&
-  grep -q 'parked as' "$out" && grep -q 'guarded deploy.sh restored from .*pre-pull-' "$out" &&
-  ok "Ctrl-C during merge (unguarded HEAD copy live): trap restored the guarded copy, rc=130" || { cat "$out"; bad "int_merge"; }
+  grep -q 'parked as' "$out" && grep -q 'guarded deploy.sh restored from .*pre-pull-' "$out" && grep -q 'the merge may have been interrupted' "$out" &&
+  ok "Ctrl-C during merge (unguarded HEAD copy live): trap restored the guarded copy + 'check git status' hint, rc=130" || { cat "$out"; bad "int_merge"; }
+
+# 7b. Ctrl-C right after a successful merge (at the usable() check): main's newer guarded copy stays
+world int_after_merge
+push_main "newer guarded" "$F" "$G2"
+run_block int_after_merge STUB_INT_ON_BASH_N=2 STUB_COUNTER="$work/int_after_merge.count"
+failed_rc 130 && final_ok int_after_merge && same "$G2" && head_is_main && ! grep -q 'restored from' "$out" &&
+  ok "Ctrl-C after the merge: the older saved copy is NOT copied over main's newer guarded one" || { cat "$out"; bad "int_after_merge"; }
+
+# 7c. deploy.sh staged in the index (git add): checkout HEAD resets index and work tree, merge succeeds
+world staged
+git -C "$oci" add "$F"
+push_main "newer guarded" "$F" "$G2"
+run_block staged
+succeeded && final_ok staged && same "$G2" && head_is_main && git -C "$oci" diff --cached --quiet -- "$F" && git -C "$oci" diff --quiet HEAD -- "$F" &&
+  ok "staged deploy.sh: reset from HEAD (index + work tree), fast-forward to main's newer guarded copy" || { cat "$out"; bad "staged"; }
 
 # 8. the restore copy fails: RESTORE FAILED with the saved path, non-zero
 world restore_fail
@@ -242,6 +278,42 @@ sed "s#^  R=/home/ubuntu/flowmate\$#  R=$oci#" "$work/block.sh" >"$work/errexit.
 out="$work/errexit.out"
 failed_rc 1 && grep -q '^OUTER_SHELL_SURVIVED$' "$out" && final_ok errexit && same "$G1" &&
   ok "parent shell with set -e: block fails (rc=1), message printed, outer shell continues" || { cat "$out"; bad "errexit"; }
+
+# 12. "Current blockers" blocks under `set -e`: identical parser, every added worker.ts line (one blank) in main
+blockers_world() { # NAME LOCAL_EXTRA: local worker.ts adds A, blank, B (+ LOCAL_EXTRA); main adds A, blank, B, C
+  world "$1"
+  mkdir -p "$w/home-ubuntu"
+  push_main "worker + parser + guarded deploy.sh" src/lib/crawler/worker.ts 'worker v1\nline A\n\nline B\nline C\n' \
+    src/lib/crawler/content-agency-parser.ts 'shipped parser\n' "$F" "$G1"
+  printf 'worker v1\nline A\n\nline B\n%b' "$2" >"$oci/src/lib/crawler/worker.ts"
+  printf 'shipped parser\n' >"$oci/src/lib/crawler/content-agency-parser.ts"
+}
+run_errexit() { # NAME BLOCKFILE: run under `bash -e` like a pasted block in an errexit shell; sets out
+  sed -e "s#^  R=/home/ubuntu/flowmate\$#  R=$oci#" -e "s#^  H=/home/ubuntu\$#  H=$w/home-ubuntu#" "$2" >"$work/$1.sh"
+  (cd "$work" && env PATH="$work/stubs:$PATH" bash -e -c '. "$1"; echo OUTER_SHELL_SURVIVED' _ "$work/$1.sh") >"$work/$1.out" 2>&1
+  out="$work/$1.out"
+}
+blockers_world blockers ''
+run_errexit blockers_check "$work/check.sh"
+grep -q '^ok: content-agency-parser.ts is identical' "$out" && grep -q '^ok: every line the local worker.ts adds is already in main.s (0 unmatched)' "$out" &&
+  grep -q '^ok: both checks passed$' "$out" && grep -q '^OUTER_SHELL_SURVIVED$' "$out" && ! grep -q 're-check failed' "$out" &&
+  ok "blocker re-check under set -e (grep -c prints 0 / exits 1): both ok lines, outer shell survives" || { cat "$out"; bad "blockers_check"; }
+run_errexit blockers_fix "$work/fix.sh"
+p=""
+for f in "$w"/home-ubuntu/worker.ts.local-*.patch; do [ -s "$f" ] && p=$f; done
+grep -q '^ok: worker.ts diff saved' "$out" && grep -q '^OUTER_SHELL_SURVIVED$' "$out" && [ -n "$p" ] && grep -q '^+line A' "$p" &&
+  git -C "$oci" diff --quiet -- src/lib/crawler/worker.ts && [ ! -e "$oci/src/lib/crawler/content-agency-parser.ts" ] &&
+  ls "$w"/home-ubuntu/content-agency-parser.ts.pre-pull-* >/dev/null 2>&1 && stash_ok &&
+  ok "blocker fix under set -e: worker.ts diff saved + reset, parser moved aside, outer shell survives" || { cat "$out"; bad "blockers_fix"; }
+run_block blockers_update
+succeeded && final_ok blockers_update && same "$G1" && head_is_main &&
+  ok "after the blocker fix the update block fast-forwards cleanly" || { cat "$out"; bad "blockers_update"; }
+
+blockers_world blockers_neg 'local only line\n'
+run_errexit blockers_neg "$work/check.sh"
+grep -q '^STOP: 1 added line(s) of the local worker.ts are not in main' "$out" && grep -q '^re-check failed (rc=1)' "$out" &&
+  grep -q '^OUTER_SHELL_SURVIVED$' "$out" && ! grep -q 'both checks passed' "$out" &&
+  ok "blocker re-check with a local-only worker.ts line: STOP (1 line), outer shell survives" || { cat "$out"; bad "blockers_neg"; }
 
 # 5. the operator stash is asserted untouched in every case above; also: no stash was created anywhere
 for d in "$work"/*/oci; do [ "$(git -C "$d" stash list | wc -l | tr -d ' ')" = 1 ] || bad "stash count in $d"; done

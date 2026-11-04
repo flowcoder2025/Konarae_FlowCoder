@@ -535,28 +535,56 @@ and `add -A` would stage the untracked `.env.production`.
 **Current blockers on OCI** (verified read-only on 2026-11-03; clear them **before** the block,
 which does not touch them):
 - `src/lib/crawler/worker.ts` has uncommitted changes; every line they add is already in
-  `origin/main`'s `worker.ts` (11 added lines, 1 removed).
+  `origin/main`'s `worker.ts` (12 added (one blank), 1 removed).
 - `src/lib/crawler/content-agency-parser.ts` is untracked on OCI while `origin/main` ships it
   (byte-identical, sha256 `ab2b1546…`); git refuses the fast-forward for an untracked path that
   `main` adds, whatever its content.
 - `~/flowmate` is about 17 commits behind `origin/main`.
 
 Resolution (moves files aside, deletes nothing). Re-check first, against a fresh fetch; continue only
-if the first command prints "parser identical" and the second prints `0`:
+if it ends with "ok: both checks passed". Both blocks are subshells ending in `|| echo ...`, so they
+are safe in a shell with `set -e`:
+<!-- flowmate-blockers-check:begin -->
 ```bash
-# on OCI
-R=/home/ubuntu/flowmate; git -C "$R" fetch origin main
-cmp -s <(git -C "$R" show FETCH_HEAD:src/lib/crawler/content-agency-parser.ts) "$R/src/lib/crawler/content-agency-parser.ts" && echo "parser identical"
-git -C "$R" diff -U0 -- src/lib/crawler/worker.ts | grep '^+' | grep -v '^+++ ' | sed 's/^+//' | grep -cvxFf <(git -C "$R" show FETCH_HEAD:src/lib/crawler/worker.ts)
+# on OCI: re-check both blockers against a fresh fetch (changes nothing in the work tree)
+(
+  R=/home/ubuntu/flowmate
+  git -C "$R" fetch origin main || { echo "FETCH FAILED: stop"; exit 1; }
+  if cmp -s <(git -C "$R" show FETCH_HEAD:src/lib/crawler/content-agency-parser.ts) "$R/src/lib/crawler/content-agency-parser.ts"; then
+    echo "ok: content-agency-parser.ts is identical to main's"
+  else
+    echo "STOP: content-agency-parser.ts differs from main's (or is missing)"
+    exit 1
+  fi
+  D=$(git -C "$R" diff -U0 -- src/lib/crawler/worker.ts) || { echo "STOP: git diff failed"; exit 1; }
+  M=$(git -C "$R" show FETCH_HEAD:src/lib/crawler/worker.ts) || { echo "STOP: main's worker.ts unreadable"; exit 1; }
+  # grep -c: status 0 = some added lines are not in main, 1 = none (prints 0), >1 = error
+  if N=$(printf '%s\n' "$D" | grep '^+' | grep -v '^+++ ' | sed 's/^+//' | grep -cvxFf <(printf '%s\n' "$M")); then ST=0; else ST=$?; fi
+  case "$ST" in
+    1) echo "ok: every line the local worker.ts adds is already in main's (0 unmatched)" ;;
+    0) echo "STOP: $N added line(s) of the local worker.ts are not in main's"; exit 1 ;;
+    *) echo "STOP: the worker.ts comparison failed (grep status $ST)"; exit 1 ;;
+  esac
+  echo "ok: both checks passed"
+) || echo "re-check failed (rc=$?): do not run the next block"
 ```
+<!-- flowmate-blockers-check:end -->
+<!-- flowmate-blockers-fix:begin -->
 ```bash
-# on OCI (only after both checks above passed)
-R=/home/ubuntu/flowmate; TS=$(date -u +%Y%m%dT%H%M%SZ)
-git -C "$R" diff -- src/lib/crawler/worker.ts > "/home/ubuntu/worker.ts.local-$TS.patch" && [ -s "/home/ubuntu/worker.ts.local-$TS.patch" ] &&
-  git -C "$R" checkout -- src/lib/crawler/worker.ts
-mv "$R/src/lib/crawler/content-agency-parser.ts" "/home/ubuntu/content-agency-parser.ts.pre-pull-$TS"
-git -C "$R" status --short     # expected: only ` M deploy/oci/deploy.sh` and `??` lines main does not ship
+# on OCI (only after the re-check printed "ok: both checks passed")
+(
+  R=/home/ubuntu/flowmate
+  H=/home/ubuntu
+  TS=$(date -u +%Y%m%dT%H%M%SZ)
+  P="$H/worker.ts.local-$TS.patch"
+  git -C "$R" diff -- src/lib/crawler/worker.ts > "$P" && [ -s "$P" ] || { echo "STOP: the worker.ts diff was not saved ($P)"; exit 1; }
+  git -C "$R" checkout -- src/lib/crawler/worker.ts || { echo "STOP: worker.ts checkout failed (diff saved as $P)"; exit 1; }
+  mv "$R/src/lib/crawler/content-agency-parser.ts" "$H/content-agency-parser.ts.pre-pull-$TS" || { echo "STOP: could not move content-agency-parser.ts aside"; exit 1; }
+  echo "ok: worker.ts diff saved as $P and reset; parser moved to $H/content-agency-parser.ts.pre-pull-$TS"
+  git -C "$R" status --short     # expected: only ` M deploy/oci/deploy.sh` and `??` lines main does not ship
+) || echo "resolution failed (rc=$?): see the messages above"
 ```
+<!-- flowmate-blockers-fix:end -->
 Any other `M`/`??` path in `git -C /home/ubuntu/flowmate status --short` blocks the update only if
 `main` also touches it.
 
@@ -600,41 +628,50 @@ one differs; `merge --ff-only FETCH_HEAD`; keeps main's deploy.sh only if it is 
     if [ "$DONE" != 1 ]; then
       restore || rc=1
       [ "$rc" != 0 ] || rc=1
+      [ "$MERGING" != 1 ] || echo "the merge may have been interrupted: check git -C $R status --short before re-running"
     fi
     exit "$rc"
   }
   DONE=0
+  MERGING=0
   trap 'exit 130' INT
   trap 'exit 143' TERM
   trap on_exit EXIT
   if git -C "$R" diff --quiet HEAD -- "$F"; then
     echo "deploy.sh equals HEAD: nothing parked"
   else
-    git -C "$R" checkout -- "$F" || { echo "CHECKOUT FAILED: restoring $SAVED"; exit 1; }
+    git -C "$R" checkout HEAD -- "$F" || { echo "CHECKOUT FAILED: restoring $SAVED"; exit 1; }
     echo "local deploy.sh parked as $SAVED; HEAD's copy is live until the merge"
   fi
+  MERGING=1
   if ! git -C "$R" merge --ff-only FETCH_HEAD; then
+    MERGING=0
     git -C "$R" status --short
     echo "MERGE REFUSED: any M/?? path above that main also touches blocks the fast-forward; resolve it first (see Current blockers)"
     exit 1
   fi
+  DONE=1   # merged: from here on the trap never copies the older saved deploy.sh over main's
   if ! usable "$R/$F"; then
     echo "WARNING: main's deploy.sh is unguarded or broken. STOP: this main does not carry the guarded deploy.sh. Do not run step 0b from a checkout of this main; reinstall only from a checkout that has the guarded deploy.sh."
+    restore
     exit 1
   fi
-  DONE=1
   echo "OK: HEAD $(git -C "$R" rev-parse --short HEAD); main's deploy.sh is guarded and parses. Next: the step 0b sha check from the Mini."
 ) || echo "update block failed (rc=$?): see the messages above"
 ```
 <!-- flowmate-update-block:end -->
 
 The block runs in a subshell and ends with `|| echo ...`, so neither its `exit` nor a parent shell
-with `set -e` closes the SSH session. Every run that gets past the fetch leaves a
+with `set -e` closes the SSH session. Every run that gets past the local-commits check leaves a
 `deploy.sh.pre-pull-<ts>` copy (cleanup checklist). If it prints `RESTORE FAILED`, do what it says
 before anything else. After `REFUSED` or `MERGE REFUSED`, fix the cause and run it again; after
-`WARNING`, stop (see below). `deploy/oci/db/tests/update-checkout.test.sh` runs exactly this block
-(extracted between the markers) against throwaway git repos, including Ctrl-C during the fetch and
-the merge.
+`WARNING`, stop (see below). After Ctrl-C or a dropped session during the merge, run
+`git -C ~/flowmate status --short` before re-running; main's half-written files show as M/??:
+`git checkout -- <M paths>`, move the listed `??` paths aside — never `git clean` (`.env.production`
+is untracked there), stash, or `commit -a`. `deploy/oci/db/tests/update-checkout.test.sh` runs
+exactly this block and the two blocker blocks (extracted between their markers) against throwaway
+git repos; Ctrl-C is simulated by a git stub that sends SIGINT to the block's subshell at the fetch
+or merge step (instead of the real git running), not by interrupting a real running git.
 
 Then, still only with this branch merged into `main`, re-run the step 0b sha check (the
 `{ ... } | ssh oci 'sha256sum -c --quiet'` command) from a Mini checkout at the same `main` commit; it
