@@ -415,8 +415,8 @@ CrawlSource → CrawlJob → SupportProject + ProjectAttachment
 
 ### 9.5 OCI Worker 인프라
 
-**서버**: OCI Always Free Ampere A1.Flex (4 OCPU, 24GB RAM, ARM64) - `158.180.81.7`
-**도메인**: `worker.jerome87.com` (Cloudflare Proxy ON, SSL 종단)
+**서버**: OCI Ampere A1.Flex (2 OCPU, 12GB RAM, ARM64, ap-chuncheon-1) - 공인 IP `158.180.81.7`
+**도메인**: `worker.jerome87.com` (Cloudflare Proxy ON, SSL 종단), `db.jerome87.com` (DNS only, PgBouncer 6432)
 
 ```
 Cloudflare (SSL) → Nginx (호스트, port 80) → Docker 컨테이너
@@ -438,24 +438,51 @@ Cloudflare (SSL) → Nginx (호스트, port 80) → Docker 컨테이너
 **배포 파일**: `deploy/oci/` (Dockerfile, nginx 설정, deploy.sh)
 **Nginx 설정**: `/etc/nginx/sites-available/worker` (호스트 nginx에 통합)
 **환경변수**: `/home/ubuntu/flowmate/.env.production`
-**SSH**: `ssh -i ~/.ssh/oci_key ubuntu@158.180.81.7`
+**SSH**: `ssh oci` (Tailscale `100.126.53.122`, 키 `~/.ssh/oci_key`). 공인 IP 22번은 막혀 있다.
 
 **배포 절차**:
 ```bash
-ssh -i ~/.ssh/oci_key ubuntu@158.180.81.7
-cd ~/flowmate && git pull
-sudo docker stop flowmate-crawler flowmate-embedding
-sudo docker rm flowmate-crawler flowmate-embedding
-sudo docker build -f deploy/oci/crawler/Dockerfile -t flowmate-crawler .
-sudo docker build -f deploy/oci/embedding/Dockerfile -t flowmate-embedding .
-sudo docker run -d --name flowmate-crawler --env-file .env.production -p 3001:3001 --restart unless-stopped flowmate-crawler
-sudo docker run -d --name flowmate-embedding --env-file .env.production -p 3002:3002 --restart unless-stopped flowmate-embedding
+# on Mini
+ssh oci
 ```
+```bash
+# on OCI(위 ssh 셸 안): 지금 돌아가는 이미지로 재배포(pull 없음). 실행 옵션의 기준은 deploy.sh다.
+# DB 전환(런북 6단계)과 `switch-workers.sh --done`을 모두 마친 뒤에만 쓴다. 그 전에는 쓰지 않는다:
+#  - 6단계 전: deploy.sh가 거부한다(DB가 아직 Supabase).
+#  - 6단계 뒤 --done 전: 컨테이너 id가 바뀌어 switch-workers.sh --done과 --rollback이 모두 거부한다.
+#    재배포를 피할 수 없으면 6단계 점검이 통과한 뒤 --done부터 실행한다. 이미 재배포했다면 OCI를 유지하므로
+#    `--rollback`이 출력하는 3단계 줄만 실행한다(1–2단계는 실행하지 않는다):
+#    mv /home/ubuntu/flowmate-db/workers/switch.state /home/ubuntu/flowmate-db/workers/switch.state.manual-<ts>
+#  - --done 전의 단순 재시작은 `docker restart <name>`(컨테이너 id·네트워크가 그대로라 전환 단계에 영향이 없다).
+#    단 6단계가 중단된 상태(`switch.state`가 진행 중)에서는 쓰지 않는다 — `--apply` 또는 `--rollback`으로 먼저 끝낸다.
+R() { docker container inspect -f '{{.Config.Image}}' "$1"; }
+CRAWLER_IMAGE=$(R flowmate-crawler) EMBEDDING_IMAGE=$(R flowmate-embedding) PARSER_IMAGE=$(R flowmate-parser) ~/flowmate/deploy/oci/deploy.sh restart
+# 맨 이름을 직접 쓰지 않는다: flowmate-crawler(= :latest)는 지금 돌아가는 :pr9보다 오래됐다.
+# 새 코드 배포(새 clone, deploy.sh build → restart)는 Phase 1B 체크아웃 정리와 함께 한다.
+```
+- DB 런북 0b 단계 뒤 OCI의 `~/flowmate`는 가드된 `deploy/oci/deploy.sh` 때문에 일부러 dirty 상태로 둔다. 체크아웃을 main에 맞추는 후속 작업(Phase 1B 워커 배포, 새 clone + 디렉터리 교체) 전까지 그 체크아웃에서 `git pull`·`deploy.sh build`를 포함해 pull·merge·stash·checkout·reset·clean·`commit -a`·`add -A`를 쓰지 않는다. 현재 이미지 재배포(위 블록, `switch-workers.sh`)는 pull이 필요 없다. 상세: `deploy/oci/db/README.md` "`~/flowmate` after step 0b (deferred)".
+- 워커 env의 기준은 `~/flowmate/.env.production` 하나다. DB 전환 때 `deploy/oci/db/switch-workers.sh`가 이 파일의 `DATABASE_URL`/`DIRECT_URL`을 `flowmate-db`로 바꾼다(백업 `.env.production.pre-cutover-<ts>`). `deploy.sh start`/`restart`는 이 값이 `flowmate-db`가 아니면 거부하고(롤백 뒤에는 `FLOWMATE_ALLOW_NON_OCI_DB=1`), 새 컨테이너 3개를 먼저 `docker create`한 뒤에야 기존 것을 멈춘다. `switch-workers.sh --rollback`은 `--done` 또는 첫 `deploy.sh restart` 전까지만 쓸 수 있다. OCI의 `~/flowmate/deploy/oci/deploy.sh`는 이 가드가 든 판(`flowmate-deploy-guard: v1` 마커)이어야 하며, 런북 0b 단계가 설치·sha 확인한다(`switch-workers.sh`는 마커가 없으면 실행을 거부).
+- `--network flowmate`는 빠뜨리면 안 된다. DB 전환 뒤 워커는 `flowmate-db:5432`로 붙으므로, 빠지면 재배포 직후 DB 연결이 조용히 끊긴다. `--cap-drop NET_RAW`는 워커가 그 브리지에서 다른 주소를 흉내 내지 못하게 막는다.
 
 **Vercel 환경변수**:
 - `RAILWAY_CRAWLER_URL=https://worker.jerome87.com`
 - `RAILWAY_WORKER_URL=https://worker.jerome87.com`
 - `TEXT_PARSER_URL=https://worker.jerome87.com`
+- DB(전환 1A.3 이후): `DATABASE_URL`과 `DIRECT_URL`에 같은 값
+  `postgresql://flowmate_app:<pw>@db.jerome87.com:6432/flowmate?sslmode=require&sslaccept=strict&pgbouncer=true&connection_limit=1`
+  (`sslaccept=strict` 필수. 빼면 Prisma가 인증서를 검증하지 않는다.)
+
+**DB 스택** (Phase 1A, 원본 `deploy/oci/db/`, 배포본 `/home/ubuntu/flowmate-db/`, 상세 `deploy/oci/db/README.md`):
+
+| 컨테이너 | 이미지 | 포트 | 역할 |
+|-----------|--------|------|------|
+| flowmate-db | `pgvector/pgvector:0.8.7-pg17-trixie` | `127.0.0.1:5433` → 5432 (공개 안 함) | Postgres 17 + pgvector, ICU en-US |
+| flowmate-pgbouncer | `edoburu/pgbouncer:v1.26.1-p0` | `6432` (공개, TLS 필수) | transaction pooling, `flowmate_app`만 허용 |
+
+- 네트워크: docker `flowmate` (172.21.0.0/24, db .2, pgbouncer .3, gateway .1). 전환 때 워커는 `deploy/oci/db/switch-workers.sh`로 다시 만든다(실행 중인 이미지·env 그대로, DB URL만 교체, `--rollback` 있음). `docker network connect`는 쓰지 않는다(NET_RAW가 남는다).
+- 연결 문자열: OCI 워커 `postgresql://flowmate_app:<pw>@flowmate-db:5432/flowmate`, 관리자 `ssh -L 5433:127.0.0.1:5433 oci` 후 `flowmate_owner@127.0.0.1:5433/flowmate` (복원·`prisma db push`는 이 경로로만).
+- 시크릿: `/home/ubuntu/flowmate-db/.env`(600). 백업: 04:00 KST `~/backup/flowmate-db/`(7개) → Mini 05:30 `/Volumes/포터블/Backups/FlowMate/daily/`(30개).
+- 이미지는 trixie(ICU 76)를 유지한다. bookworm(ICU 72)은 Supabase와 한글·따옴표 정렬 결과가 다르다.
 
 ### 9.6 Worker 메모리 관리 규칙
 
@@ -565,3 +592,4 @@ CREATE POLICY "users can view own data" ON companies
 | 2025-12-16 | 3.1.0 | 개발 규칙 섹션 추가 (Prisma 우선, 환경변수, ReBAC) |
 | 2026-03-06 | 3.2.0 | Railway → OCI 마이그레이션, Worker 인프라 섹션 추가 |
 | 2026-03-06 | 3.3.0 | Worker 메모리 관리 규칙 추가, OCI 배포 절차 문서화 |
+| 2026-11-02 | 3.4.0 | 9.5 OCI 사양(2 OCPU/12GB)·SSH(`ssh oci`) 정정, DB 스택(Postgres 17 + PgBouncer)·DB 연결 문자열 추가 |
