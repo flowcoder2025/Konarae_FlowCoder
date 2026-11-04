@@ -37,6 +37,8 @@ envfile() { # PATH [variant]
     default) printf '# fixture\nDATABASE_URL=postgresql://u:oldpw@old.example:5432/legacy\nDIRECT_URL=postgresql://u:oldpw@old.example:5433/legacy\n\nFOO_KEY=file-value\nQUOTED="kept-literal"\n' >"$1" ;;
     dup) printf 'DATABASE_URL=postgresql://u:oldpw@old.example:5432/legacy\nFOO_KEY=x\n   DATABASE_URL=postgresql://u:oldpw@other.example:5432/legacy\n' >"$1" ;;
     nodirect) printf '# no DIRECT_URL, indented DATABASE_URL\n  DATABASE_URL=postgresql://u:oldpw@old.example:5432/legacy\nFOO_KEY=file-value\n' >"$1" ;;
+    switched) printf 'DATABASE_URL=postgresql://flowmate_app:newpw@flowmate-db:5432/flowmate\nDIRECT_URL=postgresql://flowmate_app:newpw@flowmate-db:5432/flowmate\nFOO_KEY=file-value\n' >"$1" ;;
+    nodb) printf '# no DB keys at all\nFOO_KEY=file-value\n' >"$1" ;;
   esac
   chmod 664 "$1"
 }
@@ -356,6 +358,72 @@ extra_env=()
 sw --rollback >"$work/u.out" 2>&1 || { cat "$work/u.out"; bad "U resume"; }
 [ "$(insp "$n" '{{.Id}} {{.State.Status}} {{.HostConfig.RestartPolicy.Name}}')" = "$orig_id running always" ] && [ "$(sha "$sdir/.env.production")" = "$orig_sha" ] &&
   ok "--rollback resumed from rb=cand_removing: original back under its name" || bad "U"
+rm_all "$n"
+
+# ================================================================ W: manual-rollback state (network flowmate, non-OCI env) -> switched
+scenario w
+n="$pfx-w"
+fixture "$n" --init --network flowmate --cap-drop NET_RAW "$image" sleep 86400
+orig_id=$(insp "$n" '{{.Id}}')
+before=$(snapshot "$n")
+sw --containers "$n" >"$work/w1.out" 2>&1 || { cat "$work/w1.out"; bad "W: dry run exited non-zero"; }
+[ "$(snapshot "$n")" = "$before" ] && grep -q "is on network flowmate with a non-OCI DB (manual-rollback state); switching it" "$work/w1.out" && ! grep -q oldpw "$work/w1.out" &&
+  ok "W dry run: worker on network flowmate with a non-OCI DATABASE_URL accepted (logged), no mutation" || { cat "$work/w1.out"; bad "W dry run"; }
+sw --apply --containers "$n" >"$work/w2.out" 2>&1 || { cat "$work/w2.out"; bad "W: apply exited non-zero"; }
+[ "$(insp "$n" '{{.Id}}')" != "$orig_id" ] && [ "$(insp "$n" '{{.HostConfig.NetworkMode}} {{.State.Status}}')" = "flowmate running" ] &&
+  [ "$(envval "$n" DATABASE_URL | target)" = flowmate-db:5432/flowmate ] && [ "$(statephase phase)" = complete ] &&
+  ok "W apply: recreated (new id) on flowmate, DATABASE_URL on flowmate-db, state complete" || { cat "$work/w2.out"; bad "W apply"; }
+sw --rollback >"$work/w3.out" 2>&1 || { cat "$work/w3.out"; bad "W: rollback exited non-zero"; }
+[ "$(insp "$n" '{{.Id}} {{.State.Status}} {{.HostConfig.NetworkMode}} {{.HostConfig.RestartPolicy.Name}}')" = "$orig_id running flowmate always" ] &&
+  [ "$(envval "$n" DATABASE_URL | target)" = old.example:5432/legacy ] && [ "$(sha "$sdir/.env.production")" = "$orig_sha" ] &&
+  ok "W rollback: original back (same id, running, network flowmate, original non-OCI env), .env.production sha restored" || { cat "$work/w3.out"; bad "W rollback"; }
+sw --apply --containers "$n" >"$work/w4.out" 2>&1 || { cat "$work/w4.out"; bad "W: second apply exited non-zero"; }
+sw --done >"$work/w5.out" 2>&1 && [ "$(envval "$n" DATABASE_URL | target)" = flowmate-db:5432/flowmate ] &&
+  ls "$sdir"/state/switch.state.done-* >/dev/null 2>&1 && [ ! -f "$sdir/state/switch.state" ] &&
+  ok "W second apply after the rollback + --done: switched again and retired" || { cat "$work/w4.out" "$work/w5.out"; bad "W second apply / --done"; }
+rm_all "$n"
+
+# ================================================================ X: already switched (network flowmate + flowmate-db URL) -> refused
+scenario x switched
+n="$pfx-x"
+fixture "$n" --init --network flowmate --cap-drop NET_RAW "$image" sleep 86400
+before=$(snapshot "$n")
+sw --containers "$n" >"$work/x1.out" 2>&1 && bad "X: dry run on an already switched worker should fail"
+sw --apply --containers "$n" >"$work/x2.out" 2>&1 && bad "X: apply on an already switched worker should fail"
+[ "$(snapshot "$n")" = "$before" ] && [ ! -e "$sdir/state/switch.state" ] && [ -z "$(docker ps -a -q --filter "name=^$n-oci-candidate")" ] &&
+  grep -q "is already switched: on network flowmate and its running DATABASE_URL already targets flowmate-db" "$work/x1.out" &&
+  grep -q "is already switched" "$work/x2.out" && ! grep -q newpw "$work/x1.out" "$work/x2.out" &&
+  ok "X: worker on flowmate with DATABASE_URL on flowmate-db refused (dry run and --apply), no state, no mutation, no secret printed" || { cat "$work/x2.out"; bad "X"; }
+rm_all "$n"
+
+# ================================================================ Y: on network flowmate with zero / two DATABASE_URL -> refused
+scenario y0 nodb
+n="$pfx-y0"
+fixture "$n" --init --network flowmate --cap-drop NET_RAW "$image" sleep 86400
+before=$(snapshot "$n")
+sw --apply --containers "$n" >"$work/y0.out" 2>&1 && bad "Y0: apply with no DATABASE_URL should fail"
+[ "$(snapshot "$n")" = "$before" ] && [ ! -e "$sdir/state/switch.state" ] &&
+  grep -q "is on network flowmate with 0 DATABASE_URL definitions in its running env (expected exactly 1)" "$work/y0.out" &&
+  ok "Y0: worker on flowmate without DATABASE_URL refused, no state, no mutation" || { cat "$work/y0.out"; bad "Y0"; }
+rm_all "$n"
+scenario y2
+n="$pfx-y2"
+fixture "$n" --init --network flowmate --cap-drop NET_RAW -e DATABASE_URL=postgresql://u:oldpw@other.example:5432/legacy "$image" sleep 86400
+before=$(snapshot "$n")
+[ "$(envcount "$n" DATABASE_URL)" = 2 ] || bad "Y2 fixture: expected two DATABASE_URL entries in Config.Env"
+sw --apply --containers "$n" >"$work/y2.out" 2>&1 && bad "Y2: apply with two DATABASE_URL should fail"
+[ "$(snapshot "$n")" = "$before" ] && [ ! -e "$sdir/state/switch.state" ] && ! grep -q oldpw "$work/y2.out" &&
+  grep -q "is on network flowmate with 2 DATABASE_URL definitions in its running env (expected exactly 1)" "$work/y2.out" &&
+  ok "Y2: worker on flowmate with two DATABASE_URL refused, no state, no mutation" || { cat "$work/y2.out"; bad "Y2"; }
+rm_all "$n"
+scenario yu nodb
+n="$pfx-yu"
+fixture "$n" --init --network flowmate --cap-drop NET_RAW -e DATABASE_URL=mysql://u:oldpw@h:1/x "$image" sleep 86400
+before=$(snapshot "$n")
+sw --apply --containers "$n" >"$work/yu.out" 2>&1 && bad "YU: apply with an unparseable DATABASE_URL should fail"
+[ "$(snapshot "$n")" = "$before" ] && [ ! -e "$sdir/state/switch.state" ] && ! grep -q oldpw "$work/yu.out" &&
+  grep -q "its running DATABASE_URL cannot be parsed (value not shown)" "$work/yu.out" &&
+  ok "YU: worker on flowmate with an unparseable DATABASE_URL refused, value not shown, no mutation" || { cat "$work/yu.out"; bad "YU"; }
 rm_all "$n"
 
 echo "$pass passed, $fail failed"

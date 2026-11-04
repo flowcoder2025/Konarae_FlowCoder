@@ -481,7 +481,10 @@ never "Supabase vs OCI" after the switch (legitimate logins make OCI diverge) an
    FLOWMATE_ALLOW_NON_OCI_DB=1 CRAWLER_IMAGE=<ref> EMBEDDING_IMAGE=<ref> PARSER_IMAGE=<ref> /home/ubuntu/flowmate/deploy/oci/deploy.sh restart
    mv /home/ubuntu/flowmate-db/workers/switch.state /home/ubuntu/flowmate-db/workers/switch.state.manual-<ts>
    ```
-   (`deploy.sh` there is the guarded copy installed in step 0b.) Detach (`Ctrl-b d`), then:
+   (`deploy.sh` there is the guarded copy installed in step 0b.) Retrying the cutover after this path
+   is step 6 again: `switch-workers.sh` accepts workers that the manual path left on network flowmate
+   with the Supabase env (it refuses only workers whose running `DATABASE_URL` is already on
+   flowmate-db). Detach (`Ctrl-b d`), then:
    ```bash
    # on Mini
    cp -p ~/.flowmate-cutover.env.local /Volumes/포터블/Production/FlowMate/.env.local

@@ -20,7 +20,9 @@
 #   plus --network flowmate --cap-drop NET_RAW.
 # Fail-closed checks before ANY worker or the env file is touched: flowmate_app logs in from a
 # throwaway container on network flowmate; containers with mounts (incl. anonymous VOLUMEs) are
-# refused; each new container is `docker create`d as <name>-oci-candidate-<ts>, its Config/
+# refused; a worker already on network flowmate is refused only if its running DATABASE_URL is
+# already on flowmate-db (the manual rollback path leaves them on flowmate with the Supabase env,
+# and those are switched normally); each new container is `docker create`d as <name>-oci-candidate-<ts>, its Config/
 # HostConfig diffed against the running one (only name, network, NET_RAW, env may differ) and its
 # Config.Env must hold exactly one DATABASE_URL and one DIRECT_URL, both on flowmate-db.
 #
@@ -228,6 +230,32 @@ env_check_db() { # LABEL then KEY=VALUE lines on stdin: exactly one of each DB k
     t=$(sed -n "s/^$k=//p" <<<"$lines" | url_target)
     [ "$t" = "$DB_TARGET" ] || { log "$label: $k does not point at $DB_TARGET"; return 1; }
   done
+}
+
+# Host of a postgres URL on a strict parse only, else "unparseable" (the same parse as deploy.sh's
+# db_url_host); never echoes any part of the value.
+db_url_host() {
+  local v=$1 re='^postgres(ql)?://[^@/[:space:]]+@([A-Za-z0-9.-]+)(:[0-9]{1,5})?/[A-Za-z0-9_.-]+([?][^[:space:]]*)?$'
+  v=${v#\"}
+  v=${v%\"}
+  if [[ $v =~ $re ]]; then printf '%s' "${BASH_REMATCH[2]}"; else printf 'unparseable'; fi
+}
+# A worker already on network flowmate is refused only when it is already switched (its running
+# DATABASE_URL is on flowmate-db). The manual rollback path (deploy.sh restart with
+# FLOWMATE_ALLOW_NON_OCI_DB=1) leaves workers on network flowmate with the Supabase env; those are
+# switched like a worker on the default bridge. Fails closed on zero/duplicate/unparseable values.
+network_precheck() { # NAME
+  local name=$1 lines n host
+  [ "$(di missing '{{.HostConfig.NetworkMode}}' "$name")" = flowmate ] || return 0
+  lines=$(docker container inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$name") || die "$name: cannot read its env"
+  n=$(grep -c '^DATABASE_URL=' <<<"$lines" || true)
+  [ "$n" = 1 ] || die "$name is on network flowmate with $n DATABASE_URL definitions in its running env (expected exactly 1); refusing, nothing was changed"
+  host=$(db_url_host "$(sed -n 's/^DATABASE_URL=//p' <<<"$lines")")
+  case "$host" in
+    unparseable) die "$name is on network flowmate and its running DATABASE_URL cannot be parsed (value not shown); refusing, nothing was changed" ;;
+    "${DB_TARGET%%:*}") die "$name is already switched: on network flowmate and its running DATABASE_URL already targets ${DB_TARGET%%:*}; nothing to do (a recorded switch is finished with --done or undone with --rollback)" ;;
+  esac
+  log "$name is on network flowmate with a non-OCI DB (manual-rollback state); switching it"
 }
 
 deploy_preflight() { # the deploy.sh that redeploys and the manual recovery path use must be the guarded one
@@ -549,7 +577,7 @@ plan_fresh() { # dry-run / first --apply: everything validated before the state 
   st_pairs=(ts "$ts" containers "${containers[*]}" phase planned env_phase planned env_src "$ENV_SRC"
     env_backup "$ENV_SRC.pre-cutover-$ts" env_sha_before "$(sha256sum <"$ENV_SRC" | cut -d' ' -f1)")
   for c in "${containers[@]}"; do
-    [ "$(di missing '{{.HostConfig.NetworkMode}}' "$c")" != flowmate ] || die "$c is already on network flowmate"
+    network_precheck "$c"
     cand="$c-oci-candidate-$ts"
     build_args "$c" "$cand" "$WORK/$c.env"
     build_env "$c" "$WORK/$c.env"
