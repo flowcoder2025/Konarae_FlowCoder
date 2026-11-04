@@ -474,16 +474,22 @@ never "Supabase vs OCI" after the switch (legitimate logins make OCI diverge) an
    # on OCI (inside tmux cutover)
    /home/ubuntu/flowmate-db/switch-workers.sh --rollback
    ```
-   If `--rollback` refuses (the workers were redeployed, an original container is gone, the env backup
-   is missing or changed, or `.env.production` was edited after the switch), it lists why and prints
-   this manual path: run all three lines. Line 1 needs that backup and discards any edit made to
-   `.env.production` after the switch. After `--done`, `--rollback` stops with "nothing to roll back"
-   and prints no manual path: run the first two lines and skip the `mv` (the state is already `.done-<ts>`).
+   If `--rollback`'s preflight refuses (a worker was redeployed or is missing, an original container is
+   gone, the env backup is missing or changed, or `.env.production` was edited after the switch), it
+   lists why and prints this manual path. The `cp` discards any edit made to `.env.production` after
+   the switch. If the refusal says the env backup is missing or changed, do not copy it: rebuild
+   `.env.production` from the current file with `DATABASE_URL` and `DIRECT_URL` set back to the
+   Supabase values in the Mini's `~/.flowmate-cutover.env.local` (saved in step 0; on 2026-11-04 they
+   equalled the workers' pre-switch values), exactly one of each, mode 600, then run only the restart
+   and the `mv`. After `--done`, `--rollback` stops with "nothing to roll back" and prints no manual
+   path: run the `cp`/restart line and skip the `mv` (the state is already `.done-<ts>`).
    ```bash
    # on OCI (inside tmux cutover); <ts> = the pre-cutover backup's suffix
    # refs: docker container inspect -f '{{.Config.Image}}' <name>-pre-oci-<ts>  (or <name>, if those originals were already removed)
-   cp -p ~/flowmate/.env.production.pre-cutover-<ts> ~/flowmate/.env.production
-   FLOWMATE_ALLOW_NON_OCI_DB=1 CRAWLER_IMAGE=<ref> EMBEDDING_IMAGE=<ref> PARSER_IMAGE=<ref> /home/ubuntu/flowmate/deploy/oci/deploy.sh restart
+   # chained: nothing is restarted unless the cp succeeded
+   cp -p ~/flowmate/.env.production.pre-cutover-<ts> ~/flowmate/.env.production \
+     && FLOWMATE_ALLOW_NON_OCI_DB=1 CRAWLER_IMAGE=<ref> EMBEDDING_IMAGE=<ref> PARSER_IMAGE=<ref> /home/ubuntu/flowmate/deploy/oci/deploy.sh restart
+   # only after that restart succeeded, and only while switch.state exists (not after --done):
    mv /home/ubuntu/flowmate-db/workers/switch.state /home/ubuntu/flowmate-db/workers/switch.state.manual-<ts>
    ```
    (`deploy.sh` there is the guarded copy installed in step 0b.) Detach (`Ctrl-b d`), then:
@@ -507,8 +513,10 @@ never "Supabase vs OCI" after the switch (legitimate logins make OCI diverge) an
    SB psql -X -At -c 'SHOW default_transaction_read_only'     # new session: off
    ```
 
-**Retrying the cutover** (after `--rollback` or the manual path): in a fresh Mini shell re-run step 0's
-block first (and keep to its window). While Supabase is still fenced (you stopped before Rollback
+**Retrying the cutover** (after `--rollback` or the manual path): keep to step 0's window. In a fresh
+Mini shell, `cd` into the repo and re-run only the `source ~/.flowmate-cutover.env`, `eval` and `SB()`
+lines of step 0's first block, never its `cp`/`printf` lines (they would overwrite the saved Supabase
+copies with whatever `.env.local` holds now). While Supabase is still fenced (you stopped before Rollback
 step 3), retry from cutover step 6: OCI holds a superset, unless the rollback was for a step-8
 difference (a write that reached Supabase after the dump), in which case restart from step 2 as well.
 For the step-6 path, step 8 also needs `M` set to that dump's path and the `TAB=…; Q() …` line from
@@ -532,7 +540,7 @@ Keep the observation window short: every hour on OCI is an hour of writes to rec
 | Rehearsal migrate dump | `~/backup/flowmate-migrate/flowmate-public-migrate-20261101-2150.dump*` | PII |
 | Supabase dumps on the portable drive | `/Volumes/포터블/Backups/FlowMate/flowmate-public-*-20261101-2150.dump` + `SHA256SUMS-20261101-2150.txt` | keep until Phase 4 decides on Supabase |
 | `~/.flowmate-cutover.env` on the Mini | holds the Supabase URL (600) | delete after the observation window |
-| `.env.production.pre-cutover-<ts>` on OCI | `~/flowmate/` (600, Supabase credentials) | keep until rollback is no longer an option |
+| `.env.production.pre-cutover-<ts>` on OCI | `~/flowmate/` (600, Supabase credentials) | keep until no rollback to Supabase is wanted any more (the manual path still needs it after `--done`) |
 | `.env.production.bak` on OCI (pre-existing, not ours) | `~/flowmate/.env.production.bak`, mode **664**, holds Supabase credentials | user decision: `chmod 600` or remove; also `.env.production` itself is 664 until the cutover makes it 600 |
 | Previous `deploy.sh` copies | `~/flowmate/deploy/oci/deploy.sh.pre-oci-<ts>` (step 0b; re-runs stack them, the oldest is the original) | only after the follow-up reconciliation of `~/flowmate` (see "`~/flowmate` after step 0b (deferred)") |
 | `switch.state*` | `~/flowmate-db/workers/` | `.done-*` / `.failed-*` / `.rolledback-*` are history only (no env copies are kept there) |
