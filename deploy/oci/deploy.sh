@@ -183,7 +183,7 @@ case "${1:-help}" in
     log "Building Docker images..."
     cd "$PROJECT_DIR"
     git pull origin main || {
-      error "git pull failed. After the DB runbook step 0b, $PROJECT_DIR is not pull-able until a follow-up reconciles it to main (deploy/oci/db/README.md, '~/flowmate after step 0b (deferred)'). Do not stash, commit -a or discard the guarded deploy/oci/deploy.sh; redeploy the running images with restart + explicit *_IMAGE refs instead."
+      error "git pull failed (see the error above). If this checkout was touched by DB runbook step 0b, it is not pull-able until the follow-up reconciliation (deploy/oci/db/README.md, '~/flowmate after step 0b (deferred)'); do not stash, commit -a, or discard the guarded deploy/oci/deploy.sh."
       exit 1
     }
 
