@@ -556,7 +556,7 @@ are safe in a shell with `set -e`:
     echo "STOP: content-agency-parser.ts differs from main's (or is missing)"
     exit 1
   fi
-  D=$(git -C "$R" diff -U0 -- src/lib/crawler/worker.ts) || { echo "STOP: git diff failed"; exit 1; }
+  D=$(git -C "$R" diff -U0 HEAD -- src/lib/crawler/worker.ts) || { echo "STOP: git diff failed"; exit 1; }   # staged + unstaged
   M=$(git -C "$R" show FETCH_HEAD:src/lib/crawler/worker.ts) || { echo "STOP: main's worker.ts unreadable"; exit 1; }
   # grep -c: status 0 = some added lines are not in main, 1 = none (prints 0), >1 = error
   if N=$(printf '%s\n' "$D" | grep '^+' | grep -v '^+++ ' | sed 's/^+//' | grep -cvxFf <(printf '%s\n' "$M")); then ST=0; else ST=$?; fi
@@ -576,11 +576,28 @@ are safe in a shell with `set -e`:
   R=/home/ubuntu/flowmate
   H=/home/ubuntu
   TS=$(date -u +%Y%m%dT%H%M%SZ)
-  P="$H/worker.ts.local-$TS.patch"
-  git -C "$R" diff -- src/lib/crawler/worker.ts > "$P" && [ -s "$P" ] || { echo "STOP: the worker.ts diff was not saved ($P)"; exit 1; }
-  git -C "$R" checkout -- src/lib/crawler/worker.ts || { echo "STOP: worker.ts checkout failed (diff saved as $P)"; exit 1; }
-  mv "$R/src/lib/crawler/content-agency-parser.ts" "$H/content-agency-parser.ts.pre-pull-$TS" || { echo "STOP: could not move content-agency-parser.ts aside"; exit 1; }
-  echo "ok: worker.ts diff saved as $P and reset; parser moved to $H/content-agency-parser.ts.pre-pull-$TS"
+  W=src/lib/crawler/worker.ts
+  C=src/lib/crawler/content-agency-parser.ts
+  if git -C "$R" diff --quiet HEAD -- "$W"; then   # staged + unstaged
+    echo "worker.ts: nothing to park"
+  else
+    P="$H/worker.ts.local-$TS.patch"
+    if git -C "$R" diff HEAD -- "$W" > "$P" && [ -s "$P" ]; then
+      git -C "$R" checkout HEAD -- "$W" || { echo "STOP: worker.ts checkout failed (diff saved as $P)"; exit 1; }
+      echo "worker.ts: local diff saved as $P and reset to HEAD"
+    else
+      [ -s "$P" ] || rm -f -- "$P"
+      echo "STOP: the worker.ts diff could not be saved"
+      exit 1
+    fi
+  fi
+  if [ -e "$R/$C" ] && ! git -C "$R" ls-files --error-unmatch -- "$C" >/dev/null 2>&1; then
+    mv "$R/$C" "$H/content-agency-parser.ts.pre-pull-$TS" || { echo "STOP: could not move content-agency-parser.ts aside"; exit 1; }
+    echo "parser: moved to $H/content-agency-parser.ts.pre-pull-$TS"
+  else
+    echo "parser: nothing to move"
+  fi
+  echo "ok: blockers cleared"
   git -C "$R" status --short     # expected: only ` M deploy/oci/deploy.sh` and `??` lines main does not ship
 ) || echo "resolution failed (rc=$?): see the messages above"
 ```
@@ -628,7 +645,7 @@ one differs; `merge --ff-only FETCH_HEAD`; keeps main's deploy.sh only if it is 
     if [ "$DONE" != 1 ]; then
       restore || rc=1
       [ "$rc" != 0 ] || rc=1
-      [ "$MERGING" != 1 ] || echo "the merge may have been interrupted: check git -C $R status --short before re-running"
+      [ "$MERGING" != 1 ] || echo "the merge may have been interrupted: re-run the block (see the note after it)"
     fi
     exit "$rc"
   }
@@ -651,6 +668,7 @@ one differs; `merge --ff-only FETCH_HEAD`; keeps main's deploy.sh only if it is 
     exit 1
   fi
   DONE=1   # merged: from here on the trap never copies the older saved deploy.sh over main's
+  echo "merged $(git -C "$R" rev-parse --short HEAD); checking main's deploy.sh"
   if ! usable "$R/$F"; then
     echo "WARNING: main's deploy.sh is unguarded or broken. STOP: this main does not carry the guarded deploy.sh. Do not run step 0b from a checkout of this main; reinstall only from a checkout that has the guarded deploy.sh."
     restore
@@ -665,13 +683,16 @@ The block runs in a subshell and ends with `|| echo ...`, so neither its `exit` 
 with `set -e` closes the SSH session. Every run that gets past the local-commits check leaves a
 `deploy.sh.pre-pull-<ts>` copy (cleanup checklist). If it prints `RESTORE FAILED`, do what it says
 before anything else. After `REFUSED` or `MERGE REFUSED`, fix the cause and run it again; after
-`WARNING`, stop (see below). After Ctrl-C or a dropped session during the merge, run
-`git -C ~/flowmate status --short` before re-running; main's half-written files show as M/??:
-`git checkout -- <M paths>`, move the listed `??` paths aside — never `git clean` (`.env.production`
-is untracked there), stash, or `commit -a`. `deploy/oci/db/tests/update-checkout.test.sh` runs
-exactly this block and the two blocker blocks (extracted between their markers) against throwaway
-git repos; Ctrl-C is simulated by a git stub that sends SIGINT to the block's subshell at the fetch
-or merge step (instead of the real git running), not by interrupting a real running git.
+`WARNING`, stop (see below). After Ctrl-C or a dropped session during the merge, just re-run the
+block. ` M deploy/oci/deploy.sh` is the restored guarded copy: leave it, the block parks it again
+itself. The `??` lines for `.env.production*`, `deploy.sh.pre-oci-*` and `deploy.sh.pre-pull-*` are
+expected. The block refuses only if a path that main touches (`git diff --name-only HEAD
+FETCH_HEAD`) is still M/??; resolve only those. Never `git clean`, stash, or `commit -a`.
+`deploy/oci/db/tests/update-checkout.test.sh` runs exactly this block and the two blocker blocks
+(extracted between their markers) against throwaway git repos. Ctrl-C is simulated by stubs that
+send SIGINT to the block's subshell instead of running the real command: a git stub at the fetch or
+merge step, and a bash stub at the `bash -n` of the post-merge usable() check. No real running git
+is interrupted.
 
 Then, still only with this branch merged into `main`, re-run the step 0b sha check (the
 `{ ... } | ssh oci 'sha256sum -c --quiet'` command) from a Mini checkout at the same `main` commit; it

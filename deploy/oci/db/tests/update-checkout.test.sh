@@ -7,8 +7,10 @@
 # Every case asserts that a pre-existing unrelated operator stash is untouched; every case except
 # the two that are about an unguarded file (refused up front, restore failure) also asserts that
 # the final deploy.sh carries the guard marker exactly once, passes bash -n and has no conflict
-# markers. Ctrl-C is simulated with a git stub that sends SIGINT to the block's subshell and dies
-# of SIGINT itself (what a terminal's ^C does to the foreground process group).
+# markers. Ctrl-C is simulated with stubs that send SIGINT to the block's subshell and die of
+# SIGINT themselves (what a terminal's ^C does to the foreground process group), instead of running
+# the real command: a git stub at the fetch or merge step, and a bash stub at the n-th `bash -n`
+# (the post-merge usable() check). No real running git is interrupted.
 #
 #   bash deploy/oci/db/tests/update-checkout.test.sh
 # shellcheck disable=SC2015,SC2016  # SC2015: ok() always succeeds; SC2016: single-quoted code for perl/bash -c
@@ -57,6 +59,8 @@ if [ -n "${STUB_INT_ON:-}" ] && [ "${3:-}" = "$STUB_INT_ON" ]; then
   kill -INT $$
   sleep 5
 fi
+# STUB_DIFF_FAIL=1: `git -C <dir> diff HEAD ...` (the blocker fix's patch save) fails without output
+if [ -n "${STUB_DIFF_FAIL:-}" ] && [ "${3:-}" = diff ] && [ "${4:-}" = HEAD ]; then exit 2; fi
 exec "$REAL_GIT" "$@"
 STUB
 cat >"$work/stubs/cp" <<'STUB'
@@ -221,8 +225,11 @@ before_head=$(git -C "$oci" rev-parse HEAD)
 push_main "merge guarded deploy.sh" "$F" "$G2"
 run_block int_merge STUB_INT_ON=merge
 failed_rc 130 && final_ok int_merge && same "$G1" && [ "$(git -C "$oci" rev-parse HEAD)" = "$before_head" ] &&
-  grep -q 'parked as' "$out" && grep -q 'guarded deploy.sh restored from .*pre-pull-' "$out" && grep -q 'the merge may have been interrupted' "$out" &&
-  ok "Ctrl-C during merge (unguarded HEAD copy live): trap restored the guarded copy + 'check git status' hint, rc=130" || { cat "$out"; bad "int_merge"; }
+  grep -q 'parked as' "$out" && grep -q 'guarded deploy.sh restored from .*pre-pull-' "$out" && grep -q 'the merge may have been interrupted: re-run the block' "$out" &&
+  ok "Ctrl-C during merge (unguarded HEAD copy live): trap restored the guarded copy + 're-run the block' hint, rc=130" || { cat "$out"; bad "int_merge"; }
+run_block int_merge_rerun
+succeeded && final_ok int_merge_rerun && same "$G2" && head_is_main && grep -q 'parked as' "$out" &&
+  ok "plain re-run after the interrupted merge (no manual action): OK, main's guarded copy, stash untouched" || { cat "$out"; bad "int_merge_rerun"; }
 
 # 7b. Ctrl-C right after a successful merge (at the usable() check): main's newer guarded copy stays
 world int_after_merge
@@ -298,16 +305,56 @@ run_errexit blockers_check "$work/check.sh"
 grep -q '^ok: content-agency-parser.ts is identical' "$out" && grep -q '^ok: every line the local worker.ts adds is already in main.s (0 unmatched)' "$out" &&
   grep -q '^ok: both checks passed$' "$out" && grep -q '^OUTER_SHELL_SURVIVED$' "$out" && ! grep -q 're-check failed' "$out" &&
   ok "blocker re-check under set -e (grep -c prints 0 / exits 1): both ok lines, outer shell survives" || { cat "$out"; bad "blockers_check"; }
+patches() { find "$w/home-ubuntu" -name 'worker.ts.local-*.patch' "$@" | wc -l | tr -d ' '; }
+parsers() { find "$w/home-ubuntu" -name 'content-agency-parser.ts.pre-pull-*' | wc -l | tr -d ' '; }
 run_errexit blockers_fix "$work/fix.sh"
 p=""
 for f in "$w"/home-ubuntu/worker.ts.local-*.patch; do [ -s "$f" ] && p=$f; done
-grep -q '^ok: worker.ts diff saved' "$out" && grep -q '^OUTER_SHELL_SURVIVED$' "$out" && [ -n "$p" ] && grep -q '^+line A' "$p" &&
+grep -q '^worker.ts: local diff saved' "$out" && grep -q '^parser: moved to' "$out" && grep -q '^ok: blockers cleared$' "$out" &&
+  grep -q '^OUTER_SHELL_SURVIVED$' "$out" && [ -n "$p" ] && grep -q '^+line A' "$p" &&
   git -C "$oci" diff --quiet -- src/lib/crawler/worker.ts && [ ! -e "$oci/src/lib/crawler/content-agency-parser.ts" ] &&
   ls "$w"/home-ubuntu/content-agency-parser.ts.pre-pull-* >/dev/null 2>&1 && stash_ok &&
   ok "blocker fix under set -e: worker.ts diff saved + reset, parser moved aside, outer shell survives" || { cat "$out"; bad "blockers_fix"; }
+sleep 1   # a re-run in the same second would reuse the timestamp
+run_errexit blockers_fix_rerun "$work/fix.sh"
+grep -q '^worker.ts: nothing to park$' "$out" && grep -q '^parser: nothing to move$' "$out" && grep -q '^ok: blockers cleared$' "$out" &&
+  ! grep -q 'STOP' "$out" && [ "$(patches)" = 1 ] && [ "$(patches -size 0)" = 0 ] && [ "$(parsers)" = 1 ] &&
+  ok "blocker fix re-run after success: nothing to park / nothing to move, no new or empty patch" || { cat "$out"; bad "blockers_fix_rerun"; }
 run_block blockers_update
 succeeded && final_ok blockers_update && same "$G1" && head_is_main &&
   ok "after the blocker fix the update block fast-forwards cleanly" || { cat "$out"; bad "blockers_update"; }
+
+# already-clean worker.ts, only the untracked parser present
+blockers_world blockers_parser_only ''
+git -C "$oci" checkout -q -- src/lib/crawler/worker.ts
+run_errexit blockers_parser_only "$work/fix.sh"
+grep -q '^worker.ts: nothing to park$' "$out" && grep -q '^parser: moved to' "$out" && grep -q '^ok: blockers cleared$' "$out" &&
+  [ "$(patches)" = 0 ] && [ ! -e "$oci/src/lib/crawler/content-agency-parser.ts" ] && [ "$(parsers)" = 1 ] &&
+  ok "blocker fix with a clean worker.ts: no patch file, parser still moved aside" || { cat "$out"; bad "blockers_parser_only"; }
+
+# saving the worker.ts diff fails: STOP, no (empty) patch left behind, nothing reset or moved
+blockers_world blockers_difffail ''
+STUB_DIFF_FAIL=1 run_errexit blockers_difffail "$work/fix.sh"
+grep -q '^STOP: the worker.ts diff could not be saved$' "$out" && grep -q '^resolution failed (rc=1)' "$out" && grep -q '^OUTER_SHELL_SURVIVED$' "$out" &&
+  [ "$(patches)" = 0 ] && ! git -C "$oci" diff --quiet -- src/lib/crawler/worker.ts && [ -e "$oci/src/lib/crawler/content-agency-parser.ts" ] &&
+  ok "worker.ts diff save fails: STOP, empty patch removed, worker.ts and parser untouched" || { cat "$out"; bad "blockers_difffail"; }
+
+# staged worker.ts changes: the re-check sees them (incl. a local-only line), the fix saves and resets them
+blockers_world blockers_staged_neg 'local only line\n'
+git -C "$oci" add src/lib/crawler/worker.ts
+run_errexit blockers_staged_neg "$work/check.sh"
+grep -q '^STOP: 1 added line(s) of the local worker.ts are not in main' "$out" && grep -q '^OUTER_SHELL_SURVIVED$' "$out" &&
+  ok "re-check with STAGED worker.ts changes incl. a local-only line: STOP (not a vacuous ok)" || { cat "$out"; bad "blockers_staged_neg"; }
+blockers_world blockers_staged ''
+git -C "$oci" add src/lib/crawler/worker.ts
+run_errexit blockers_staged_check "$work/check.sh"
+grep -q '^ok: both checks passed$' "$out" || { cat "$out"; bad "blockers_staged check"; }
+run_errexit blockers_staged_fix "$work/fix.sh"
+p=""
+for f in "$w"/home-ubuntu/worker.ts.local-*.patch; do [ -s "$f" ] && p=$f; done
+grep -q '^worker.ts: local diff saved' "$out" && [ -n "$p" ] && grep -q '^+line A' "$p" &&
+  git -C "$oci" diff --quiet HEAD -- src/lib/crawler/worker.ts && git -C "$oci" diff --cached --quiet -- src/lib/crawler/worker.ts &&
+  ok "STAGED worker.ts changes: re-check ok, fix saves the HEAD diff and resets index + work tree" || { cat "$out"; bad "blockers_staged"; }
 
 blockers_world blockers_neg 'local only line\n'
 run_errexit blockers_neg "$work/check.sh"
