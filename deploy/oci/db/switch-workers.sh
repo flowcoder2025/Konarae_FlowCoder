@@ -42,7 +42,8 @@
 #              so a rollback killed between its two renames resumes.
 #   deploy.sh  dry run and --apply refuse unless $DEPLOY_SH (the script the manual recovery path and
 #              later redeploys use) carries the guard marker `flowmate-deploy-guard:` (runbook step 0b).
-# A failure during --apply rolls everything back and keeps switch.state.failed-<ts>.
+# A failure during --apply rolls everything back and keeps switch.state.failed-<ts>, except a failed
+# state-file write: that stops the run at once, without a rollback, and reports the last recorded step.
 # Originals are kept stopped as <name>-pre-oci-<ts>; remove them only after --done.
 # Merged env files and inspect dumps live in $STATE_DIR/work.<pid> (700) and are deleted on exit.
 export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 PYTHONUTF8=1 PYTHONIOENCODING=utf-8
@@ -80,27 +81,56 @@ command -v jq >/dev/null || die "jq missing"
 install -d -m 700 "$STATE_DIR"
 exec 7>"$STATE_DIR/.lock"
 flock -n 7 || die "another switch-workers.sh is running"
-# We hold the lock: any work dir left behind (e.g. a SIGKILLed run) is stale and may hold env copies.
+# We hold the lock: any work dir left behind (e.g. a SIGKILLed run) is stale and may hold env copies,
+# a state_set killed half-way leaves switch.state.tmp.* behind, and a killed env step leaves
+# <env>.tmp.* / <env>.pre-cutover-<ts>.tmp (600, credentials). The backup itself has no .tmp suffix.
 find "$STATE_DIR" -maxdepth 1 -type d -name 'work.*' -exec rm -rf -- {} + 2>/dev/null || true
+find "$STATE_DIR" -maxdepth 1 -type f -name 'switch.state.tmp.*' -delete 2>/dev/null || true
+find "$(dirname -- "$ENV_SRC")" -maxdepth 1 -type f \( -name "$(basename -- "$ENV_SRC").tmp.*" -o -name "$(basename -- "$ENV_SRC").pre-cutover-*.tmp" \) -delete 2>/dev/null || true
 WORK="$STATE_DIR/work.$$"
 install -d -m 700 "$WORK"
 created=()   # candidates created by THIS run that are not yet recorded in a state file
 mutating=0   # set once workers/env may have been changed; refusals before that leave the state untouched
+STATE_BROKEN=""   # set by state_fail: the record that could not be written (state file is stale from there on)
+IN_EXIT=0         # on_exit/on_signal are running: state_fail returns instead of exiting
 
 # ---------------------------------------------------------------- state file
 state_get() { [ -f "$STATE" ] && sed -n "s/^$(printf '%s' "$1" | sed 's/[.[\*^$/]/\\&/g')=//p" "$STATE" | tail -n 1 || true; }
-state_set() { # KEY VALUE [KEY VALUE ...] -- atomic rewrite
-  local tmp="$STATE.tmp.$$" k v
-  { [ -f "$STATE" ] && cat "$STATE"; true; } >"$tmp"
+# Every state write must succeed: the recorded phases drive --apply resume and --rollback, so a
+# container step must never run past a record that was not written (disk full, failed rename).
+# state_set therefore checks every I/O step and calls state_fail, which stops the script at once
+# (exit 1) -- also inside functions called from an `if` (errexit is off there, `exit` is not).
+# on_exit then reports instead of rolling back (an automatic rollback would need the same file).
+state_fail() { # WHAT REASON
+  STATE_BROKEN=$1
+  rm -f -- "$STATE.tmp.$$" "$STATE.tmp.$$.2" 2>/dev/null
+  log "STATE FILE UNWRITABLE: could not record '$1' in $STATE ($2); stopping before any further container or env change"
+  [ "$IN_EXIT" = 1 ] && return 1
+  exit 1
+}
+state_set() { # KEY VALUE [KEY VALUE ...] -- atomic rewrite (tmp + mv); any failure -> state_fail
+  local tmp="$STATE.tmp.$$" k v i j what=""
+  for ((i = 1; i < $#; i += 2)); do j=$((i + 1)); what+="${what:+ }${!i}=${!j}"; done
+  what=${what:0:240}
+  if [ "$TEST_MODE" = 1 ] && [ -n "${FLOWMATE_WORKERS_STATE_FAIL_AT:-}" ]; then   # test hook: KEY or KEY=VALUE
+    for ((i = 1; i < $#; i += 2)); do
+      j=$((i + 1))
+      if [ "$FLOWMATE_WORKERS_STATE_FAIL_AT" = "${!i}" ] || [ "$FLOWMATE_WORKERS_STATE_FAIL_AT" = "${!i}=${!j}" ]; then
+        state_fail "$what" "simulated write failure (FLOWMATE_WORKERS_STATE_FAIL_AT)"; return 1
+      fi
+    done
+  fi
+  if [ -f "$STATE" ]; then cat -- "$STATE" >"$tmp" || { state_fail "$what" "copy to $tmp failed"; return 1; }
+  else : >"$tmp" || { state_fail "$what" "cannot create $tmp"; return 1; }; fi
   while [ $# -ge 2 ]; do
     k=$1 v=$2
     shift 2
-    awk -v k="$k" -F= '{ key=$1 } key != k' "$tmp" >"$tmp.2"
-    printf '%s=%s\n' "$k" "$v" >>"$tmp.2"
-    mv -f "$tmp.2" "$tmp"
+    awk -v k="$k" -F= '{ key=$1 } key != k' "$tmp" >"$tmp.2" || { state_fail "$what" "rewrite failed"; return 1; }
+    printf '%s=%s\n' "$k" "$v" >>"$tmp.2" || { state_fail "$what" "append failed"; return 1; }
+    mv -f -- "$tmp.2" "$tmp" || { state_fail "$what" "rename of $tmp.2 failed"; return 1; }
   done
-  chmod 600 "$tmp"
-  mv -f "$tmp" "$STATE"
+  chmod 600 "$tmp" || { state_fail "$what" "chmod failed"; return 1; }
+  mv -f -- "$tmp" "$STATE" || { state_fail "$what" "rename to $STATE failed"; return 1; }
 }
 phase_idx() { local i; for i in "${!PHASES[@]}"; do [ "${PHASES[$i]}" = "$1" ] && { echo "$i"; return; }; done; echo -1; }
 cphase_set() { # NAME PHASE (+ test hooks)
@@ -116,22 +146,36 @@ signaled=0
 on_signal() {
   local sig=$1
   signaled=1
-  if [ -f "$STATE" ] && [ "$mutating" = 1 ]; then state_set interrupted "$sig at $(date -u +%Y-%m-%dT%H:%M:%SZ)"; fi
-  log "INTERRUPTED by $sig: state kept in $STATE; '$0 --apply' resumes a switch, '$0 --rollback' undoes it"
-  exit 130
+  IN_EXIT=1
+  if [ -f "$STATE" ] && [ "$mutating" = 1 ] && [ -z "$STATE_BROKEN" ]; then state_set interrupted "$sig at $(date -u +%Y-%m-%dT%H:%M:%SZ)"; fi
+  [ -n "$STATE_BROKEN" ] || log "INTERRUPTED by $sig: state kept in $STATE; '$0 --apply' resumes a switch, '$0 --rollback' undoes it"
+  exit 130   # on_exit reports a broken state file
+}
+state_broken_report() { # after a failed state write: what is known (reads only, writes nothing)
+  local c rb cs
+  read -r -a cs <<<"$(state_get containers)"
+  log "the state file stopped at: phase=$(state_get phase) env_phase=$(state_get env_phase)$(for c in "${cs[@]}"; do rb=$(state_get "c.$c.rb"); printf ' %s=%s%s' "$c" "$(state_get "c.$c.phase")" "${rb:+/rb:$rb}"; done)"
+  log "not recorded: '$STATE_BROKEN' -- the docker or env step it describes may already have happened"
+  log "no automatic rollback (it would have to write the same file). Make $STATE_DIR writable again (disk space, permissions), then re-run the command that failed: '$0 --apply' resumes a switch (container steps re-check the containers by their recorded ids and skip what is done; the env step re-checks $ENV_SRC by its recorded sha256 and fails into the automatic rollback if it changed), '$0 --rollback' undoes it or finishes an interrupted rollback (its preflight refuses and prints the manual path if the containers no longer match the record)."
 }
 on_exit() {
   local rc=$? c
   trap - ERR
   set +e
+  IN_EXIT=1
   if [ ! -f "$STATE" ]; then
-    # Nothing recorded yet: candidates of this run would otherwise be orphaned.
+    # Nothing recorded yet (also: the first state write failed): this run changed no worker and no
+    # env file, and its candidates would otherwise be orphaned.
     for c in "${created[@]}"; do docker rm -f "$c" >/dev/null 2>&1; done
+    [ -z "$STATE_BROKEN" ] || log "no state file was written; nothing was changed and this run's candidates were removed"
+  elif [ -n "$STATE_BROKEN" ]; then
+    state_broken_report
   elif [ "$rc" != 0 ] && [ "$signaled" = 0 ] && [ "$mutating" = 1 ]; then
     case "$(state_get phase)" in
       complete) ;;
       *) state_set interrupted "exit $rc at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-         log "stopped with exit $rc; state kept in $STATE (phase $(state_get phase))" ;;
+         log "stopped with exit $rc; state kept in $STATE (phase $(state_get phase))"
+         [ -z "$STATE_BROKEN" ] || state_broken_report ;;
     esac
   fi
   rm -rf -- "$WORK"
@@ -385,17 +429,28 @@ env_switch() {
     env_verify_edited "$ENV_SRC" "$backup" || return 1
     log "$ENV_SRC: DATABASE_URL/DIRECT_URL -> $DB_TARGET (exactly one each; other lines unchanged; mode 600)"
   fi
+  # Every --apply run (also a resume) re-checks the recorded switched file: a hand restore of the
+  # backup after an interrupted run must not end in "complete" with the env on Supabase.
+  if [ "$(state_get env_phase)" = edited ] && [ "$(sha256sum <"$ENV_SRC" | cut -d' ' -f1)" != "$(state_get env_sha_after)" ]; then
+    log "$ENV_SRC no longer matches the switched file recorded in the state (changed after the switch)"
+    return 1
+  fi
 }
 env_restore() {
   local backup
   backup=$(state_get env_backup)
   case "$(state_get env_phase)" in
     backed_up | edited)
-      cp -p -- "$backup" "$ENV_SRC.tmp.restore"
-      mv -f -- "$ENV_SRC.tmp.restore" "$ENV_SRC"
-      [ "$(sha256sum <"$ENV_SRC" | cut -d' ' -f1)" = "$(state_get env_sha_before)" ] || die "restored $ENV_SRC does not match its pre-cutover sha256"
-      state_set env_phase restored
-      log "$ENV_SRC restored from $backup (sha256 verified)" ;;
+      if [ "$(sha256sum <"$ENV_SRC" | cut -d' ' -f1)" = "$(state_get env_sha_before)" ]; then
+        # already the pre-cutover file (an earlier run restored it but could not record that)
+        log "$ENV_SRC already matches its pre-cutover sha256; recording it as restored"
+      else
+        cp -p -- "$backup" "$ENV_SRC.tmp.restore"
+        mv -f -- "$ENV_SRC.tmp.restore" "$ENV_SRC"
+        [ "$(sha256sum <"$ENV_SRC" | cut -d' ' -f1)" = "$(state_get env_sha_before)" ] || die "restored $ENV_SRC does not match its pre-cutover sha256"
+        log "$ENV_SRC restored from $backup (sha256 verified)"
+      fi
+      state_set env_phase restored ;;
   esac
 }
 
@@ -481,7 +536,7 @@ EOF
 }
 # Every precondition of --rollback, for every container, BEFORE anything is touched.
 rollback_preflight() {
-  local c orig cand ph cur rb cand_ok problems=() b
+  local c orig cand ph cur rb cand_ok problems=() b env_sha sw_sha
   for c in "${containers[@]}"; do
     orig=$(state_get "c.$c.orig_id"); cand=$(state_get "c.$c.cand_id"); ph=$(state_get "c.$c.phase")
     [ -n "$orig" ] || continue   # not part of this run's plan
@@ -494,6 +549,8 @@ rollback_preflight() {
     { [ -n "$cand" ] && docker container inspect "$cand" >/dev/null 2>&1; } && cand_ok=1
     if [ "$cur" = "$orig" ] || { [ -n "$cand" ] && [ "$cur" = "$cand" ]; }; then :
     elif [ "$cur" = none ] && [ "$ph" = renamed ]; then :          # between the two renames of --apply
+    elif [ "$cur" = none ] && [ "$ph" = stopped ] && [ "$(di "" '{{.Name}}' "$orig")" = "/$(state_get "c.$c.prev")" ]; then :
+      # our own first rename happened but was not recorded (state write failed or a signal hit)
     elif [ "$cur" = none ] && [ -n "$rb" ] && { [ "$cand_ok" = 1 ] || [ "$rb" != start ]; }; then :
       # between the two renames of an interrupted --rollback: the candidate has been parked
       # (or removed, rb >= cand_parked) and the original still has to get its name back
@@ -505,7 +562,14 @@ rollback_preflight() {
       b=$(state_get env_backup)
       { [ -f "$b" ] && [ "$(sha256sum <"$b" | cut -d' ' -f1)" = "$(state_get env_sha_before)" ]; } ||
         problems+=("env backup $b missing or changed")
-      if [ "$(state_get env_phase)" = edited ] && [ "$(sha256sum <"$ENV_SRC" | cut -d' ' -f1)" != "$(state_get env_sha_after)" ]; then
+      # The file must be the pre-cutover one (also: restored by an earlier --rollback whose record
+      # failed) or the switched one (edited: the recorded sha; backed_up: the rewrite of the backup,
+      # whose 'edited' record failed); anything else is an outside edit.
+      env_sha=$(sha256sum <"$ENV_SRC" | cut -d' ' -f1)
+      if [ "$(state_get env_phase)" = edited ]; then sw_sha=$(state_get env_sha_after)
+      elif [ -f "$b" ]; then sw_sha=$(env_rewritten "$b" | sha256sum | cut -d' ' -f1)
+      else sw_sha=""; fi
+      if [ "$env_sha" != "$(state_get env_sha_before)" ] && [ "$env_sha" != "$sw_sha" ]; then
         problems+=("$ENV_SRC was changed after the switch (restoring the backup would discard that)")
       fi ;;
   esac
