@@ -58,6 +58,6 @@ source of the worker env: the cutover edits its DB URLs (backup kept), rollback 
 - `./deploy.sh build` - Build all Docker images
 - `CRAWLER_IMAGE=... EMBEDDING_IMAGE=... PARSER_IMAGE=... ./deploy.sh start` - Start all services
 - `./deploy.sh stop` - Stop all services
-- `./deploy.sh restart` - Restart all services
+- `CRAWLER_IMAGE=... EMBEDDING_IMAGE=... PARSER_IMAGE=... ./deploy.sh restart` - Restart all services
 - `./deploy.sh status` - Health check all services
 - `./deploy.sh logs [service]` - Tail service logs
