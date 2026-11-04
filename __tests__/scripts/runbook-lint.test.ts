@@ -10,6 +10,8 @@
  *  3. In the DB README, once the runbook enters a tmux session, every fenced bash block must say
  *     which host it runs on (`# on Mini` / `# on OCI ...`).
  *  4. The deploy.sh guard marker switch-workers.sh checks for must appear in deploy.sh exactly once.
+ *  5. Docs must not contain switch-workers.sh source text such as `$STATE` or `state_get`: it does
+ *     not work when typed. Use the expanded form the script prints (paths and <ts>).
  */
 import { readdirSync, readFileSync, statSync } from "fs";
 import path from "path";
@@ -75,6 +77,15 @@ export function findUnlabeledBlocksAfterTmux(text: string): number[] {
   return hits;
 }
 
+/** 1-based line numbers that contain unexpanded switch-workers.sh source (`$STATE`, `state_get`). */
+export function findScriptSourceInDocs(text: string): number[] {
+  const hits: number[] = [];
+  text.split("\n").forEach((line, i) => {
+    if (/\$\{?STATE\b|\bstate_get\b/.test(line)) hits.push(i + 1);
+  });
+  return hits;
+}
+
 function filesUnder(dir: string, exts: string[]): string[] {
   return readdirSync(dir).flatMap((name) => {
     const full = path.join(dir, name);
@@ -135,6 +146,20 @@ describe("ops lint: host labels after the runbook enters tmux", () => {
     const readme = readFileSync(path.join(ROOT, "deploy/oci/db/README.md"), "utf8");
     expect(readme).toMatch(/tmux new -A -s cutover/);
     expect(findUnlabeledBlocksAfterTmux(readme)).toEqual([]);
+  });
+});
+
+describe("ops lint: no switch-workers.sh source text in docs", () => {
+  it("flags $STATE / state_get and accepts the expanded form", () => {
+    expect(findScriptSourceInDocs("mv $STATE $STATE.manual-$(state_get ts)")).toEqual([1]);
+    expect(findScriptSourceInDocs("x\ncat ${STATE}")).toEqual([2]);
+    expect(findScriptSourceInDocs("mv /home/ubuntu/flowmate-db/workers/switch.state /home/ubuntu/flowmate-db/workers/switch.state.manual-<ts>")).toEqual([]);
+    expect(findScriptSourceInDocs("State: $STATE_DIR/switch.state")).toEqual([]);
+  });
+
+  it("claude.md and deploy/oci/**/*.md contain none", () => {
+    const docs = [...filesUnder(path.join(ROOT, "deploy/oci"), [".md"]), path.join(ROOT, "claude.md")];
+    expect(offendersOf(findScriptSourceInDocs, docs)).toEqual([]);
   });
 });
 

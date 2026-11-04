@@ -367,7 +367,7 @@ fixture "$n" --init --network flowmate --cap-drop NET_RAW "$image" sleep 86400
 orig_id=$(insp "$n" '{{.Id}}')
 before=$(snapshot "$n")
 sw --containers "$n" >"$work/w1.out" 2>&1 || { cat "$work/w1.out"; bad "W: dry run exited non-zero"; }
-[ "$(snapshot "$n")" = "$before" ] && grep -q "is on network flowmate with a non-OCI DB (manual-rollback state); switching it" "$work/w1.out" && ! grep -q oldpw "$work/w1.out" &&
+[ "$(snapshot "$n")" = "$before" ] && grep -q "is on network flowmate with a DATABASE_URL host other than flowmate-db (e.g. the manual-rollback state); accepted" "$work/w1.out" && ! grep -q oldpw "$work/w1.out" &&
   ok "W dry run: worker on network flowmate with a non-OCI DATABASE_URL accepted (logged), no mutation" || { cat "$work/w1.out"; bad "W dry run"; }
 sw --apply --containers "$n" >"$work/w2.out" 2>&1 || { cat "$work/w2.out"; bad "W: apply exited non-zero"; }
 [ "$(insp "$n" '{{.Id}}')" != "$orig_id" ] && [ "$(insp "$n" '{{.HostConfig.NetworkMode}} {{.State.Status}}')" = "flowmate running" ] &&

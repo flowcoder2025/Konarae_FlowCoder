@@ -474,17 +474,15 @@ never "Supabase vs OCI" after the switch (legitimate logins make OCI diverge) an
    # on OCI (inside tmux cutover)
    /home/ubuntu/flowmate-db/switch-workers.sh --rollback
    ```
-   If `--rollback` refuses (after `--done` or a `deploy.sh restart`), follow the manual path it prints:
+   If `--rollback` refuses after a `deploy.sh restart`, it prints this manual path: run all three lines.
+   After `--done` it prints nothing (no state left): run the first two lines and skip the `mv` (already `.done-<ts>`).
    ```bash
-   # on OCI (inside tmux cutover); <ts> and the refs as printed by --rollback
+   # on OCI (inside tmux cutover); <ts> = the pre-cutover backup's suffix; refs: docker container inspect -f '{{.Config.Image}}' <name>-pre-oci-<ts>
    cp -p ~/flowmate/.env.production.pre-cutover-<ts> ~/flowmate/.env.production
    FLOWMATE_ALLOW_NON_OCI_DB=1 CRAWLER_IMAGE=<ref> EMBEDDING_IMAGE=<ref> PARSER_IMAGE=<ref> /home/ubuntu/flowmate/deploy/oci/deploy.sh restart
    mv /home/ubuntu/flowmate-db/workers/switch.state /home/ubuntu/flowmate-db/workers/switch.state.manual-<ts>
    ```
-   (`deploy.sh` there is the guarded copy installed in step 0b.) Retrying the cutover after this path
-   is step 6 again: `switch-workers.sh` accepts workers that the manual path left on network flowmate
-   with the Supabase env (it refuses only workers whose running `DATABASE_URL` is already on
-   flowmate-db). Detach (`Ctrl-b d`), then:
+   (`deploy.sh` there is the guarded copy installed in step 0b.) Detach (`Ctrl-b d`), then:
    ```bash
    # on Mini
    cp -p ~/.flowmate-cutover.env.local /Volumes/포터블/Production/FlowMate/.env.local
@@ -504,6 +502,15 @@ never "Supabase vs OCI" after the switch (legitimate logins make OCI diverge) an
    SQL
    SB psql -X -At -c 'SHOW default_transaction_read_only'     # new session: off
    ```
+
+**Retrying the cutover** (after `--rollback` or the manual path): while Supabase is still fenced (you
+stopped before Rollback step 3), retry from cutover step 6 (OCI holds a superset). Once the fence is
+lifted, restart from cutover step 2: re-fence, fresh manifests and dumps (3), restore (4), extra
+checks (5), then step 6. Either way `switch-workers.sh` accepts workers the manual path left on network
+flowmate with a Supabase env; it refuses a worker on network flowmate whose running `DATABASE_URL` is
+already on flowmate-db, missing, duplicated or unparseable. Known limitation: if only some workers are
+already switched (mixed state), the default run refuses as a whole; switch the rest with
+`--containers "<names>"`.
 
 Keep the observation window short: every hour on OCI is an hour of writes to reconcile on rollback.
 

@@ -21,10 +21,11 @@
 # Fail-closed checks before ANY worker or the env file is touched: flowmate_app logs in from a
 # throwaway container on network flowmate; containers with mounts (incl. anonymous VOLUMEs) are
 # refused; a worker already on network flowmate is refused only if its running DATABASE_URL is
-# already on flowmate-db (the manual rollback path leaves them on flowmate with the Supabase env,
-# and those are switched normally); each new container is `docker create`d as <name>-oci-candidate-<ts>, its Config/
-# HostConfig diffed against the running one (only name, network, NET_RAW, env may differ) and its
-# Config.Env must hold exactly one DATABASE_URL and one DIRECT_URL, both on flowmate-db.
+# already on flowmate-db, missing, duplicated or unparseable (the manual rollback path leaves
+# workers on flowmate with the Supabase env; those are accepted and switched normally); each new
+# container is `docker create`d as <name>-oci-candidate-<ts>, its Config/HostConfig diffed against
+# the running one (only name, network, NET_RAW, env may differ) and its Config.Env must hold exactly
+# one DATABASE_URL and one DIRECT_URL, both on flowmate-db.
 #
 # State: $STATE_DIR/switch.state (600, atomic tmp+mv), written before the first mutation and after
 # every step. Global phase (the recovery direction): planned -> switching -> complete, or
@@ -255,7 +256,7 @@ network_precheck() { # NAME
     unparseable) die "$name is on network flowmate and its running DATABASE_URL cannot be parsed (value not shown); refusing, nothing was changed" ;;
     "${DB_TARGET%%:*}") die "$name is already switched: on network flowmate and its running DATABASE_URL already targets ${DB_TARGET%%:*}; nothing to do (a recorded switch is finished with --done or undone with --rollback)" ;;
   esac
-  log "$name is on network flowmate with a non-OCI DB (manual-rollback state); switching it"
+  log "$name is on network flowmate with a DATABASE_URL host other than flowmate-db (e.g. the manual-rollback state); accepted"
 }
 
 deploy_preflight() { # the deploy.sh that redeploys and the manual recovery path use must be the guarded one
