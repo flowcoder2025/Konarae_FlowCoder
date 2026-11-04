@@ -82,9 +82,11 @@ install -d -m 700 "$STATE_DIR"
 exec 7>"$STATE_DIR/.lock"
 flock -n 7 || die "another switch-workers.sh is running"
 # We hold the lock: any work dir left behind (e.g. a SIGKILLed run) is stale and may hold env copies,
-# and a state_set killed half-way leaves switch.state.tmp.* behind.
+# a state_set killed half-way leaves switch.state.tmp.* behind, and a killed env step leaves
+# <env>.tmp.* / <env>.pre-cutover-<ts>.tmp (600, credentials). The backup itself has no .tmp suffix.
 find "$STATE_DIR" -maxdepth 1 -type d -name 'work.*' -exec rm -rf -- {} + 2>/dev/null || true
 find "$STATE_DIR" -maxdepth 1 -type f -name 'switch.state.tmp.*' -delete 2>/dev/null || true
+find "$(dirname -- "$ENV_SRC")" -maxdepth 1 -type f \( -name "$(basename -- "$ENV_SRC").tmp.*" -o -name "$(basename -- "$ENV_SRC").pre-cutover-*.tmp" \) -delete 2>/dev/null || true
 WORK="$STATE_DIR/work.$$"
 install -d -m 700 "$WORK"
 created=()   # candidates created by THIS run that are not yet recorded in a state file
@@ -154,7 +156,7 @@ state_broken_report() { # after a failed state write: what is known (reads only,
   read -r -a cs <<<"$(state_get containers)"
   log "the state file stopped at: phase=$(state_get phase) env_phase=$(state_get env_phase)$(for c in "${cs[@]}"; do rb=$(state_get "c.$c.rb"); printf ' %s=%s%s' "$c" "$(state_get "c.$c.phase")" "${rb:+/rb:$rb}"; done)"
   log "not recorded: '$STATE_BROKEN' -- the docker or env step it describes may already have happened"
-  log "no automatic rollback (it would have to write the same file). Make $STATE_DIR writable again (disk space, permissions), then re-run the command that failed: '$0 --apply' resumes a switch (every step re-checks the containers by their recorded ids and skips what is already done), '$0 --rollback' undoes it or finishes an interrupted rollback (its preflight refuses and prints the manual path if the containers no longer match the record)."
+  log "no automatic rollback (it would have to write the same file). Make $STATE_DIR writable again (disk space, permissions), then re-run the command that failed: '$0 --apply' resumes a switch (container steps re-check the containers by their recorded ids and skip what is done; the env step re-checks $ENV_SRC by its recorded sha256 and fails into the automatic rollback if it changed), '$0 --rollback' undoes it or finishes an interrupted rollback (its preflight refuses and prints the manual path if the containers no longer match the record)."
 }
 on_exit() {
   local rc=$? c
@@ -427,6 +429,12 @@ env_switch() {
     env_verify_edited "$ENV_SRC" "$backup" || return 1
     log "$ENV_SRC: DATABASE_URL/DIRECT_URL -> $DB_TARGET (exactly one each; other lines unchanged; mode 600)"
   fi
+  # Every --apply run (also a resume) re-checks the recorded switched file: a hand restore of the
+  # backup after an interrupted run must not end in "complete" with the env on Supabase.
+  if [ "$(state_get env_phase)" = edited ] && [ "$(sha256sum <"$ENV_SRC" | cut -d' ' -f1)" != "$(state_get env_sha_after)" ]; then
+    log "$ENV_SRC no longer matches the switched file recorded in the state (changed after the switch)"
+    return 1
+  fi
 }
 env_restore() {
   local backup
@@ -528,7 +536,7 @@ EOF
 }
 # Every precondition of --rollback, for every container, BEFORE anything is touched.
 rollback_preflight() {
-  local c orig cand ph cur rb cand_ok problems=() b env_sha
+  local c orig cand ph cur rb cand_ok problems=() b env_sha sw_sha
   for c in "${containers[@]}"; do
     orig=$(state_get "c.$c.orig_id"); cand=$(state_get "c.$c.cand_id"); ph=$(state_get "c.$c.phase")
     [ -n "$orig" ] || continue   # not part of this run's plan
@@ -554,10 +562,14 @@ rollback_preflight() {
       b=$(state_get env_backup)
       { [ -f "$b" ] && [ "$(sha256sum <"$b" | cut -d' ' -f1)" = "$(state_get env_sha_before)" ]; } ||
         problems+=("env backup $b missing or changed")
-      # edited: the file must still be the switched one, or already the pre-cutover one (restored
-      # by an earlier --rollback whose 'restored' record failed); anything else is an outside edit
+      # The file must be the pre-cutover one (also: restored by an earlier --rollback whose record
+      # failed) or the switched one (edited: the recorded sha; backed_up: the rewrite of the backup,
+      # whose 'edited' record failed); anything else is an outside edit.
       env_sha=$(sha256sum <"$ENV_SRC" | cut -d' ' -f1)
-      if [ "$(state_get env_phase)" = edited ] && [ "$env_sha" != "$(state_get env_sha_after)" ] && [ "$env_sha" != "$(state_get env_sha_before)" ]; then
+      if [ "$(state_get env_phase)" = edited ]; then sw_sha=$(state_get env_sha_after)
+      elif [ -f "$b" ]; then sw_sha=$(env_rewritten "$b" | sha256sum | cut -d' ' -f1)
+      else sw_sha=""; fi
+      if [ "$env_sha" != "$(state_get env_sha_before)" ] && [ "$env_sha" != "$sw_sha" ]; then
         problems+=("$ENV_SRC was changed after the switch (restoring the backup would discard that)")
       fi ;;
   esac

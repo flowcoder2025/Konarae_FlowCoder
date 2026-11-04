@@ -548,8 +548,45 @@ sw --apply >"$work/sf6b.out" 2>&1 && [ "$(statephase phase)" = complete ] && [ "
   [ "$(sha "$sdir/.env.production")" = "$env_after" ] && [ $(($(date +%s) - start)) -lt 30 ] &&
   ok "SF6: switch done but 'complete' not recorded: --apply resume re-checks and records it ($(($(date +%s) - start))s, nothing recreated)" || { cat "$work/sf6b.out"; bad "SF6"; }
 : >"$sdir/state/switch.state.tmp.99999"; : >"$sdir/state/switch.state.tmp.99999.2"
+: >"$sdir/.env.production.tmp.20990101T000000Z"; : >"$sdir/.env.production.tmp.restore"; : >"$sdir/.env.production.pre-cutover-20990101T000000Z.tmp"
+real_backup=$(find "$sdir" -maxdepth 1 -name '.env.production.pre-cutover-*' ! -name '*.tmp' | head -n 1)
 sw --done >"$work/sf6c.out" 2>&1 && [ -z "$(find "$sdir/state" -name 'switch.state.tmp.*')" ] &&
-  ok "stale switch.state.tmp.* (a state_set killed half-way) are purged under the lock" || { cat "$work/sf6c.out"; bad "tmp purge"; }
+  [ -z "$(find "$sdir" -maxdepth 1 \( -name '.env.production.tmp.*' -o -name '.env.production.pre-cutover-*.tmp' \))" ] &&
+  [ -n "$real_backup" ] && [ -f "$real_backup" ] && [ -f "$sdir/.env.production" ] &&
+  ok "stale switch.state.tmp.* and env .tmp files (killed steps, credentials) are purged under the lock; the real backup stays" || { cat "$work/sf6c.out"; bad "tmp purge"; }
+rm_all "$n"
+
+# ================================================================ SF7: hand restore of the backup, then --apply resume -> no false "complete"
+scenario sf7
+n="$pfx-sf7"
+fixture "$n" --init "$image" sleep 86400
+orig_id=$(insp "$n" '{{.Id}}')
+extra_env=(FLOWMATE_WORKERS_STATE_FAIL_AT="phase=complete")
+sw --apply --containers "$n" >/dev/null 2>&1
+extra_env=()
+cp -p "$(statephase env_backup)" "$sdir/.env.production"   # the operator's hand restore
+sw --apply >"$work/sf7.out" 2>&1 && bad "SF7: --apply after a hand restore should fail"
+[ ! -f "$sdir/state/switch.state" ] && ls "$sdir"/state/switch.state.failed-* >/dev/null 2>&1 &&
+  grep -q 'no longer matches the switched file recorded in the state' "$work/sf7.out" && ! grep -q 'all workers switched' "$work/sf7.out" &&
+  [ "$(insp "$n" '{{.Id}} {{.State.Status}} {{.HostConfig.RestartPolicy.Name}}')" = "$orig_id running always" ] && [ "$(sha "$sdir/.env.production")" = "$orig_sha" ] &&
+  ok "SF7: env restored by hand after an interrupted apply: --apply resume fails the env check and rolls back (never 'complete')" || { cat "$work/sf7.out"; bad "SF7"; }
+rm_all "$n"
+
+# ================================================================ SF8: env edited by hand while the state says backed_up -> --rollback refuses
+scenario sf8
+n="$pfx-sf8"
+fixture "$n" --init "$image" sleep 86400
+orig_id=$(insp "$n" '{{.Id}}')
+extra_env=(FLOWMATE_WORKERS_STATE_FAIL_AT="env_phase=edited")
+sw --apply --containers "$n" >/dev/null 2>&1
+extra_env=()
+printf 'HAND_EDIT=1\n' >>"$sdir/.env.production"
+edited_sha=$(sha "$sdir/.env.production")
+before=$(snapshot "$n")
+sw --rollback >"$work/sf8.out" 2>&1 && bad "SF8: --rollback over a hand edit should refuse"
+[ "$(statephase env_phase)" = backed_up ] && [ "$(snapshot "$n")" = "$before" ] && [ "$(sha "$sdir/.env.production")" = "$edited_sha" ] &&
+  grep -q 'was changed after the switch' "$work/sf8.out" && grep -q 'Manual recovery' "$work/sf8.out" &&
+  ok "SF8: hand edit while the state says backed_up: --rollback refuses (no overwrite), prints the manual path" || { cat "$work/sf8.out"; bad "SF8"; }
 rm_all "$n"
 
 echo "$pass passed, $fail failed"

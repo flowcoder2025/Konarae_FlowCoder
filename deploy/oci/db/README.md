@@ -395,9 +395,11 @@ never "Supabase vs OCI" after the switch (legitimate logins make OCI diverge) an
    by `--apply` (only while the recorded direction is still "switch") or undone by `--rollback`, also
    from between its own renames. A failed write of the state file (disk full, permissions) stops the
    run at once without a rollback and prints the last recorded step: make the state dir writable,
-   then re-run the command that failed (`--apply` resumes the switch, skipping what is done;
-   `--rollback` undoes it or finishes an interrupted rollback, and its preflight refuses and prints
-   the manual path if the containers no longer match the record). Old containers stay stopped as `<name>-pre-oci-<ts>`. Later
+   then re-run the command that failed (`--apply` resumes the switch: container steps re-check the
+   containers by their recorded ids and skip what is done, the env step re-checks `.env.production`
+   by its recorded sha256 and fails into the automatic rollback if it changed; `--rollback` undoes it
+   or finishes an interrupted rollback, and its preflight refuses and prints the manual path if the
+   containers or the env file no longer match the record). Old containers stay stopped as `<name>-pre-oci-<ts>`. Later
    redeploys (`deploy.sh start`/`restart`, CLAUDE.md §9.5) read the edited `.env.production`;
    `deploy.sh` refuses when its `DATABASE_URL` host is not `flowmate-db` unless
    `FLOWMATE_ALLOW_NON_OCI_DB=1`. Run it in a tmux session on OCI, so a dropped SSH connection
@@ -508,19 +510,22 @@ never "Supabase vs OCI" after the switch (legitimate logins make OCI diverge) an
    that file; reconcile those writes into Supabase by hand if they matter). Stopping PgBouncer closes
    the Vercel path; its `restart: unless-stopped` keeps a manually stopped container down, also across
    a Docker or VM restart, until `docker start`. The stop holds `renew-cert.sh`'s lock, so a renewal in
-   progress (which may restart PgBouncer) finishes first and none starts meanwhile. Docker sends
-   SIGTERM, which PgBouncer 1.26 treats as "wait for clients"; with a client still attached (a warm
-   Vercel function) Docker kills it after 10 s, exit 137 — expected. Then no client session other
-   than `postgres` may remain (`pg_hba.conf`: `flowmate_app` from 172.21.0.0/24, `flowmate_owner`
-   from the gateway .1, i.e. a step-5 tunnel, `pgbouncer_auth` from PgBouncer .3). `backup.sh` reads
-   flowmate-db through `docker exec`, not PgBouncer; the copy keeps this dump out of the 7-set
-   retention:
+   progress (which may restart PgBouncer) finishes first; a cron renewal in that window fails its lock
+   and alerts, without touching PgBouncer. Docker sends SIGTERM, which PgBouncer 1.26 treats as "wait
+   for clients"; with a client still attached (a warm Vercel function) Docker kills it after 10 s, so
+   the container's exit code is 137 (`docker stop` itself prints the name and returns 0) — expected.
+   The first line must print `exited 0` or `exited 137`; anything else (e.g. `running` after a lock
+   timeout) means PgBouncer is still up: stop there. Then no client session other than `postgres` may
+   remain (`pg_hba.conf`: `flowmate_app` from 172.21.0.0/24, `flowmate_owner` from the gateway .1,
+   i.e. a step-5 tunnel, `pgbouncer_auth` from PgBouncer .3). `backup.sh` reads flowmate-db through
+   `docker exec`, not PgBouncer. The last line runs the dump and, only if it succeeded and produced a
+   new set, copies that set out of the 7-set retention and checks it against its `.sha256`; it must
+   end with `rollback dump saved: …`:
    ```bash
    # on Mini
-   ssh oci 'flock -w 1500 /home/ubuntu/flowmate-db/letsencrypt/.renew.lock docker stop flowmate-pgbouncer'
+   ssh oci 'flock -w 1500 /home/ubuntu/flowmate-db/letsencrypt/.renew.lock docker stop flowmate-pgbouncer; docker container inspect -f "{{.State.Status}} {{.State.ExitCode}}" flowmate-pgbouncer'
    ssh oci "docker exec -u postgres flowmate-db psql -X -At -d flowmate -c \"SELECT usename, client_addr, state, count(*) FROM pg_stat_activity WHERE backend_type = 'client backend' AND usename <> 'postgres' AND pid <> pg_backend_pid() GROUP BY 1, 2, 3\""   # no rows
-   ssh oci /home/ubuntu/flowmate-db/backup.sh
-   ssh oci 'install -d -m 700 /home/ubuntu/backup/flowmate-rollback && f=$(ls -1 /home/ubuntu/backup/flowmate-db/flowmate-db-*.dump | sort | tail -n 1) && cp -p "$f" "$f.counts.tsv" "$f.sha256" /home/ubuntu/backup/flowmate-rollback/ && ls -l /home/ubuntu/backup/flowmate-rollback/'
+   ssh oci 'B=/home/ubuntu/backup/flowmate-db R=/home/ubuntu/backup/flowmate-rollback; before=$(printf "%s\n" "$B"/flowmate-db-*.dump | sort | tail -n 1); /home/ubuntu/flowmate-db/backup.sh && f=$(printf "%s\n" "$B"/flowmate-db-*.dump | sort | tail -n 1) && [ -f "$f" ] && [ "$f" != "$before" ] && install -d -m 700 "$R" && cp -p "$f" "$f.counts.tsv" "$f.sha256" "$R"/ && chmod 600 "$R/$(basename "$f")" "$R/$(basename "$f").counts.tsv" "$R/$(basename "$f").sha256" && (cd "$R" && sha256sum -c "$(basename "$f").sha256") && echo "rollback dump saved: $R/$(basename "$f")"'
    ```
    If the only rows come from 172.21.0.3, PgBouncer's backends are still closing: re-run the query
    after a few seconds. Any other row is a writer: find and stop it before dumping. While PgBouncer
