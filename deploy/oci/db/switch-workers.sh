@@ -81,8 +81,10 @@ command -v jq >/dev/null || die "jq missing"
 install -d -m 700 "$STATE_DIR"
 exec 7>"$STATE_DIR/.lock"
 flock -n 7 || die "another switch-workers.sh is running"
-# We hold the lock: any work dir left behind (e.g. a SIGKILLed run) is stale and may hold env copies.
+# We hold the lock: any work dir left behind (e.g. a SIGKILLed run) is stale and may hold env copies,
+# and a state_set killed half-way leaves switch.state.tmp.* behind.
 find "$STATE_DIR" -maxdepth 1 -type d -name 'work.*' -exec rm -rf -- {} + 2>/dev/null || true
+find "$STATE_DIR" -maxdepth 1 -type f -name 'switch.state.tmp.*' -delete 2>/dev/null || true
 WORK="$STATE_DIR/work.$$"
 install -d -m 700 "$WORK"
 created=()   # candidates created by THIS run that are not yet recorded in a state file
@@ -152,7 +154,7 @@ state_broken_report() { # after a failed state write: what is known (reads only,
   read -r -a cs <<<"$(state_get containers)"
   log "the state file stopped at: phase=$(state_get phase) env_phase=$(state_get env_phase)$(for c in "${cs[@]}"; do rb=$(state_get "c.$c.rb"); printf ' %s=%s%s' "$c" "$(state_get "c.$c.phase")" "${rb:+/rb:$rb}"; done)"
   log "not recorded: '$STATE_BROKEN' -- the docker or env step it describes may already have happened"
-  log "no automatic rollback (it would have to write the same file). Make $STATE_DIR writable again (disk space, permissions), then run '$0 --rollback': its preflight compares the recorded container ids with the real ones and refuses, printing the manual path, if they no longer match. Do not run --apply before that."
+  log "no automatic rollback (it would have to write the same file). Make $STATE_DIR writable again (disk space, permissions), then re-run the command that failed: '$0 --apply' resumes a switch (every step re-checks the containers by their recorded ids and skips what is already done), '$0 --rollback' undoes it or finishes an interrupted rollback (its preflight refuses and prints the manual path if the containers no longer match the record)."
 }
 on_exit() {
   local rc=$? c
@@ -431,11 +433,16 @@ env_restore() {
   backup=$(state_get env_backup)
   case "$(state_get env_phase)" in
     backed_up | edited)
-      cp -p -- "$backup" "$ENV_SRC.tmp.restore"
-      mv -f -- "$ENV_SRC.tmp.restore" "$ENV_SRC"
-      [ "$(sha256sum <"$ENV_SRC" | cut -d' ' -f1)" = "$(state_get env_sha_before)" ] || die "restored $ENV_SRC does not match its pre-cutover sha256"
-      state_set env_phase restored
-      log "$ENV_SRC restored from $backup (sha256 verified)" ;;
+      if [ "$(sha256sum <"$ENV_SRC" | cut -d' ' -f1)" = "$(state_get env_sha_before)" ]; then
+        # already the pre-cutover file (an earlier run restored it but could not record that)
+        log "$ENV_SRC already matches its pre-cutover sha256; recording it as restored"
+      else
+        cp -p -- "$backup" "$ENV_SRC.tmp.restore"
+        mv -f -- "$ENV_SRC.tmp.restore" "$ENV_SRC"
+        [ "$(sha256sum <"$ENV_SRC" | cut -d' ' -f1)" = "$(state_get env_sha_before)" ] || die "restored $ENV_SRC does not match its pre-cutover sha256"
+        log "$ENV_SRC restored from $backup (sha256 verified)"
+      fi
+      state_set env_phase restored ;;
   esac
 }
 
@@ -521,7 +528,7 @@ EOF
 }
 # Every precondition of --rollback, for every container, BEFORE anything is touched.
 rollback_preflight() {
-  local c orig cand ph cur rb cand_ok problems=() b
+  local c orig cand ph cur rb cand_ok problems=() b env_sha
   for c in "${containers[@]}"; do
     orig=$(state_get "c.$c.orig_id"); cand=$(state_get "c.$c.cand_id"); ph=$(state_get "c.$c.phase")
     [ -n "$orig" ] || continue   # not part of this run's plan
@@ -534,6 +541,8 @@ rollback_preflight() {
     { [ -n "$cand" ] && docker container inspect "$cand" >/dev/null 2>&1; } && cand_ok=1
     if [ "$cur" = "$orig" ] || { [ -n "$cand" ] && [ "$cur" = "$cand" ]; }; then :
     elif [ "$cur" = none ] && [ "$ph" = renamed ]; then :          # between the two renames of --apply
+    elif [ "$cur" = none ] && [ "$ph" = stopped ] && [ "$(di "" '{{.Name}}' "$orig")" = "/$(state_get "c.$c.prev")" ]; then :
+      # our own first rename happened but was not recorded (state write failed or a signal hit)
     elif [ "$cur" = none ] && [ -n "$rb" ] && { [ "$cand_ok" = 1 ] || [ "$rb" != start ]; }; then :
       # between the two renames of an interrupted --rollback: the candidate has been parked
       # (or removed, rb >= cand_parked) and the original still has to get its name back
@@ -545,7 +554,10 @@ rollback_preflight() {
       b=$(state_get env_backup)
       { [ -f "$b" ] && [ "$(sha256sum <"$b" | cut -d' ' -f1)" = "$(state_get env_sha_before)" ]; } ||
         problems+=("env backup $b missing or changed")
-      if [ "$(state_get env_phase)" = edited ] && [ "$(sha256sum <"$ENV_SRC" | cut -d' ' -f1)" != "$(state_get env_sha_after)" ]; then
+      # edited: the file must still be the switched one, or already the pre-cutover one (restored
+      # by an earlier --rollback whose 'restored' record failed); anything else is an outside edit
+      env_sha=$(sha256sum <"$ENV_SRC" | cut -d' ' -f1)
+      if [ "$(state_get env_phase)" = edited ] && [ "$env_sha" != "$(state_get env_sha_after)" ] && [ "$env_sha" != "$(state_get env_sha_before)" ]; then
         problems+=("$ENV_SRC was changed after the switch (restoring the backup would discard that)")
       fi ;;
   esac

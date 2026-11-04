@@ -12,7 +12,8 @@
 # Counts are compared with the manifest produced by the same row-counts.sql (the
 # plan's compare-row-counts.ts can't run on OCI: no node_modules there).
 # Appends one line to ~/backup/flowmate-db/verify.log. Exit 0 only on exact match AND a recorded
-# success line; a verified restore whose OK line cannot be written is alerted and exits 4.
+# success line; a verified restore whose OK line cannot be written is alerted and exits 4. Exit
+# precedence: 1 restore failed, then 3 cleanup failed, then 4 OK line not written.
 export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 PYTHONUTF8=1 PYTHONIOENCODING=utf-8
 set -Eeuo pipefail
 umask 077
@@ -22,17 +23,19 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
 VERIFY_LOG="$FLOWMATE_BACKUP_DIR/verify.log"
 dump_label="?"
-# Failure path, best effort: a failing verify.log write must never stop the alert.
+# One line to verify.log; returns non-zero if it could not be written. Failure paths ignore that
+# (best effort, the alert comes first); the OK line must be written (see the end).
 record() {
-  { printf '%s %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" >>"$VERIFY_LOG"; } 2>/dev/null ||
-    log "could not write $VERIFY_LOG"
+  { printf '%s %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" >>"$VERIFY_LOG"; } 2>/dev/null && return 0
+  log "could not write $VERIFY_LOG"
+  return 1
 }
 fail() {
   trap - ERR
   set +e
   log "verify-restore FAILED: $1"
   alert "[FlowMate DB] restore verification failed on $(hostname -s) for $dump_label: $1"
-  record FAIL "$dump_label $1"
+  record FAIL "$dump_label $1" || true
   exit 1
 }
 trap 'fail "unexpected error at line $LINENO"' ERR
@@ -74,7 +77,7 @@ remove_container() {
   if [ -n "$leftover" ]; then
     log "CLEANUP FAILED:$leftover (restored PII may remain on disk: docker rm -f -v $cname; docker volume rm <volume>)"
     alert "[FlowMate DB] verify-restore cleanup failed on $(hostname -s):$leftover. Restored member data may remain on disk."
-    record CLEANUP-FAIL "$dump_label$leftover"
+    record CLEANUP-FAIL "$dump_label$leftover" || true
     return 1
   fi
   return 0
@@ -126,13 +129,12 @@ fi
 
 # Success must be recorded: the monthly cron's only trace is this line (no alert on success).
 ok_recorded=1
-{ printf '%s %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" OK "$dump_label tables=$tables rows=$rows duration=$(($(date +%s) - started))s" >>"$VERIFY_LOG"; } 2>/dev/null ||
-  ok_recorded=0
+record OK "$dump_label tables=$tables rows=$rows duration=$(($(date +%s) - started))s" || ok_recorded=0
 log "verify-restore ok: $dump_label tables=$tables rows=$rows"
 if [ "$ok_recorded" = 0 ]; then
   log "verified OK but $VERIFY_LOG not writable"
   alert "[FlowMate DB] restore of $dump_label verified OK on $(hostname -s), but $VERIFY_LOG is not writable"
 fi
-remove_container || exit 3
+remove_container || exit 3   # a cleanup failure (3) wins over an unwritten OK line (4)
 log "cleanup ok: removed $cname and its volume(s) $own_volumes"
 [ "$ok_recorded" = 1 ] || exit 4

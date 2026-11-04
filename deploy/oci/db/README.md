@@ -395,8 +395,9 @@ never "Supabase vs OCI" after the switch (legitimate logins make OCI diverge) an
    by `--apply` (only while the recorded direction is still "switch") or undone by `--rollback`, also
    from between its own renames. A failed write of the state file (disk full, permissions) stops the
    run at once without a rollback and prints the last recorded step: make the state dir writable,
-   then `--rollback` (its preflight refuses and prints the manual path if the containers no longer
-   match the record). Old containers stay stopped as `<name>-pre-oci-<ts>`. Later
+   then re-run the command that failed (`--apply` resumes the switch, skipping what is done;
+   `--rollback` undoes it or finishes an interrupted rollback, and its preflight refuses and prints
+   the manual path if the containers no longer match the record). Old containers stay stopped as `<name>-pre-oci-<ts>`. Later
    redeploys (`deploy.sh start`/`restart`, CLAUDE.md §9.5) read the edited `.env.production`;
    `deploy.sh` refuses when its `DATABASE_URL` host is not `flowmate-db` unless
    `FLOWMATE_ALLOW_NON_OCI_DB=1`. Run it in a tmux session on OCI, so a dropped SSH connection
@@ -506,19 +507,25 @@ never "Supabase vs OCI" after the switch (legitimate logins make OCI diverge) an
 2. **Close OCI to writers, then take the final dump** — it holds every write since the switch (keep
    that file; reconcile those writes into Supabase by hand if they matter). Stopping PgBouncer closes
    the Vercel path; its `restart: unless-stopped` keeps a manually stopped container down, also across
-   a Docker or VM restart, until `docker start`. The workers point at Supabase since step 1, so no
-   `flowmate_app` session may remain: the step-6 query without its address filter covers every source
-   `pg_hba.conf` allows for it (172.21.0.0/24: workers .128/25, PgBouncer .3, the host's tunnel via
-   the gateway .1). `backup.sh` reads flowmate-db through `docker exec`, not PgBouncer:
+   a Docker or VM restart, until `docker start`. The stop holds `renew-cert.sh`'s lock, so a renewal in
+   progress (which may restart PgBouncer) finishes first and none starts meanwhile. Docker sends
+   SIGTERM, which PgBouncer 1.26 treats as "wait for clients"; with a client still attached (a warm
+   Vercel function) Docker kills it after 10 s, exit 137 — expected. Then no client session other
+   than `postgres` may remain (`pg_hba.conf`: `flowmate_app` from 172.21.0.0/24, `flowmate_owner`
+   from the gateway .1, i.e. a step-5 tunnel, `pgbouncer_auth` from PgBouncer .3). `backup.sh` reads
+   flowmate-db through `docker exec`, not PgBouncer; the copy keeps this dump out of the 7-set
+   retention:
    ```bash
    # on Mini
-   ssh oci docker stop flowmate-pgbouncer
-   ssh oci "docker exec -u postgres flowmate-db psql -X -At -d flowmate -c \"SELECT usename, client_addr, count(*) FROM pg_stat_activity WHERE usename = 'flowmate_app' GROUP BY 1, 2\""   # no rows
+   ssh oci 'flock -w 1500 /home/ubuntu/flowmate-db/letsencrypt/.renew.lock docker stop flowmate-pgbouncer'
+   ssh oci "docker exec -u postgres flowmate-db psql -X -At -d flowmate -c \"SELECT usename, client_addr, state, count(*) FROM pg_stat_activity WHERE backend_type = 'client backend' AND usename <> 'postgres' AND pid <> pg_backend_pid() GROUP BY 1, 2, 3\""   # no rows
    ssh oci /home/ubuntu/flowmate-db/backup.sh
+   ssh oci 'install -d -m 700 /home/ubuntu/backup/flowmate-rollback && f=$(ls -1 /home/ubuntu/backup/flowmate-db/flowmate-db-*.dump | sort | tail -n 1) && cp -p "$f" "$f.counts.tsv" "$f.sha256" /home/ubuntu/backup/flowmate-rollback/ && ls -l /home/ubuntu/backup/flowmate-rollback/'
    ```
-   If the query returns rows, find and stop that writer before dumping. While PgBouncer is down, the
-   daily `renew-cert.sh` (03:17) only alerts that it is not running and does not start it; `install.sh`
-   (`docker compose up -d`) would start it, so do not run it before a retry. Writes keep failing on the
+   If the only rows come from 172.21.0.3, PgBouncer's backends are still closing: re-run the query
+   after a few seconds. Any other row is a writer: find and stop it before dumping. While PgBouncer
+   is down, the daily `renew-cert.sh` (03:17) only alerts that it is not running and does not start
+   it; `install.sh` (`docker compose up -d`) would start it, so do not run it before a retry. Writes keep failing on the
    fenced Supabase from step 1 to step 3; this order adds only this step to that window (the dump took
    ~5 s on 2026-11-04). If you do not retry, decide about PgBouncer after step 3: leave it stopped (OCI
    stays closed; `renew-cert.sh` then alerts every day) or `ssh oci docker start flowmate-pgbouncer`
@@ -573,6 +580,7 @@ Keep the observation window short: every hour on OCI is an hour of writes to rec
 | `.env.production.pre-cutover-<ts>` on OCI | `~/flowmate/` (600, Supabase credentials) | keep until no rollback to Supabase is wanted any more (the manual path still needs it after `--done`) |
 | `.env.production.bak` on OCI (pre-existing, not ours) | `~/flowmate/.env.production.bak`, mode **664**, holds Supabase credentials | user decision: `chmod 600` or remove; also `.env.production` itself is 664 until the cutover makes it 600 |
 | Previous `deploy.sh` copies | `~/flowmate/deploy/oci/deploy.sh.pre-oci-<ts>` (step 0b; re-runs stack them, the oldest is the original) | only after the follow-up reconciliation of `~/flowmate` (see "`~/flowmate` after step 0b (deferred)") |
+| Rollback dump copy | `/home/ubuntu/backup/flowmate-rollback/` (Rollback step 2; dir 700, files 600) | PII; outside the 7-set retention, so it stays until removed: delete after the writes in it are reconciled |
 | PgBouncer stopped by a rollback | `flowmate-pgbouncer` (Rollback step 2) | stays down across reboots until `docker start flowmate-pgbouncer`; `renew-cert.sh` alerts daily while it is down |
 | `switch.state*` | `~/flowmate-db/workers/` | `.done-*` / `.failed-*` / `.rolledback-*` are history only (no env copies are kept there) |
 

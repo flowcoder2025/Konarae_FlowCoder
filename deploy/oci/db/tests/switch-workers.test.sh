@@ -487,5 +487,70 @@ sw --rollback >"$work/sf3b.out" 2>&1 && [ "$(insp "$n" '{{.Id}} {{.State.Status}
   ok "SF3: a second --rollback resumes from cand_parked and finishes" || { cat "$work/sf3b.out"; bad "SF3 resume"; }
 rm_all "$n"
 
+# ================================================================ SF4: 'env_phase restored' not recorded -> a second --rollback finishes
+scenario sf4
+n="$pfx-sf4"
+fixture "$n" --init "$image" sleep 86400
+orig_id=$(insp "$n" '{{.Id}}')
+sw --apply --containers "$n" >/dev/null 2>&1 || bad "SF4: apply"
+extra_env=(FLOWMATE_WORKERS_STATE_FAIL_AT="env_phase=restored")
+sw --rollback >"$work/sf4.out" 2>&1; rc=$?
+extra_env=()
+[ "$rc" != 0 ] && [ "$(statephase env_phase)" = edited ] && [ "$(sha "$sdir/.env.production")" = "$orig_sha" ] &&
+  [ "$(statephase "c.$n.phase")" = rolled_back ] || { cat "$work/sf4.out"; bad "SF4 setup (env restored, record failed)"; }
+sw --rollback >"$work/sf4b.out" 2>&1 && grep -q 'already matches its pre-cutover sha256; recording it as restored' "$work/sf4b.out" &&
+  [ "$(insp "$n" '{{.Id}} {{.State.Status}} {{.HostConfig.RestartPolicy.Name}}')" = "$orig_id running always" ] &&
+  [ "$(sha "$sdir/.env.production")" = "$orig_sha" ] && ls "$sdir"/state/switch.state.rolledback-* >/dev/null 2>&1 && ! grep -q 'Manual recovery' "$work/sf4b.out" &&
+  ok "SF4: env restored but not recorded: second --rollback accepts the pre-cutover sha and finishes (no manual path)" || { cat "$work/sf4b.out"; bad "SF4"; }
+rm_all "$n"
+
+# ================================================================ SF5: first rename done but not recorded -> --rollback accepts it
+scenario sf5
+n="$pfx-sf5"
+fixture "$n" --init "$image" sleep 86400
+orig_id=$(insp "$n" '{{.Id}}')
+extra_env=(FLOWMATE_WORKERS_STATE_FAIL_AT="c.$n.phase=renamed")
+sw --apply --containers "$n" >"$work/sf5.out" 2>&1; rc=$?
+extra_env=()
+[ "$rc" != 0 ] && [ "$(statephase "c.$n.phase")" = stopped ] && [ "$(insp "$orig_id" '{{.Name}}')" = "/$(statephase "c.$n.prev")" ] &&
+  [ -z "$(docker ps -a -q --filter "name=^$n\$")" ] || { cat "$work/sf5.out"; bad "SF5 setup (renamed, recorded as stopped)"; }
+sw --rollback >"$work/sf5b.out" 2>&1 && [ "$(insp "$n" '{{.Id}} {{.State.Status}} {{.HostConfig.RestartPolicy.Name}}')" = "$orig_id running always" ] &&
+  [ "$(sha "$sdir/.env.production")" = "$orig_sha" ] && [ -z "$(docker ps -a -q --filter "name=^$n-oci-candidate-")" ] &&
+  ok "SF5: unrecorded first rename: --rollback accepts it (our own prev name) and restores the original" || { cat "$work/sf5b.out"; bad "SF5"; }
+rm_all "$n"
+
+# ================================================================ SF5b: same state, --apply resumes instead
+scenario sf5b
+n="$pfx-sf5b"
+fixture "$n" --init "$image" sleep 86400
+orig_id=$(insp "$n" '{{.Id}}')
+extra_env=(FLOWMATE_WORKERS_STATE_FAIL_AT="c.$n.phase=renamed")
+sw --apply --containers "$n" >/dev/null 2>&1
+extra_env=()
+cand_id=$(statephase "c.$n.cand_id")
+sw --apply >"$work/sf5c.out" 2>&1 && [ "$(statephase phase)" = complete ] && [ "$(insp "$n" '{{.Id}} {{.State.Status}}')" = "$cand_id running" ] &&
+  [ "$(insp "$orig_id" '{{.Name}} {{.State.Status}}')" = "/$(statephase "c.$n.prev") exited" ] &&
+  ok "SF5b: unrecorded first rename: --apply resumes (rename skipped) and completes" || { cat "$work/sf5c.out"; bad "SF5b"; }
+rm_all "$n"
+
+# ================================================================ SF6: 'phase complete' not recorded -> --apply resume only records it
+scenario sf6
+n="$pfx-sf6"
+fixture "$n" --init "$image" sleep 86400
+extra_env=(FLOWMATE_WORKERS_STATE_FAIL_AT="phase=complete")
+sw --apply --containers "$n" >"$work/sf6.out" 2>&1; rc=$?
+extra_env=()
+new_id=$(insp "$n" '{{.Id}}')
+env_after=$(sha "$sdir/.env.production")
+[ "$rc" != 0 ] && [ "$(statephase phase)" = switching ] && [ "$(statephase "c.$n.phase")" = ready ] || { cat "$work/sf6.out"; bad "SF6 setup"; }
+start=$(date +%s)
+sw --apply >"$work/sf6b.out" 2>&1 && [ "$(statephase phase)" = complete ] && [ "$(insp "$n" '{{.Id}} {{.State.Status}}')" = "$new_id running" ] &&
+  [ "$(sha "$sdir/.env.production")" = "$env_after" ] && [ $(($(date +%s) - start)) -lt 30 ] &&
+  ok "SF6: switch done but 'complete' not recorded: --apply resume re-checks and records it ($(($(date +%s) - start))s, nothing recreated)" || { cat "$work/sf6b.out"; bad "SF6"; }
+: >"$sdir/state/switch.state.tmp.99999"; : >"$sdir/state/switch.state.tmp.99999.2"
+sw --done >"$work/sf6c.out" 2>&1 && [ -z "$(find "$sdir/state" -name 'switch.state.tmp.*')" ] &&
+  ok "stale switch.state.tmp.* (a state_set killed half-way) are purged under the lock" || { cat "$work/sf6c.out"; bad "tmp purge"; }
+rm_all "$n"
+
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]
