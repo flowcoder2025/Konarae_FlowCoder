@@ -18,11 +18,10 @@
 # flowmate-crawler:pr9 while flowmate-crawler:latest is older):
 #   CRAWLER_IMAGE=flowmate-crawler:pr9 EMBEDDING_IMAGE=... PARSER_IMAGE=... ./deploy.sh start
 # Current refs: docker container inspect -f '{{.Config.Image}}' flowmate-crawler (etc.)
-# build: runs `git pull origin main` in ~/flowmate; it fails (with a hint) when a local M/?? path
-# that main also touches is in the way, e.g. this guarded deploy.sh installed by the DB runbook
-# step 0b, a modified src/lib/crawler/worker.ts or an untracked src/lib/crawler/content-agency-parser.ts.
-# Check `git status --short`, then use deploy/oci/db/README.md, "Updating ~/flowmate after step 0b"
-# (fetch + merge --ff-only, restores the guarded deploy.sh on failure).
+# build: runs `git pull origin main` in ~/flowmate. After the DB runbook step 0b that checkout is
+# NOT pull-able until a follow-up reconciles it to main (deploy/oci/db/README.md, "~/flowmate after
+# step 0b (deferred)"): don't run build there, and never stash, commit -a or discard the guarded
+# deploy.sh. Redeploying the running images (restart with explicit *_IMAGE refs) needs no pull.
 # Host nginx (systemd) owns :80; this script does not run an nginx container.
 # For the DB cutover use deploy/oci/db/switch-workers.sh instead (keeps the running config).
 
@@ -184,7 +183,7 @@ case "${1:-help}" in
     log "Building Docker images..."
     cd "$PROJECT_DIR"
     git pull origin main || {
-      error "git pull failed. Check 'git -C $PROJECT_DIR status --short': any M/?? path that main also touches blocks the pull (e.g. the guarded deploy/oci/deploy.sh from DB runbook step 0b, src/lib/crawler/worker.ts, untracked src/lib/crawler/content-agency-parser.ts). Update with the block in deploy/oci/db/README.md 'Updating ~/flowmate after step 0b' (fetch + merge --ff-only; no git stash, no git commit -a; do not discard the guarded deploy.sh by hand)."
+      error "git pull failed. After the DB runbook step 0b, $PROJECT_DIR is not pull-able until a follow-up reconciles it to main (deploy/oci/db/README.md, '~/flowmate after step 0b (deferred)'). Do not stash, commit -a or discard the guarded deploy/oci/deploy.sh; redeploy the running images with restart + explicit *_IMAGE refs instead."
       exit 1
     }
 
