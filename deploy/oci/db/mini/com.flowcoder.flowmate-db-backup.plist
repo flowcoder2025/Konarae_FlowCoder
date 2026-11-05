@@ -2,13 +2,21 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- Template. install-launchd.sh replaces @HOME@ and installs it to
-     ~/Library/LaunchAgents/com.flowcoder.flowmate-db-backup.plist -->
+     ~/Library/LaunchAgents/com.flowcoder.flowmate-db-backup.plist
+     /bin/zsh is the program on purpose: it is the TCC "responsible" process for the job,
+     and on the Mini /bin/zsh already holds Full Disk Access (/bin/bash does not), so the
+     bash script and its /usr/bin/rsync may write to the portable volume. zsh must stay
+     the parent: "; exit $?" keeps zsh from exec-ing bash as the last command (with exec,
+     bash would become the responsible process and TCC would deny the volume again). -->
 <plist version="1.0">
 <dict>
   <key>Label</key><string>com.flowcoder.flowmate-db-backup</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/bin/bash</string>
+    <string>/bin/zsh</string>
+    <string>-c</string>
+    <string>/bin/bash "$1"; exit $?</string>
+    <string>flowmate-db-backup</string>
     <string>@HOME@/.local/bin/flowmate-db-pull-backups.sh</string>
   </array>
   <key>EnvironmentVariables</key>

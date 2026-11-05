@@ -183,10 +183,14 @@ the served certificate on PgBouncer 1.26.1. ACME account has no email.
   after every check passed, then touches `oci:~/backup/flowmate-db/.mini-pulled`. Failures exit
   non-zero with an `ERROR` line in `~/Library/Logs/flowmate-db-backup.log` (and, via the missing
   marker, a Telegram alert from OCI within 48h).
-  **One-time macOS permission (user action):** under launchd, TCC denies the removable volume
-  (`Operation not permitted`). In System Settings → Privacy & Security → Full Disk Access add
-  `/bin/bash` (the job's program, i.e. the responsible process) and `/usr/bin/rsync` (the binary TCC
-  denied in testing). Then test with `launchctl kickstart gui/$(id -u)/com.flowcoder.flowmate-db-backup`
+  **macOS permission:** under launchd, TCC checks the job's program (the "responsible" process)
+  against the removable volume. A `/bin/bash` program was denied (`Operation not permitted`, the
+  2026-11-03..05 runs). The plist therefore runs `/bin/zsh -c '/bin/bash "$1"; exit $?'`: on the Mini
+  `/bin/zsh` already holds Full Disk Access (granted 2026-10-02), so no new grant is needed and
+  `/bin/bash` / `/usr/bin/rsync` stay out of the list. `; exit $?` keeps zsh as the parent (without
+  it zsh would `exec` bash and TCC would deny again). If the pull starts failing with
+  `Operation not permitted`, check that `/bin/zsh` is still listed under System Settings → Privacy &
+  Security → Full Disk Access. Test with `launchctl kickstart gui/$(id -u)/com.flowcoder.flowmate-db-backup`
   and check the log for `pull ok`.
 
 ## Restore

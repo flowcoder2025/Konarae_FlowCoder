@@ -12,11 +12,12 @@
 # Telegram alert when that marker is older than 48h, so a dead offsite job is noticed.
 # Installed copy: ~/.local/bin/flowmate-db-pull-backups.sh (install-launchd.sh), so the
 # job can still start and report when the portable volume is missing.
-# launchd context needs a one-time macOS permission: System Settings > Privacy &
-# Security > Full Disk Access: add /bin/bash (the job's program, the "responsible"
-# process for TCC) and /usr/bin/rsync (the binary TCC denied in testing). Without it
-# rsync fails with "Operation not permitted" (logged, exit != 0, no marker -> OCI alerts
-# after 48h). Manual runs from a terminal use the terminal app's permission.
+# launchd context: TCC checks the job's program (the "responsible" process). The plist
+# runs this script as a child of /bin/zsh, which holds Full Disk Access on the Mini
+# (System Settings > Privacy & Security > Full Disk Access; /bin/bash and
+# /usr/bin/rsync are not listed and need not be). If /bin/zsh loses that permission,
+# rsync fails with "Operation not permitted" (logged, exit != 0, no marker -> OCI
+# alerts after 48h). Manual runs from a terminal use the terminal app's permission.
 # macOS /bin/bash 3.2 compatible.
 export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 PYTHONUTF8=1 PYTHONIOENCODING=utf-8
 set -euo pipefail
