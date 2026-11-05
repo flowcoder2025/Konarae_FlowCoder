@@ -309,7 +309,12 @@ never "Supabase vs OCI" after the switch (legitimate logins make OCI diverge) an
    SQL
    ```
 2. **Write fence on Supabase.** Run it in an explicit `BEGIN READ WRITE` transaction so the admin
-   session can never get stuck read-only, then end the existing sessions (they keep their old default):
+   session can never get stuck read-only, then end the existing sessions (they keep their old default)
+   **and finally this session itself**. The connection goes through Supavisor, which hands a released
+   backend to the next client: this session's backend started before the fence, so if it survived,
+   the next session would be writable. Seen on 2026-11-05: without the last statement the check
+   below printed `off` and the UPDATE ran. psql therefore ends with
+   `FATAL: terminating connection due to administrator command` (exit 2) — expected:
    ```bash
    # on Mini
    SB psql -X -v ON_ERROR_STOP=1 <<'SQL'
@@ -318,16 +323,28 @@ never "Supabase vs OCI" after the switch (legitimate logins make OCI diverge) an
    COMMIT;
    SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity
    WHERE usename = 'postgres' AND datname = 'postgres' AND pid <> pg_backend_pid() AND backend_type = 'client backend';
+   SELECT pg_terminate_backend(pg_backend_pid());
    SQL
    ```
    Check from a **new** session (the default applies at session start; no ON_ERROR_STOP, the
-   UPDATE is expected to fail):
+   UPDATE is expected to fail). Run it twice; both runs must print `on`:
    ```bash
    # on Mini
    SB psql -X <<'SQL'
    SHOW default_transaction_read_only;                              -- on
    UPDATE "CrawlSource" SET "updatedAt" = "updatedAt" WHERE false;  -- ERROR: cannot execute UPDATE in a read-only transaction
    SELECT count(*) FROM "SupportProject";                           -- reads still work
+   SQL
+   ```
+   `off` means the check was served by a backend that started before the fence. End every session
+   again, the running one last (no write, so it also works on a fenced session), then repeat the
+   check. Do not go on to step 3 until the fence holds:
+   ```bash
+   # on Mini (only after a wrong check result; also used by Rollback step 3)
+   SB psql -X <<'SQL'
+   SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity
+   WHERE usename = 'postgres' AND datname = 'postgres' AND pid <> pg_backend_pid() AND backend_type = 'client backend';
+   SELECT pg_terminate_backend(pg_backend_pid());
    SQL
    ```
    **The fence is a soft convention, not enforcement:** any session can still write with
@@ -542,7 +559,9 @@ never "Supabase vs OCI" after the switch (legitimate logins make OCI diverge) an
 3. Lift the fence on Supabase — only now, so nothing writes to both sides. A new session is
    read-only, so the `RESET` must run in an explicit read-write transaction (a bare `ALTER ROLE ...
    RESET` fails with "cannot execute ALTER ROLE in a read-only transaction"); then end the pooled
-   sessions so they reconnect writable:
+   sessions so they reconnect writable, **this session last**: it started read-only too, and Supavisor
+   would hand it to the next client (the app would stay read-only). psql ends with
+   `FATAL: terminating connection due to administrator command` (exit 2) — expected:
    ```bash
    # on Mini
    SB psql -X -v ON_ERROR_STOP=1 <<'SQL'
@@ -551,9 +570,12 @@ never "Supabase vs OCI" after the switch (legitimate logins make OCI diverge) an
    COMMIT;
    SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity
    WHERE usename = 'postgres' AND datname = 'postgres' AND pid <> pg_backend_pid() AND backend_type = 'client backend';
+   SELECT pg_terminate_backend(pg_backend_pid());
    SQL
-   SB psql -X -At -c 'SHOW default_transaction_read_only'     # new session: off
+   SB psql -X -At -c 'SHOW default_transaction_read_only'     # new session: off (run it twice)
    ```
+   `on` means a backend from before the `RESET` served the check: run the session-ending block from
+   cutover step 2 (the one marked "only after a wrong check result") and check again.
 
 **Retrying the cutover** (after `--rollback` or the manual path): keep to step 0's window. In a fresh
 Mini shell, `cd` into the repo and re-run only the `source ~/.flowmate-cutover.env`, `eval` and `SB()`
