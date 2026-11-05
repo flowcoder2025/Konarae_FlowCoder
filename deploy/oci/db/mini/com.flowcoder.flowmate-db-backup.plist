@@ -7,13 +7,16 @@
      and on the Mini /bin/zsh already holds Full Disk Access (/bin/bash does not), so the
      bash script and its /usr/bin/rsync may write to the portable volume. zsh must stay
      the parent: "; exit $?" keeps zsh from exec-ing bash as the last command (with exec,
-     bash would become the responsible process and TCC would deny the volume again). -->
+     bash would become the responsible process and TCC would deny the volume again).
+     -f skips ~/.zshenv (not part of this repo) so its output cannot leak into the log.
+     __tests__/scripts/mini-backup-plist.test.ts pins this argument vector. -->
 <plist version="1.0">
 <dict>
   <key>Label</key><string>com.flowcoder.flowmate-db-backup</string>
   <key>ProgramArguments</key>
   <array>
     <string>/bin/zsh</string>
+    <string>-f</string>
     <string>-c</string>
     <string>/bin/bash "$1"; exit $?</string>
     <string>flowmate-db-backup</string>

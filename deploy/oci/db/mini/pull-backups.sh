@@ -29,9 +29,11 @@ DEST=${FLOWMATE_BACKUP_DEST:-$VOLUME/Backups/FlowMate/daily}
 REMOTE=${FLOWMATE_BACKUP_REMOTE:-oci:backup/flowmate-db/}
 KEEP=${FLOWMATE_BACKUP_KEEP:-30}
 MAX_AGE_HOURS=${FLOWMATE_BACKUP_MAX_AGE_HOURS:-36}
-# Apple's /usr/bin/rsync (openrsync) on purpose: under launchd, macOS TCC blocks a
-# Homebrew rsync from writing to a removable volume (it waits on a consent prompt
-# forever); the platform binary is not blocked.
+# Apple's /usr/bin/rsync (openrsync) on purpose: under launchd a Homebrew rsync waits
+# forever on a TCC consent prompt for the removable volume. The platform binary fails
+# fast instead, but it is NOT exempt: TCC still decides by the responsible process, and
+# with /bin/bash as the job's program /usr/bin/rsync was denied (2026-11-03..05). The
+# /bin/zsh parent in the plist is what grants access; do not drop it.
 RSYNC=${FLOWMATE_RSYNC:-/usr/bin/rsync}
 RSYNC_TIMEOUT=${FLOWMATE_RSYNC_TIMEOUT:-1800}
 

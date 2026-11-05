@@ -185,7 +185,7 @@ the served certificate on PgBouncer 1.26.1. ACME account has no email.
   marker, a Telegram alert from OCI within 48h).
   **macOS permission:** under launchd, TCC checks the job's program (the "responsible" process)
   against the removable volume. A `/bin/bash` program was denied (`Operation not permitted`, the
-  2026-11-03..05 runs). The plist therefore runs `/bin/zsh -c '/bin/bash "$1"; exit $?'`: on the Mini
+  2026-11-03..05 runs). The plist therefore runs `/bin/zsh -f -c '/bin/bash "$1"; exit $?'`: on the Mini
   `/bin/zsh` already holds Full Disk Access (granted 2026-10-02), so no new grant is needed and
   `/bin/bash` / `/usr/bin/rsync` stay out of the list. `; exit $?` keeps zsh as the parent (without
   it zsh would `exec` bash and TCC would deny again). If the pull starts failing with
