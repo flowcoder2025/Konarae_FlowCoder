@@ -32,6 +32,8 @@ const LEGACY_REDIRECT_ROUTES = [
 ];
 
 const SANITIZE_BASE = "http://flowmate.invalid";
+// Longer values risk overflowing the next-auth callback-url cookie.
+const MAX_CALLBACK_LENGTH = 2000;
 // Backslashes and control characters are rewritten or stripped by URL parsers,
 // which can turn an apparently local path into another origin.
 const UNSAFE_CHARS = /[\\\u0000-\u001f\u007f]/;
@@ -49,6 +51,7 @@ export function sanitizeCallbackUrl(
   fallback: string = DEFAULT_AFTER_LOGIN
 ): string {
   if (typeof value !== "string" || value.length === 0) return fallback;
+  if (value.length > MAX_CALLBACK_LENGTH) return fallback;
   if (!value.startsWith("/") || value.startsWith("//")) return fallback;
   if (UNSAFE_CHARS.test(value)) return fallback;
 

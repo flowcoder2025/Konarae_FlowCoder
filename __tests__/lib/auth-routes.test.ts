@@ -133,6 +133,11 @@ describe("sanitizeCallbackUrl", () => {
     expect(sanitizeCallbackUrl(input)).toBe("/projects");
   });
 
+  it("rejects a value too long for the callback cookie", () => {
+    expect(sanitizeCallbackUrl(`/admin?q=${"a".repeat(1991)}`)).toBe(`/admin?q=${"a".repeat(1991)}`);
+    expect(sanitizeCallbackUrl(`/admin?q=${"a".repeat(1992)}`)).toBe("/projects");
+  });
+
   it("returns the given fallback instead of the default", () => {
     expect(sanitizeCallbackUrl("https://evil.example", "/")).toBe("/");
   });

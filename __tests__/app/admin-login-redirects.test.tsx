@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import AdminLayout from "@/app/admin/layout";
 import LoginPage from "@/app/login/page";
 import { auth, signIn } from "@/lib/auth";
@@ -129,6 +129,32 @@ describe("LoginPage", () => {
     mockAuth.mockResolvedValue({ user: { id: "user-1" } });
 
     expect(await redirectTarget(() => renderLogin({ callbackUrl }))).toBe("/projects");
+  });
+
+  it.each([
+    ["kakao", /카카오/],
+    ["google", /Google/],
+  ])("starts %s sign-in with the callback page as the return target", async (provider, buttonName) => {
+    mockAuth.mockResolvedValue(null);
+    render(await renderLogin({ callbackUrl: "/admin/crawler?tab=jobs" }));
+
+    fireEvent.click(screen.getByRole("button", { name: buttonName }));
+
+    await waitFor(() => expect(mockSignIn).toHaveBeenCalledTimes(1));
+    expect(mockSignIn).toHaveBeenCalledWith(provider, { redirectTo: "/admin/crawler?tab=jobs" });
+  });
+
+  it.each([
+    ["no callback", undefined],
+    ["an external callback", "https://evil.example/admin"],
+  ])("starts sign-in with /projects as the return target for %s", async (_label, callbackUrl) => {
+    mockAuth.mockResolvedValue(null);
+    render(await renderLogin({ callbackUrl }));
+
+    fireEvent.click(screen.getByRole("button", { name: /Google/ }));
+
+    await waitFor(() => expect(mockSignIn).toHaveBeenCalledTimes(1));
+    expect(mockSignIn).toHaveBeenCalledWith("google", { redirectTo: "/projects" });
   });
 
   it("does not start sign-in while rendering", async () => {
