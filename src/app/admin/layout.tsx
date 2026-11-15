@@ -5,7 +5,9 @@
 
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { requireAdmin } from "@/lib/auth-utils";
+import { auth } from "@/lib/auth";
+import { isAdmin } from "@/lib/auth-utils";
+import { DEFAULT_AFTER_LOGIN, buildLoginUrl } from "@/lib/auth-routes";
 import {
   LayoutDashboard,
   Database,
@@ -22,10 +24,16 @@ export default async function AdminLayout({
 }: {
   children: React.ReactNode;
 }) {
-  try {
-    await requireAdmin();
-  } catch {
-    redirect("/dashboard");
+  // No try/catch: a database failure must surface as an error, not as "not an admin".
+  const session = await auth();
+  const userId = session?.user?.id;
+
+  if (!userId) {
+    redirect(buildLoginUrl("/admin"));
+  }
+
+  if (!(await isAdmin(userId))) {
+    redirect(DEFAULT_AFTER_LOGIN);
   }
 
   const navItems = [
@@ -101,10 +109,10 @@ export default async function AdminLayout({
           {/* Footer */}
           <div className="border-t p-4">
             <Link
-              href="/dashboard"
+              href={DEFAULT_AFTER_LOGIN}
               className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
             >
-              ← 대시보드로 돌아가기
+              ← 공고 목록으로 돌아가기
             </Link>
           </div>
         </div>

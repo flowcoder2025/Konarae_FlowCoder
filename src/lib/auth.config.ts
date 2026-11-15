@@ -1,6 +1,7 @@
 import type { NextAuthConfig } from "next-auth";
 import Google from "next-auth/providers/google";
 import Kakao from "next-auth/providers/kakao";
+import { LOGIN_PATH, resolveAuthRoute } from "./auth-routes";
 
 /**
  * Edge-compatible auth configuration
@@ -31,40 +32,22 @@ export const authConfig: NextAuthConfig = {
       return session;
     },
     authorized({ auth, request: { nextUrl } }) {
-      const isLoggedIn = !!auth?.user;
-      const pathname = nextUrl.pathname;
+      const decision = resolveAuthRoute({
+        pathname: nextUrl.pathname,
+        search: nextUrl.search,
+        isLoggedIn: !!auth?.user,
+      });
 
-      const publicRoutes = ["/", "/projects", "/pricing", "/terms", "/privacy", "/refund", "/robots.txt", "/sitemap.xml"];
-      const legacyPublicRedirects = [
-        "/login",
-        "/dashboard",
-        "/home",
-        "/company",
-        "/companies",
-        "/matching",
-        "/business-plans",
-        "/evaluations",
-        "/diagnosis",
-        "/my-projects",
-        "/settings",
-      ];
-      const isPublicRoute = publicRoutes.some((route) => pathname === route || pathname.startsWith(`${route}/`));
-      const shouldRedirectLegacy = legacyPublicRedirects.some((route) => pathname === route || pathname.startsWith(`${route}/`));
-
-      if (shouldRedirectLegacy && !pathname.startsWith("/admin")) {
-        return Response.redirect(new URL("/projects", nextUrl));
+      if (decision.action === "redirect") {
+        return Response.redirect(new URL(decision.location, nextUrl));
       }
 
-      if (isPublicRoute) {
-        return true;
-      }
-
-      return isLoggedIn;
+      return true;
     },
   },
   pages: {
-    signIn: "/login",
-    error: "/login",
+    signIn: LOGIN_PATH,
+    error: LOGIN_PATH,
   },
   session: {
     strategy: "jwt",

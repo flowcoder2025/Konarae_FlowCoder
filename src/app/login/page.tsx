@@ -3,12 +3,19 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { sanitizeCallbackUrl } from "@/lib/auth-routes";
 
-export default async function LoginPage() {
+interface LoginPageProps {
+  searchParams: Promise<{ callbackUrl?: string | string[] }>;
+}
+
+export default async function LoginPage({ searchParams }: LoginPageProps) {
+  const { callbackUrl } = await searchParams;
+  const redirectTo = sanitizeCallbackUrl(callbackUrl);
   const session = await auth();
 
-  if (session) {
-    redirect("/dashboard");
+  if (session?.user?.id) {
+    redirect(redirectTo);
   }
 
   return (
@@ -17,21 +24,21 @@ export default async function LoginPage() {
         <CardHeader>
           <CardTitle>로그인</CardTitle>
           <CardDescription>
-            FlowMate에 로그인하여 시작하세요
+            FlowMate 계정으로 로그인합니다
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           <form
             action={async () => {
               "use server";
-              await signIn("kakao", { redirectTo: "/dashboard" });
+              await signIn("kakao", { redirectTo });
             }}
           >
             <Button type="submit" className="w-full bg-[#FEE500] text-[#000000] hover:bg-[#FEE500]/90">
               <svg className="mr-2 h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M12 3C6.486 3 2 6.262 2 10.293c0 2.62 1.693 4.926 4.276 6.31-.176.64-.635 2.312-.72 2.68-.095.424.158.418.332.304.136-.088 2.18-1.462 3.092-2.072a13.56 13.56 0 0 0 3.02.344c5.514 0 10-3.262 10-7.293C22 6.262 17.514 3 12 3z"/>
               </svg>
-              카카오톡으로 시작하기
+              카카오로 로그인
             </Button>
           </form>
 
@@ -49,7 +56,7 @@ export default async function LoginPage() {
           <form
             action={async () => {
               "use server";
-              await signIn("google", { redirectTo: "/dashboard" });
+              await signIn("google", { redirectTo });
             }}
           >
             <Button type="submit" variant="outline" className="w-full">
