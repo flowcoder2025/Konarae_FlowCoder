@@ -49,7 +49,7 @@ const requireAdminPageMock = requireAdminPage as jest.MockedFunction<typeof requ
 
 const ADMIN_DIR = path.join(process.cwd(), "src", "app", "admin");
 const ENTRY_FILE = /^(page|layout|template|default)\.(tsx|ts|jsx|js)$/;
-const ROUTE_FILE = /^route\.(ts|js)$/;
+const ROUTE_FILE = /^route\.(tsx|ts|jsx|js)$/;
 const GUARDED_EXPORTS = ["default", "generateMetadata", "generateViewport"] as const;
 
 function findFiles(dir: string, pattern: RegExp): string[] {
