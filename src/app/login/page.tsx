@@ -3,15 +3,23 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { sanitizeCallbackUrl } from "@/lib/auth-routes";
+import { SWITCH_ACCOUNT_PARAM, sanitizeCallbackUrl } from "@/lib/auth-routes";
 
 interface LoginPageProps {
-  searchParams: Promise<{ callbackUrl?: string | string[] }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
 
+// Without these the provider silently reuses its own session, so a user who
+// signed out to change accounts would come straight back as the same account.
+const SWITCH_ACCOUNT_PROMPT = {
+  kakao: { prompt: "login" },
+  google: { prompt: "select_account" },
+} as const;
+
 export default async function LoginPage({ searchParams }: LoginPageProps) {
-  const { callbackUrl } = await searchParams;
-  const redirectTo = sanitizeCallbackUrl(callbackUrl);
+  const params = await searchParams;
+  const redirectTo = sanitizeCallbackUrl(params.callbackUrl);
+  const switchAccount = params[SWITCH_ACCOUNT_PARAM] === "1";
   const session = await auth();
 
   if (session?.user?.id) {
@@ -31,7 +39,11 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
           <form
             action={async () => {
               "use server";
-              await signIn("kakao", { redirectTo });
+              if (switchAccount) {
+                await signIn("kakao", { redirectTo }, SWITCH_ACCOUNT_PROMPT.kakao);
+              } else {
+                await signIn("kakao", { redirectTo });
+              }
             }}
           >
             <Button type="submit" className="w-full bg-[#FEE500] text-[#000000] hover:bg-[#FEE500]/90">
@@ -56,7 +68,11 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
           <form
             action={async () => {
               "use server";
-              await signIn("google", { redirectTo });
+              if (switchAccount) {
+                await signIn("google", { redirectTo }, SWITCH_ACCOUNT_PROMPT.google);
+              } else {
+                await signIn("google", { redirectTo });
+              }
             }}
           >
             <Button type="submit" variant="outline" className="w-full">

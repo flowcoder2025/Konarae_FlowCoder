@@ -13,6 +13,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 const ADMIN_LOGIN_URL = buildLoginUrl(ADMIN_HOME_PATH);
+// After signing out here the user wants a different account, not the same one again.
+const SWITCH_ACCOUNT_LOGIN_URL = buildLoginUrl(ADMIN_HOME_PATH, { switchAccount: true });
 
 export const metadata: Metadata = {
   title: "관리자 권한 없음",
@@ -35,7 +37,7 @@ export default async function AccessDeniedPage() {
   const account = session.user?.email ?? session.user?.name ?? "현재 계정";
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-muted/40 px-4">
+    <main className="flex min-h-screen items-center justify-center bg-muted/40 px-4">
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle>
@@ -50,7 +52,7 @@ export default async function AccessDeniedPage() {
           <form
             action={async () => {
               "use server";
-              await signOut({ redirectTo: ADMIN_LOGIN_URL });
+              await signOut({ redirectTo: SWITCH_ACCOUNT_LOGIN_URL });
             }}
           >
             <Button type="submit" className="w-full">
@@ -62,6 +64,6 @@ export default async function AccessDeniedPage() {
           </Button>
         </CardContent>
       </Card>
-    </div>
+    </main>
   );
 }

@@ -1,4 +1,7 @@
+import fs from "node:fs";
+import path from "node:path";
 import {
+  ADMIN_DENIED_PATH,
   buildLoginUrl,
   resolveAuthRoute,
   sanitizeCallbackUrl,
@@ -151,5 +154,34 @@ describe("buildLoginUrl", () => {
   it("encodes the callback path", () => {
     expect(buildLoginUrl("/admin")).toBe("/login?callbackUrl=%2Fadmin");
     expect(buildLoginUrl("/admin?a=1&b=2")).toBe("/login?callbackUrl=%2Fadmin%3Fa%3D1%26b%3D2");
+  });
+
+  it("adds the switch-account flag only when asked", () => {
+    expect(buildLoginUrl("/admin", { switchAccount: true })).toBe(
+      "/login?callbackUrl=%2Fadmin&switchAccount=1"
+    );
+    expect(buildLoginUrl("/admin", { switchAccount: false })).toBe("/login?callbackUrl=%2Fadmin");
+  });
+});
+
+describe("the access-denied page route", () => {
+  it("exists on disk at the path the admin guard redirects to", () => {
+    const pageFile = path.join(process.cwd(), "src", "app", ADMIN_DENIED_PATH, "page.tsx");
+
+    expect(fs.existsSync(pageFile)).toBe(true);
+  });
+
+  it("is not public: an anonymous visitor signs in first", () => {
+    expect(resolveAuthRoute({ pathname: ADMIN_DENIED_PATH, search: "", isLoggedIn: false })).toEqual({
+      action: "redirect",
+      location: "/login?callbackUrl=%2Faccess-denied",
+    });
+  });
+
+  it("opens for a signed-in user and is a valid place to return to after sign-in", () => {
+    expect(resolveAuthRoute({ pathname: ADMIN_DENIED_PATH, search: "", isLoggedIn: true })).toEqual({
+      action: "allow",
+    });
+    expect(sanitizeCallbackUrl(ADMIN_DENIED_PATH)).toBe("/access-denied");
   });
 });

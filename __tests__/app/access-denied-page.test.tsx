@@ -43,8 +43,11 @@ beforeEach(() => {
 });
 
 describe("AccessDeniedPage", () => {
-  it("sends an anonymous visitor to sign in for /admin", async () => {
-    mockAuth.mockResolvedValue(null);
+  it.each([
+    ["no session", null],
+    ["a session without a user id", { user: { email: "a@example.com" } }],
+  ])("sends a visitor with %s to sign in for /admin", async (_label, session) => {
+    mockAuth.mockResolvedValue(session);
 
     expect(await redirectTarget(() => AccessDeniedPage())).toBe("/login?callbackUrl=%2Fadmin");
     expect(mockIsAdmin).not.toHaveBeenCalled();
@@ -69,7 +72,7 @@ describe("AccessDeniedPage", () => {
     expect(mockSignOut).not.toHaveBeenCalled();
   });
 
-  it("signs out and returns to the /admin sign-in when the button is pressed", async () => {
+  it("signs out and returns to the /admin sign-in, asking for another account, when the button is pressed", async () => {
     mockAuth.mockResolvedValue({ user: { id: "user-1", email: "user@example.com" } });
     mockIsAdmin.mockResolvedValue(false);
     render(await AccessDeniedPage());
@@ -77,7 +80,21 @@ describe("AccessDeniedPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "로그아웃 후 다른 계정으로 로그인" }));
 
     await waitFor(() => expect(mockSignOut).toHaveBeenCalledTimes(1));
-    expect(mockSignOut).toHaveBeenCalledWith({ redirectTo: "/login?callbackUrl=%2Fadmin" });
+    expect(mockSignOut).toHaveBeenCalledWith({
+      redirectTo: "/login?callbackUrl=%2Fadmin&switchAccount=1",
+    });
+  });
+
+  it.each([
+    ["the name when there is no email", { id: "user-1", name: "홍길동" }, "홍길동"],
+    ["a generic label when there is neither", { id: "user-1" }, "현재 계정"],
+  ])("shows %s", async (_label, user, expected) => {
+    mockAuth.mockResolvedValue({ user });
+    mockIsAdmin.mockResolvedValue(false);
+
+    render(await AccessDeniedPage());
+
+    expect(screen.getByText(expected)).toBeTruthy();
   });
 
   it("surfaces a database failure instead of showing the page", async () => {

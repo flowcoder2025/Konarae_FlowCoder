@@ -73,9 +73,19 @@ export function sanitizeCallbackUrl(
   return `${url.pathname}${url.search}`;
 }
 
-/** Login URL that returns the user to the given local path after sign-in. */
-export function buildLoginUrl(callbackPath: string): string {
-  return `${LOGIN_PATH}?callbackUrl=${encodeURIComponent(callbackPath)}`;
+/** Query flag on the login page: ask the provider to let the user pick another account. */
+export const SWITCH_ACCOUNT_PARAM = "switchAccount";
+
+/**
+ * Login URL that returns the user to the given local path after sign-in.
+ * With `switchAccount`, the provider is asked not to reuse its current session.
+ */
+export function buildLoginUrl(
+  callbackPath: string,
+  options: { switchAccount?: boolean } = {}
+): string {
+  const url = `${LOGIN_PATH}?callbackUrl=${encodeURIComponent(callbackPath)}`;
+  return options.switchAccount ? `${url}&${SWITCH_ACCOUNT_PARAM}=1` : url;
 }
 
 export type AuthRouteDecision =

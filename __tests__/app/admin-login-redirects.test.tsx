@@ -157,6 +157,27 @@ describe("LoginPage", () => {
     expect(mockSignIn).toHaveBeenCalledWith("google", { redirectTo: "/projects" });
   });
 
+  it.each([
+    ["kakao", /카카오/, { prompt: "login" }],
+    ["google", /Google/, { prompt: "select_account" }],
+  ])("asks %s for another account after a switch-account sign-out", async (provider, buttonName, prompt) => {
+    mockAuth.mockResolvedValue(null);
+    render(await renderLogin({ callbackUrl: "/admin", switchAccount: "1" }));
+
+    fireEvent.click(screen.getByRole("button", { name: buttonName }));
+
+    await waitFor(() => expect(mockSignIn).toHaveBeenCalledTimes(1));
+    expect(mockSignIn).toHaveBeenCalledWith(provider, { redirectTo: "/admin" }, prompt);
+  });
+
+  it("ignores a switch-account flag for a user who is already signed in", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "user-1" } });
+
+    expect(
+      await redirectTarget(() => renderLogin({ callbackUrl: "/admin", switchAccount: "1" }))
+    ).toBe("/admin");
+  });
+
   it("does not start sign-in while rendering", async () => {
     mockAuth.mockResolvedValue(null);
 
