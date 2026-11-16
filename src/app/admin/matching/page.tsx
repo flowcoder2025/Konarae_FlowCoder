@@ -6,6 +6,7 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
+import { requireAdminPage } from "@/lib/admin-guard";
 import { formatDateKST } from "@/lib/utils";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -56,6 +57,8 @@ interface PageProps {
 }
 
 export default async function AdminMatchingPage({ searchParams }: PageProps) {
+  await requireAdminPage();
+
   const params = await searchParams;
   const { confidence, minScore, maxScore, search, page } = params;
 

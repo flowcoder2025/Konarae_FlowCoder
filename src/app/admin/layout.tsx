@@ -3,11 +3,9 @@
  * Layout with sidebar navigation for admin pages
  */
 
-import { redirect } from "next/navigation";
 import Link from "next/link";
-import { auth } from "@/lib/auth";
-import { isAdmin } from "@/lib/auth-utils";
-import { DEFAULT_AFTER_LOGIN, buildLoginUrl } from "@/lib/auth-routes";
+import { requireAdminPage } from "@/lib/admin-guard";
+import { DEFAULT_AFTER_LOGIN } from "@/lib/auth-routes";
 import {
   LayoutDashboard,
   Database,
@@ -24,17 +22,8 @@ export default async function AdminLayout({
 }: {
   children: React.ReactNode;
 }) {
-  // No try/catch: a database failure must surface as an error, not as "not an admin".
-  const session = await auth();
-  const userId = session?.user?.id;
-
-  if (!userId) {
-    redirect(buildLoginUrl("/admin"));
-  }
-
-  if (!(await isAdmin(userId))) {
-    redirect(DEFAULT_AFTER_LOGIN);
-  }
+  // Keeps the admin shell away from non-admins. Pages run the same check themselves.
+  await requireAdminPage();
 
   const navItems = [
     {

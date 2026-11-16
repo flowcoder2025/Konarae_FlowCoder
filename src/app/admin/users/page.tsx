@@ -4,6 +4,7 @@
  */
 
 import { prisma } from "@/lib/prisma";
+import { requireAdminPage } from "@/lib/admin-guard";
 import { formatDateKST } from "@/lib/utils";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -11,6 +12,8 @@ import { User, Mail } from "lucide-react";
 import { UserRoleButton } from "@/components/admin/user-role-button";
 
 export default async function AdminUsersPage() {
+  await requireAdminPage();
+
   const users = await prisma.user.findMany({
     take: 50,
     orderBy: { createdAt: "desc" },
