@@ -1,8 +1,11 @@
 /**
- * Every page under /admin must run the admin guard before it reads data.
- * The admin layout is not enough: Next.js can render a page without its layout.
+ * Every server entry point under /admin must call the admin guard before it
+ * does anything else. The admin layout is not enough: Next.js can render a
+ * page without its layout.
  *
- * Pages are discovered from disk, so a new admin page is covered automatically.
+ * Entry points are discovered from disk, so a new admin page, nested layout,
+ * template or parallel-route default is covered automatically. For each one the
+ * default export and any metadata/viewport generator are checked.
  *
  * @jest-environment node
  */
@@ -35,16 +38,9 @@ jest.mock("@/lib/prisma", () => ({
 // Run cached readers directly, so a reader placed before the guard is caught.
 jest.mock("next/cache", () => ({
   unstable_cache: (fn: unknown) => fn,
-  revalidatePath: jest.fn(),
-  revalidateTag: jest.fn(),
 }));
 
-jest.mock("@/lib/auth", () => ({
-  auth: jest.fn(),
-  signIn: jest.fn(),
-  signOut: jest.fn(),
-}));
-
+// Client components import these actions; the real module pulls in the crawler worker.
 jest.mock("@/lib/actions/admin-actions", () => ({}));
 
 import { requireAdminPage } from "@/lib/admin-guard";
@@ -52,42 +48,75 @@ import { requireAdminPage } from "@/lib/admin-guard";
 const requireAdminPageMock = requireAdminPage as jest.MockedFunction<typeof requireAdminPage>;
 
 const ADMIN_DIR = path.join(process.cwd(), "src", "app", "admin");
+const ENTRY_FILE = /^(page|layout|template|default)\.(tsx|ts|jsx|js)$/;
+const ROUTE_FILE = /^route\.(ts|js)$/;
+const GUARDED_EXPORTS = ["default", "generateMetadata", "generateViewport"] as const;
 
-function findPages(dir: string): string[] {
+function findFiles(dir: string, pattern: RegExp): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) return findPages(full);
-    return /^page\.(tsx|ts|jsx|js)$/.test(entry.name) ? [full] : [];
+    if (entry.isDirectory()) return findFiles(full, pattern);
+    return pattern.test(entry.name) ? [full] : [];
   });
 }
 
-const pages = findPages(ADMIN_DIR)
-  .map((file) => ({ file, route: path.relative(process.cwd(), file) }))
-  .sort((a, b) => a.route.localeCompare(b.route));
+const relative = (file: string) => path.relative(process.cwd(), file);
+
+const entries = findFiles(ADMIN_DIR, ENTRY_FILE)
+  .map((file) => ({ file, name: relative(file) }))
+  .sort((a, b) => a.name.localeCompare(b.name));
 
 beforeEach(() => {
   mockPrismaTouches.length = 0;
   requireAdminPageMock.mockReset();
-  requireAdminPageMock.mockRejectedValue(guardRejected);
+  requireAdminPageMock.mockImplementation(() => {
+    const rejection = Promise.reject(guardRejected);
+    // A caller that forgets `await` then fails its own test instead of crashing the run.
+    rejection.catch(() => undefined);
+    return rejection;
+  });
 });
 
-describe("admin pages", () => {
-  it("finds the admin pages on disk", () => {
-    expect(pages.length).toBeGreaterThanOrEqual(8);
+describe("admin server entry points", () => {
+  it("finds the admin pages and the admin layout on disk", () => {
+    const names = entries.map((entry) => entry.name);
+
+    expect(names.filter((name) => /page\.tsx$/.test(name)).length).toBeGreaterThanOrEqual(8);
+    expect(names).toContain(path.join("src", "app", "admin", "layout.tsx"));
   });
 
-  it.each(pages)("$route stops at the admin guard before reading data", async ({ file }) => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const Page = require(file).default as (props: unknown) => unknown;
+  it("has no route handlers under /admin (admin APIs live under /api/admin)", () => {
+    expect(findFiles(ADMIN_DIR, ROUTE_FILE).map(relative)).toEqual([]);
+  });
 
-    const rendered = Page({
+  it.each(entries)("$name stops at the admin guard before doing anything else", async ({ file }) => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const mod = require(file) as Record<string, unknown>;
+    const props = {
+      children: null,
       params: Promise.resolve({}),
       searchParams: Promise.resolve({}),
-    });
+    };
 
-    // A page that skips the guard returns JSX or fails for another reason; both fail here.
-    await expect(rendered).rejects.toBe(guardRejected);
-    expect(requireAdminPageMock).toHaveBeenCalledTimes(1);
-    expect(mockPrismaTouches).toEqual([]);
+    expect(typeof mod.default).toBe("function");
+
+    for (const exportName of GUARDED_EXPORTS) {
+      const fn = mod[exportName];
+      if (typeof fn !== "function") continue;
+
+      requireAdminPageMock.mockClear();
+      mockPrismaTouches.length = 0;
+
+      const result = (fn as (...args: unknown[]) => unknown)(props, Promise.resolve({}));
+      // Keeps a late rejection from crashing the run when an assertion below fails first.
+      Promise.resolve(result).catch(() => undefined);
+
+      // Called before the first await: nothing (fetch, another client, props) can run ahead of it.
+      expect(requireAdminPageMock).toHaveBeenCalledTimes(1);
+      // An entry that ignores the guard's answer returns JSX or fails for another reason.
+      await expect(result).rejects.toBe(guardRejected);
+      expect(requireAdminPageMock).toHaveBeenCalledTimes(1);
+      expect(mockPrismaTouches).toEqual([]);
+    }
   });
 });
