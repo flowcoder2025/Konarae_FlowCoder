@@ -69,17 +69,16 @@ export default async function AppLayout({ children }) {
 
 ### 2.2 admin 그룹 - 관리자 전용
 
-```tsx
-// /admin/layout.tsx
-import { auth } from "@/lib/auth"
-import { redirect } from "next/navigation"
+레이아웃은 접근 경계가 아니다(클라이언트 내비게이션 형식의 요청은 레이아웃 없이 페이지만 렌더링한다). `/admin/**`의 **모든 `page`·`layout`·`template`·`default`는 첫 `await`로 `requireAdminPage()`를 호출**한다. `generateMetadata`·`generateViewport`를 내보내면 그 함수도 같다. `/admin` 아래에 `route.ts`는 두지 않는다(관리자 API는 `/api/admin`). `__tests__/app/admin-page-guard.test.ts`가 디스크의 파일 전부에 대해 이를 강제한다.
 
-export default async function AdminLayout({ children }) {
-  const session = await auth()
-  if (session?.user?.role !== "admin") {
-    redirect("/dashboard")
-  }
-  return <AdminLayout>{children}</AdminLayout>
+```tsx
+// /admin/**/page.tsx (layout.tsx도 같은 가드를 쓴다)
+import { requireAdminPage } from "@/lib/admin-guard"
+
+export default async function AdminUsersPage() {
+  await requireAdminPage() // 비로그인 → /login, 비관리자 → /projects
+  const users = await prisma.user.findMany()
+  // ...
 }
 ```
 
@@ -309,3 +308,4 @@ if (!canEdit) {
 | 날짜 | 변경 |
 |-----|------|
 | 2025-12-15 | 초기 생성 |
+| 2026-11-16 | 2.2 admin: 페이지별 `requireAdminPage()` 가드로 정정 |

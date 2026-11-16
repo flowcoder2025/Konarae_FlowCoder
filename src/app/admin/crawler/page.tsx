@@ -5,6 +5,7 @@
 
 import { unstable_cache } from "next/cache";
 import { prisma } from "@/lib/prisma";
+import { requireAdminPage } from "@/lib/admin-guard";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle, XCircle, Clock, AlertCircle, Play, Calendar } from "lucide-react";
@@ -56,6 +57,9 @@ const getRecentCrawlJobs = unstable_cache(
 );
 
 export default async function AdminCrawlerPage() {
+  // Before the cached readers: a cache hit must not skip the check.
+  await requireAdminPage();
+
   // Fetch cached data in parallel
   const [sources, recentJobs] = await Promise.all([
     getCrawlSources(),

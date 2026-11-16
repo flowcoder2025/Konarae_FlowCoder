@@ -5,6 +5,7 @@
 
 import { unstable_cache } from "next/cache";
 import { prisma } from "@/lib/prisma";
+import { requireAdminPage } from "@/lib/admin-guard";
 import { Card } from "@/components/ui/card";
 import { Users, FileText, Database, Activity, Coins } from "lucide-react";
 import Link from "next/link";
@@ -26,6 +27,8 @@ const getAdminStats = unstable_cache(
 );
 
 export default async function AdminDashboardPage() {
+  await requireAdminPage();
+
   // Fetch cached statistics
   const { userCount, projectCount, crawlJobCount, activeCompanyCount } =
     await getAdminStats();

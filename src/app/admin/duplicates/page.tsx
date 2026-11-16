@@ -4,13 +4,16 @@
  */
 
 import { DuplicatesManagement } from "@/components/admin/duplicates-management";
+import { requireAdminPage } from "@/lib/admin-guard";
 
 export const metadata = {
   title: "중복 관리 | Admin",
   description: "중복 프로젝트 그룹 관리",
 };
 
-export default function AdminDuplicatesPage() {
+export default async function AdminDuplicatesPage() {
+  await requireAdminPage();
+
   return (
     <div className="space-y-8">
       <div>

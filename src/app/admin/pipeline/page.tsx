@@ -12,10 +12,13 @@ import {
   PipelineJobsTable,
 } from "@/components/admin/pipeline";
 import Link from "next/link";
+import { requireAdminPage } from "@/lib/admin-guard";
 import { Button } from "@/components/ui/button";
 import { ExternalLink } from "lucide-react";
 
-export default function AdminPipelinePage() {
+export default async function AdminPipelinePage() {
+  await requireAdminPage();
+
   return (
     <div className="space-y-8">
       {/* Header */}

@@ -4,12 +4,15 @@
  */
 
 import { prisma } from "@/lib/prisma";
+import { requireAdminPage } from "@/lib/admin-guard";
 import { formatDateKST } from "@/lib/utils";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ProjectActionButtons } from "@/components/admin/project-action-buttons";
 
 export default async function AdminProjectsPage() {
+  await requireAdminPage();
+
   const [projects, stats] = await Promise.all([
     prisma.supportProject.findMany({
       take: 20,

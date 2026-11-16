@@ -4,6 +4,7 @@
  */
 
 import { prisma } from "@/lib/prisma"
+import { requireAdminPage } from "@/lib/admin-guard"
 import { formatDateKST } from "@/lib/utils"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -12,6 +13,8 @@ import { GrantCreditDialog } from "@/components/admin/grant-credit-dialog"
 import { DeductCreditDialog } from "@/components/admin/deduct-credit-dialog"
 
 export default async function AdminCreditsPage() {
+  await requireAdminPage()
+
   // 크래딧이 있는 사용자 목록 조회
   const usersWithCredits = await prisma.user.findMany({
     take: 100,
