@@ -76,7 +76,7 @@ export default async function AppLayout({ children }) {
 import { requireAdminPage } from "@/lib/admin-guard"
 
 export default async function AdminUsersPage() {
-  await requireAdminPage() // 비로그인 → /login, 비관리자 → /projects
+  await requireAdminPage() // 비로그인 → /login, 비관리자 → /access-denied(로그아웃 안내)
   const users = await prisma.user.findMany()
   // ...
 }

@@ -6,6 +6,9 @@
 
 export const LOGIN_PATH = "/login";
 export const DEFAULT_AFTER_LOGIN = "/projects";
+export const ADMIN_HOME_PATH = "/admin";
+/** Where a signed-in non-admin lands after trying /admin. Offers sign-out. */
+export const ADMIN_DENIED_PATH = "/access-denied";
 
 const PUBLIC_ROUTES = [
   "/",

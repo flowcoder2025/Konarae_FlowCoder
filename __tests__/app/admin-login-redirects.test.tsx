@@ -60,11 +60,11 @@ describe("AdminLayout", () => {
     expect(mockIsAdmin).not.toHaveBeenCalled();
   });
 
-  it("sends a signed-in non-admin to /projects, not the legacy /dashboard", async () => {
+  it("sends a signed-in non-admin to the access-denied page", async () => {
     mockAuth.mockResolvedValue({ user: { id: "user-1" } });
     mockIsAdmin.mockResolvedValue(false);
 
-    expect(await redirectTarget(renderLayout)).toBe("/projects");
+    expect(await redirectTarget(renderLayout)).toBe("/access-denied");
     expect(mockIsAdmin).toHaveBeenCalledWith("user-1");
   });
 

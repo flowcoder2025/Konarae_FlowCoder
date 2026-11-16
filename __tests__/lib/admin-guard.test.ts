@@ -46,11 +46,11 @@ describe("requireAdminPage", () => {
     expect(mockIsAdmin).not.toHaveBeenCalled();
   });
 
-  it("sends a signed-in non-admin to /projects", async () => {
+  it("sends a signed-in non-admin to the access-denied page, where they can sign out", async () => {
     mockAuth.mockResolvedValue({ user: { id: "user-1" } });
     mockIsAdmin.mockResolvedValue(false);
 
-    await expect(requireAdminPage()).rejects.toMatchObject({ location: "/projects" });
+    await expect(requireAdminPage()).rejects.toMatchObject({ location: "/access-denied" });
     expect(mockIsAdmin).toHaveBeenCalledWith("user-1");
   });
 
