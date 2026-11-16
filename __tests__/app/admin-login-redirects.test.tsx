@@ -170,6 +170,20 @@ describe("LoginPage", () => {
     expect(mockSignIn).toHaveBeenCalledWith(provider, { redirectTo: "/admin" }, prompt);
   });
 
+  it.each([
+    ["0", "0"],
+    ["true", "true"],
+    ["a repeated flag", ["1", "1"]],
+  ])("does not ask for another account when the flag is %s", async (_label, switchAccount) => {
+    mockAuth.mockResolvedValue(null);
+    render(await renderLogin({ callbackUrl: "/admin", switchAccount }));
+
+    fireEvent.click(screen.getByRole("button", { name: /Google/ }));
+
+    await waitFor(() => expect(mockSignIn).toHaveBeenCalledTimes(1));
+    expect(mockSignIn).toHaveBeenCalledWith("google", { redirectTo: "/admin" });
+  });
+
   it("ignores a switch-account flag for a user who is already signed in", async () => {
     mockAuth.mockResolvedValue({ user: { id: "user-1" } });
 

@@ -34,7 +34,7 @@ export default async function AccessDeniedPage() {
     redirect(ADMIN_HOME_PATH);
   }
 
-  const account = session.user?.email ?? session.user?.name ?? "현재 계정";
+  const account = session.user?.email ?? session.user?.name ?? "현재 로그인한";
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-muted/40 px-4">

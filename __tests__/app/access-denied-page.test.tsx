@@ -86,15 +86,15 @@ describe("AccessDeniedPage", () => {
   });
 
   it.each([
-    ["the name when there is no email", { id: "user-1", name: "홍길동" }, "홍길동"],
-    ["a generic label when there is neither", { id: "user-1" }, "현재 계정"],
+    ["the name when there is no email", { id: "user-1", name: "홍길동" }, "홍길동 계정에는 관리자 권한이 없습니다."],
+    ["a generic label when there is neither", { id: "user-1" }, "현재 로그인한 계정에는 관리자 권한이 없습니다."],
   ])("shows %s", async (_label, user, expected) => {
     mockAuth.mockResolvedValue({ user });
     mockIsAdmin.mockResolvedValue(false);
 
-    render(await AccessDeniedPage());
+    const { container } = render(await AccessDeniedPage());
 
-    expect(screen.getByText(expected)).toBeTruthy();
+    expect(container.textContent?.replace(/\s+/g, " ")).toContain(expected);
   });
 
   it("surfaces a database failure instead of showing the page", async () => {
