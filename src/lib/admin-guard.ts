@@ -11,7 +11,7 @@ import { cache } from "react";
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth-utils";
-import { DEFAULT_AFTER_LOGIN, buildLoginUrl } from "@/lib/auth-routes";
+import { ADMIN_DENIED_PATH, ADMIN_HOME_PATH, buildLoginUrl } from "@/lib/auth-routes";
 
 /**
  * Redirects anyone who is not an admin. Wrapped in `cache` so the layout and
@@ -23,10 +23,11 @@ export const requireAdminPage = cache(async (): Promise<void> => {
   const userId = session?.user?.id;
 
   if (!userId) {
-    redirect(buildLoginUrl("/admin"));
+    redirect(buildLoginUrl(ADMIN_HOME_PATH));
   }
 
   if (!(await isAdmin(userId))) {
-    redirect(DEFAULT_AFTER_LOGIN);
+    // Not /projects: that page has no sign-out, so the user could not switch accounts.
+    redirect(ADMIN_DENIED_PATH);
   }
 });

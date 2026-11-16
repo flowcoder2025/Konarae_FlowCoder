@@ -44,6 +44,7 @@
 │   └── /admin             #    관리자 API
 │
 ├── /login                 # 로그인 페이지
+├── /access-denied         # 관리자 권한 없음 안내 (로그아웃 후 계정 전환)
 └── /companies/[id]        # 공개 기업 프로필 (SEO)
 ```
 
@@ -76,7 +77,7 @@ export default async function AppLayout({ children }) {
 import { requireAdminPage } from "@/lib/admin-guard"
 
 export default async function AdminUsersPage() {
-  await requireAdminPage() // 비로그인 → /login, 비관리자 → /projects
+  await requireAdminPage() // 비로그인 → /login, 비관리자 → /access-denied(로그아웃 안내)
   const users = await prisma.user.findMany()
   // ...
 }
@@ -309,3 +310,4 @@ if (!canEdit) {
 |-----|------|
 | 2025-12-15 | 초기 생성 |
 | 2026-11-16 | 2.2 admin: 페이지별 `requireAdminPage()` 가드로 정정 |
+| 2026-11-16 | `/access-denied` 추가, 비관리자 리다이렉트 대상 변경 |

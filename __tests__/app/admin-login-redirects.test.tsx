@@ -60,11 +60,11 @@ describe("AdminLayout", () => {
     expect(mockIsAdmin).not.toHaveBeenCalled();
   });
 
-  it("sends a signed-in non-admin to /projects, not the legacy /dashboard", async () => {
+  it("sends a signed-in non-admin to the access-denied page", async () => {
     mockAuth.mockResolvedValue({ user: { id: "user-1" } });
     mockIsAdmin.mockResolvedValue(false);
 
-    expect(await redirectTarget(renderLayout)).toBe("/projects");
+    expect(await redirectTarget(renderLayout)).toBe("/access-denied");
     expect(mockIsAdmin).toHaveBeenCalledWith("user-1");
   });
 
@@ -155,6 +155,41 @@ describe("LoginPage", () => {
 
     await waitFor(() => expect(mockSignIn).toHaveBeenCalledTimes(1));
     expect(mockSignIn).toHaveBeenCalledWith("google", { redirectTo: "/projects" });
+  });
+
+  it.each([
+    ["kakao", /카카오/, { prompt: "login" }],
+    ["google", /Google/, { prompt: "select_account" }],
+  ])("asks %s for another account after a switch-account sign-out", async (provider, buttonName, prompt) => {
+    mockAuth.mockResolvedValue(null);
+    render(await renderLogin({ callbackUrl: "/admin", switchAccount: "1" }));
+
+    fireEvent.click(screen.getByRole("button", { name: buttonName }));
+
+    await waitFor(() => expect(mockSignIn).toHaveBeenCalledTimes(1));
+    expect(mockSignIn).toHaveBeenCalledWith(provider, { redirectTo: "/admin" }, prompt);
+  });
+
+  it.each([
+    ["0", "0"],
+    ["true", "true"],
+    ["a repeated flag", ["1", "1"]],
+  ])("does not ask for another account when the flag is %s", async (_label, switchAccount) => {
+    mockAuth.mockResolvedValue(null);
+    render(await renderLogin({ callbackUrl: "/admin", switchAccount }));
+
+    fireEvent.click(screen.getByRole("button", { name: /Google/ }));
+
+    await waitFor(() => expect(mockSignIn).toHaveBeenCalledTimes(1));
+    expect(mockSignIn).toHaveBeenCalledWith("google", { redirectTo: "/admin" });
+  });
+
+  it("ignores a switch-account flag for a user who is already signed in", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "user-1" } });
+
+    expect(
+      await redirectTarget(() => renderLogin({ callbackUrl: "/admin", switchAccount: "1" }))
+    ).toBe("/admin");
   });
 
   it("does not start sign-in while rendering", async () => {
