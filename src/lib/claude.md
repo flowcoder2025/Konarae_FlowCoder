@@ -39,7 +39,6 @@
 │   # 비즈니스 로직
 ├── matching.ts             # RAG 매칭 엔진
 ├── rag.ts                  # RAG 검색 시스템
-├── rag-access.ts           # RAG 임베딩 읽기·쓰기 권한 canAccessEmbeddings()
 ├── text-config.ts          # i18n 텍스트 설정
 ├── notifications.ts        # 알림 시스템
 │
@@ -51,11 +50,8 @@
 │   # 서브 모듈
 ├── /crawler                # 크롤러 시스템
 │   └── worker.ts           #    크롤러 워커
-├── /documents              # 문서 분석 시스템
-│   ├── analyzer.ts         #    Gemini Vision 분석
-│   └── embeddings.ts       #    OpenAI 임베딩
-├── /supabase               # Supabase 연동
-│   └── client.ts           #    Supabase 클라이언트
+├── /documents              # 문서 메타데이터 타입
+│   └── types.ts            #    (분석·임베딩·업로드는 레거시 API와 함께 2026-11-17 삭제)
 └── /actions                # Server Actions
 ```
 
@@ -163,15 +159,10 @@ export default async function Page() {
 - `auth.ts`의 Auth.js `logger`는 `error`만 둔다: `type === "CredentialsSignin"`은 스택 없는 warn 한 줄, 나머지는 그대로 `console.error`. `debug`를 넣지 않는다(`debug: false`가 깐 no-op을 덮어써 요청 본문 로그가 살아난다).
 - 운영 env·잠금·복구 절차: 루트 `claude.md` 9.7.
 
-### 4.4 RAG 임베딩 권한 (rag-access.ts)
+### 4.4 RAG (rag.ts)
 
-- `/api/rag/*`에서 `document_embeddings`를 읽거나 바꾸기 전에 `canAccessEmbeddings(userId, sourceType, sourceId, "read" | "write")`를 부른다.
-  - support_project: 읽기는 로그인한 누구나, 쓰기는 관리자(`getAdminSession()`)만.
-  - company: 읽기 viewer, 쓰기 company admin(owner 포함).
-  - business_plan: 읽기 viewer, 쓰기 owner.
-- `hybridSearch()`는 source id로 거르지 못한다. 그래서 `/api/rag/search`에서 관리자가 아니면 support_project만 검색한다(종류를 안 주면 support_project, company·business_plan을 주면 403). 서버 내부 호출(`matching.ts`, `/api/projects/search`)은 support_project만 검색한다. company·business_plan을 검색하는 서버 코드를 새로 만들면 결과를 사용자가 권한을 가진 source id로 거른다(사업계획서 생성·평가는 2026-11-17 제거).
-- `/api/rag/embed` 본문은 10만 자까지다(청크마다 OpenAI 호출 한 번).
-- 경계 테스트: `__tests__/app/api/rag/rag-access.test.ts`(ReBAC·관리자 판정은 실제 코드, 거부된 요청은 임베딩 함수에 닿지 않음).
+- `/api/rag/*` 라우트와 권한 검사 `rag-access.ts`는 레거시 API와 함께 삭제했다(2026-11-17). `rag.ts`는 OCI 임베딩 워커(`src/embedding-server.ts`의 `storeDocumentEmbeddings`), 매칭(`matching.ts`의 `hybridSearch`), 수동 스크립트 `scripts/generate-embeddings.ts`(`storeDocumentEmbeddings`)가 쓴다.
+- `hybridSearch()`는 source id로 거르지 못한다. 지금 서버 호출(`matching.ts`)은 support_project만 검색한다. company·business_plan을 검색하는 코드를 새로 만들면 결과를 사용자가 권한을 가진 source id로 거른다.
 
 ---
 
@@ -376,3 +367,4 @@ export async function PATCH(req, { params }) {
 | 2026-11-17 | 4.3 잠금 IP 버킷 선읽기, 거부 `reason` 분리·해시 trim, Auth.js `logger`, IP 없음 경고 |
 | 2026-11-17 | 4.4 RAG 임베딩 권한(`rag-access.ts`) |
 | 2026-11-17 | 사업계획서 생성·평가 제거(`business-plan-generator`·`evaluation-engine`·`export` 등) |
+| 2026-11-17 | 레거시 API 삭제로 고아 lib 제거(`constants`·`documents/{analyze,embedding,prompts,upload}`·`master-profile/generate`·`rag-access`·`supabase/*`·`verification/*`), 4.4 축소 |

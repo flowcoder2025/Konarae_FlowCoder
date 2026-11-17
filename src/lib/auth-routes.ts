@@ -32,6 +32,7 @@ const LEGACY_REDIRECT_ROUTES = [
   "/diagnosis",
   "/my-projects",
   "/settings",
+  "/pipeline",
 ];
 
 const SANITIZE_BASE = "http://flowmate.invalid";

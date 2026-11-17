@@ -99,10 +99,20 @@ describe("resolveAuthRoute", () => {
     "/diagnosis",
     "/my-projects",
     "/settings/notifications",
+    "/pipeline",
+    "/pipeline/x",
   ])("still redirects legacy route %s to /projects", (path) => {
     const expected = { action: "redirect", location: "/projects" };
     expect(decide(path, false)).toEqual(expected);
     expect(decide(path, true)).toEqual(expected);
+  });
+
+  it("does not treat a look-alike of /pipeline as the legacy route", () => {
+    expect(decide("/pipelines")).toEqual({
+      action: "redirect",
+      location: "/login?callbackUrl=%2Fpipelines",
+    });
+    expect(decide("/pipelines", true)).toEqual({ action: "allow" });
   });
 
   it.each(["/", "/projects", "/projects/abc", "/pricing", "/terms", "/privacy", "/refund", "/robots.txt", "/sitemap.xml"])(

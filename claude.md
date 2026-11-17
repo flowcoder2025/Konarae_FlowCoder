@@ -639,3 +639,4 @@ CREATE POLICY "users can view own data" ON companies
 | 2026-11-17 | 3.5.2 | 9.7 잠금 창을 15분 고정 경계로, `ADMIN_PASSWORD_HASH` 등록 명령(변수에 받은 뒤 파이프) |
 | 2026-11-17 | 3.5.3 | 9.7 IP 버킷은 한도에 차면 읽기만, IP 한도 꺼짐 경고·실패 `reason`, 비밀번호 교체(`--force`)·유출 시 `NEXTAUTH_SECRET` 교체 |
 | 2026-11-17 | 3.5.4 | 9.7 `invalid_input` reason, `NEXTAUTH_SECRET` 저장 형태와 대시보드 교체 절차, 옛 배포 URL 보호 확인 |
+| 2026-11-17 | 3.6.0 | API 표면 축소: 레거시 API 46개 삭제, 유지 35개(`/api/auth`·`admin`·`cron`·`internal`·`v1`)는 `__tests__/app/api/api-surface.test.ts` `KEEP_ROUTES`가 정함, `/pipeline` 레거시 리다이렉트 |

@@ -53,22 +53,13 @@ jest.mock("next/cache", () => ({
   revalidatePath: jest.fn(),
 }));
 
-// Imported by the RAG route; would create an OpenAI client.
-jest.mock("@/lib/rag", () => ({
-  getEmbeddingCount: jest.fn(),
-  deleteEmbeddings: jest.fn(),
-}));
-
 import { auth } from "@/lib/auth";
-import { deleteEmbeddings } from "@/lib/rag";
 import { GET as crawlerStatsGET } from "@/app/api/admin/crawler/stats/route";
 import { POST as creditsGrantPOST } from "@/app/api/admin/credits/grant/route";
 import { DELETE as duplicateGroupDELETE } from "@/app/api/admin/duplicate-groups/[id]/route";
-import { DELETE as ragEmbeddingsDELETE } from "@/app/api/rag/embeddings/[sourceType]/[sourceId]/route";
 import { updateUserRole } from "@/lib/actions/admin-actions";
 
 const mockAuth = auth as unknown as jest.Mock;
-const mockDeleteEmbeddings = deleteEmbeddings as jest.Mock;
 
 const SOCIAL_ADMIN: Session = {
   user: { id: "admin-1", email: "admin@example.com" },
@@ -111,15 +102,6 @@ const handlers: Array<{ name: string; run: () => Promise<Response> }> = [
   },
 ];
 
-function ragDelete(): Promise<Response> {
-  return ragEmbeddingsDELETE(
-    new NextRequest("http://localhost/api/rag/embeddings/support_project/project-1", {
-      method: "DELETE",
-    }),
-    { params: Promise.resolve({ sourceType: "support_project", sourceId: "project-1" }) }
-  );
-}
-
 let consoleSpies: jest.SpyInstance[];
 
 beforeEach(() => {
@@ -153,14 +135,6 @@ describe("social session with role=admin", () => {
       success: false,
       error: "관리자 권한이 필요합니다",
     });
-    expect(mockPrismaCalls).toEqual([]);
-  });
-
-  it("DELETE /api/rag/embeddings/support_project answers 403 and deletes nothing", async () => {
-    const res = await ragDelete();
-
-    expect(res.status).toBe(403);
-    expect(mockDeleteEmbeddings).not.toHaveBeenCalled();
     expect(mockPrismaCalls).toEqual([]);
   });
 });
@@ -209,15 +183,6 @@ describe("password admin (control)", () => {
     expect(mockPrismaCalls).toEqual(["user.findUnique", "user.update"]);
   });
 
-  it("DELETE /api/rag/embeddings/support_project deletes", async () => {
-    mockDeleteEmbeddings.mockResolvedValue(undefined);
-
-    const res = await ragDelete();
-
-    expect(res.status).toBe(200);
-    expect(mockDeleteEmbeddings).toHaveBeenCalledWith("support_project", "project-1");
-  });
-
   it("a password admin whose role was revoked is refused", async () => {
     mockPrismaAnswer = (operation) =>
       operation === "user.findUnique" ? Promise.resolve({ role: "user" }) : Promise.reject(new Error("no"));
@@ -225,8 +190,6 @@ describe("password admin (control)", () => {
     for (const { run } of handlers) {
       expect((await run()).status).toBe(403);
     }
-    expect((await ragDelete()).status).toBe(403);
-    expect(mockDeleteEmbeddings).not.toHaveBeenCalled();
     expect(new Set(mockPrismaCalls)).toEqual(new Set(["user.findUnique"]));
   });
 });
