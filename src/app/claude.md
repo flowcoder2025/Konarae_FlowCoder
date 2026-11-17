@@ -43,8 +43,8 @@
 │   ├── /cron              #    Cron Job 엔드포인트
 │   └── /admin             #    관리자 API
 │
-├── /login                 # 로그인 페이지
-├── /access-denied         # 관리자 권한 없음 안내 (로그아웃 후 계정 전환)
+├── /login                 # 로그인 페이지 (카카오·구글)
+├── /admin-login           # 관리자 로그인 (이메일 + 비밀번호)
 └── /companies/[id]        # 공개 기업 프로필 (SEO)
 ```
 
@@ -72,12 +72,14 @@ export default async function AppLayout({ children }) {
 
 레이아웃은 접근 경계가 아니다(클라이언트 내비게이션 형식의 요청은 레이아웃 없이 페이지만 렌더링한다). `/admin/**`의 **모든 `page`·`layout`·`template`·`default`는 첫 `await`로 `requireAdminPage()`를 호출**한다. `generateMetadata`·`generateViewport`를 내보내면 그 함수도 같다. `/admin` 아래에 `route.ts`는 두지 않는다(관리자 API는 `/api/admin`). `__tests__/app/admin-page-guard.test.ts`가 디스크의 파일 전부에 대해 이를 강제한다.
 
+관리자 = `role=admin` + 12시간 안의 비밀번호 로그인(`/admin-login`). 카카오·구글 세션은 role과 관계없이 관리자가 아니다. `requireAdminPage()`(페이지)와 `requireAdmin()`(API·서버 액션)은 같은 `getAdminSession()`으로 판정한다. `/admin-login`은 소셜 세션에도 폼을 렌더링한다(돌려보내면 `/admin` 가드와 루프가 난다). 관리자 레이아웃에 로그아웃 버튼(`signOut({ redirectTo: "/admin-login" })`)이 있다.
+
 ```tsx
 // /admin/**/page.tsx (layout.tsx도 같은 가드를 쓴다)
 import { requireAdminPage } from "@/lib/admin-guard"
 
 export default async function AdminUsersPage() {
-  await requireAdminPage() // 비로그인 → /login, 비관리자 → /access-denied(로그아웃 안내)
+  await requireAdminPage() // 관리자가 아니면(비로그인·소셜 세션·12시간 초과·role 회수) → /admin-login
   const users = await prisma.user.findMany()
   // ...
 }
@@ -311,3 +313,4 @@ if (!canEdit) {
 | 2025-12-15 | 초기 생성 |
 | 2026-11-16 | 2.2 admin: 페이지별 `requireAdminPage()` 가드로 정정 |
 | 2026-11-16 | `/access-denied` 추가, 비관리자 리다이렉트 대상 변경 |
+| 2026-11-17 | `/access-denied` 제거, 관리자 로그인 `/admin-login`(이메일 + 비밀번호)으로 대체, 관리자 판정 설명 추가 |

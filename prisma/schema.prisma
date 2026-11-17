@@ -1172,3 +1172,21 @@ model PipelineSetting {
 
   @@map("pipeline_settings")
 }
+
+// ============================================
+// Admin Password Login (throttle)
+// ============================================
+
+/// Admin password login throttle: one counter row per bucket per fixed
+/// 15-minute window (src/lib/admin-login/throttle.ts). `key` is HMAC-SHA256
+/// under the auth secret of the scoped bucket input (IP, email+IP pair, or
+/// email) plus the window index; the raw email/IP is never stored.
+/// `windowStart` is the window's start, used only to prune old windows.
+model AdminLoginBucket {
+  key         String   @id
+  windowStart DateTime
+  count       Int
+
+  @@index([windowStart])
+  @@map("admin_login_buckets")
+}

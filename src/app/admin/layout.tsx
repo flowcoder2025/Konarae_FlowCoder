@@ -5,7 +5,10 @@
 
 import Link from "next/link";
 import { requireAdminPage } from "@/lib/admin-guard";
-import { DEFAULT_AFTER_LOGIN } from "@/lib/auth-routes";
+import { signOut } from "@/lib/auth";
+import { ADMIN_LOGIN_PATH, DEFAULT_AFTER_LOGIN } from "@/lib/auth-routes";
+import { ADMIN_LOGIN_TEXT } from "@/lib/text-config";
+import { Button } from "@/components/ui/button";
 import {
   LayoutDashboard,
   Database,
@@ -15,6 +18,7 @@ import {
   Target,
   Copy,
   GitBranch,
+  LogOut,
 } from "lucide-react";
 
 export default async function AdminLayout({
@@ -96,13 +100,24 @@ export default async function AdminLayout({
           </nav>
 
           {/* Footer */}
-          <div className="border-t p-4">
+          <div className="space-y-3 border-t p-4">
             <Link
               href={DEFAULT_AFTER_LOGIN}
               className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
             >
               ← 공고 목록으로 돌아가기
             </Link>
+            <form
+              action={async () => {
+                "use server";
+                await signOut({ redirectTo: ADMIN_LOGIN_PATH });
+              }}
+            >
+              <Button type="submit" variant="outline" size="sm" className="w-full">
+                <LogOut aria-hidden="true" />
+                {ADMIN_LOGIN_TEXT.signOut}
+              </Button>
+            </form>
           </div>
         </div>
       </aside>

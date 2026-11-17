@@ -6,7 +6,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { isAdmin } from "@/lib/auth-utils";
+import { getAdminSession } from "@/lib/auth-utils";
 import {
   checkCompanyPermission,
   checkBusinessPlanPermission,
@@ -86,8 +86,8 @@ export async function DELETE(
 
     switch (sourceType) {
       case "support_project":
-        // Only admin can delete support project embeddings
-        hasPermission = await isAdmin(session.user.id);
+        // Only an admin (password sign-in + role=admin) can delete support project embeddings
+        hasPermission = (await getAdminSession()) !== null;
         break;
       case "company":
         // Company owner or admin can delete company embeddings

@@ -120,6 +120,20 @@ export const MESSAGE_TEXT = {
 } as const
 
 /* ============================================
+   ADMIN LOGIN TEXT (관리자 비밀번호 로그인, 톤 고정)
+   ============================================ */
+export const ADMIN_LOGIN_TEXT = {
+  title: '관리자 로그인',
+  description: '관리자 이메일과 비밀번호로 로그인합니다',
+  emailLabel: LABEL_TEXT.email,
+  passwordLabel: LABEL_TEXT.password,
+  submit: '로그인',
+  // One message for every failure: it reveals neither the account nor a lock.
+  error: '이메일 또는 비밀번호가 올바르지 않거나 잠시 잠겨 있습니다',
+  signOut: '로그아웃',
+} as const
+
+/* ============================================
    TYPE EXPORTS
    ============================================ */
 export type ButtonTextKey = keyof typeof BUTTON_TEXT

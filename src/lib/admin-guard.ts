@@ -9,25 +9,18 @@
 
 import { cache } from "react";
 import { redirect } from "next/navigation";
-import { auth } from "@/lib/auth";
-import { isAdmin } from "@/lib/auth-utils";
-import { ADMIN_DENIED_PATH, ADMIN_HOME_PATH, buildLoginUrl } from "@/lib/auth-routes";
+import { getAdminSession } from "@/lib/auth-utils";
+import { ADMIN_HOME_PATH, buildAdminLoginUrl } from "@/lib/auth-routes";
 
 /**
- * Redirects anyone who is not an admin. Wrapped in `cache` so the layout and
- * the page share one lookup per request.
+ * Sends anyone who is not an admin (no session, a social session, an expired
+ * admin sign-in, a revoked role) to the admin sign-in. Uses the same judgement
+ * as `requireAdmin()`. Wrapped in `cache` so the layout and the page share one
+ * lookup per request.
  */
 export const requireAdminPage = cache(async (): Promise<void> => {
   // No try/catch: a database failure must surface as an error, not as "not an admin".
-  const session = await auth();
-  const userId = session?.user?.id;
-
-  if (!userId) {
-    redirect(buildLoginUrl(ADMIN_HOME_PATH));
-  }
-
-  if (!(await isAdmin(userId))) {
-    // Not /projects: that page has no sign-out, so the user could not switch accounts.
-    redirect(ADMIN_DENIED_PATH);
+  if (!(await getAdminSession())) {
+    redirect(buildAdminLoginUrl(ADMIN_HOME_PATH));
   }
 });

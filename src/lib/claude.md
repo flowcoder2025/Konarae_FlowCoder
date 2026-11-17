@@ -22,10 +22,19 @@
 ├── performance.ts          # 성능 모니터링
 │
 │   # 인증 & 권한
-├── auth.ts                 # NextAuth 설정
-├── auth.config.ts          # NextAuth 옵션
-├── auth-utils.ts           # 인증 유틸리티
+├── auth.ts                 # NextAuth 설정 (+ 관리자 Credentials provider, Node 전용)
+├── auth.config.ts          # NextAuth 옵션 (Edge 미들웨어용, Prisma·crypto 금지)
+├── auth-routes.ts          # 미들웨어 경로 판정, callbackUrl 정리 (import 없음)
+├── auth-utils.ts           # 인증 유틸리티, 관리자 판정 getAdminSession()
+├── admin-guard.ts          # /admin 페이지 가드 requireAdminPage()
 ├── rebac.ts                # ReBAC 권한 시스템
+├── /admin-login            # 관리자 이메일 + 비밀번호 로그인
+│   ├── constants.ts        #    provider id, 세션 12시간 (Edge에서도 import, import 없음)
+│   ├── password.ts         #    scrypt 해시·검증
+│   ├── throttle.ts         #    잠금 (admin_login_buckets: IP 20 → 쌍 5 → 이메일 50, 15분 고정 창 카운터)
+│   ├── client-ip.ts        #    IP (VERCEL=1일 때만 신뢰, 운영에서 IP가 없으면 프로세스당 1회 경고)
+│   ├── authorize.ts        #    Credentials authorize
+│   └── submit.ts           #    /admin-login 폼 제출 ("use server" 금지)
 │
 │   # 비즈니스 로직
 ├── matching.ts             # RAG 매칭 엔진
@@ -142,6 +151,17 @@ export default async function Page() {
   // ...
 }
 ```
+
+### 4.3 관리자 판정
+
+- 관리자 = `role=admin`(매 요청 DB 조회) **그리고** 12시간 안의 비밀번호 로그인(`session.adminAuthAt`). 카카오·구글 세션은 role과 관계없이 관리자가 아니다.
+- 판정은 `getAdminSession()`(`auth-utils.ts`) 하나다. `requireAdmin()`(API·서버 액션, 세션 없음 401·그 외 403)과 `requireAdminPage()`(페이지, `/admin-login?callbackUrl=%2Fadmin`으로 리다이렉트)가 이것을 쓴다. role만 보는 판정(예: `user.role === "admin"` 직접 비교)을 따로 만들지 않는다.
+- `adminAuthAt`은 `auth.config.ts` jwt 콜백이 `admin-credentials` 로그인 때만 넣는다. 다른 로그인은 지우고, `trigger: "update"`·`session` 인자에서는 읽지 않는다.
+- `admin-login/*`의 Prisma·`node:crypto` 코드는 `auth.ts`로만 들어간다. `admin-login/` 중 `auth.config.ts`가 import하는 것은 `constants.ts`뿐이다(`__tests__/lib/auth-edge-imports.test.ts`).
+- 잠금은 `consumeAttempt()`(`admin-login/throttle.ts`) 하나다. 창은 `floor(now / 15분)` 고정 창이고 창 번호가 버킷 키(HMAC)에 들어간다. 버킷마다 native upsert 한 문장(`INSERT … ON CONFLICT (key) DO UPDATE SET count = count + 1 RETURNING count`)이 판정하고, 돌려받은 count가 한도 이하면 통과다. 쌍·이메일 버킷은 있든 없든 그 한 문장뿐이라 버킷 존재가 응답 시간에 드러나지 않는다. IP 버킷만 먼저 `findUnique`로 읽어 이미 한도면 쓰지 않고 거부한다(`pgbouncer=true`에서 문장마다 BEGIN…COMMIT이라, 한 IP 폭주가 한 행 잠금에 몰려 서버 연결을 붙잡지 않게). 이 읽기는 거부만 하고 통과는 늘 upsert가 정한다. 그 밖에 먼저 읽고 쓰는 코드·대화형 트랜잭션·advisory lock·raw SQL을 쓰지 않는다(PgBouncer transaction 모드, 10.1). 정리는 직전 창보다 오래된 행만 지운다. 판정 오류는 던지고, `authorizeAdmin`이 잡아 로그(이메일·IP·비밀번호 없이) 후 `null`로 거부한다.
+- `authorizeAdmin`은 `ADMIN_PASSWORD_HASH`를 trim해서 쓰고, 거부 로그 `reason`을 `not_configured`(env 없음)·`malformed_hash`(`isWellFormedHash` 거짓, error 수준)·`invalid_credentials` 등으로 나눈다. 어느 경우든 시도 한 칸과 scrypt 한 번(`verifyPassword`)은 그대로다.
+- `auth.ts`의 Auth.js `logger`는 `error`만 둔다: `type === "CredentialsSignin"`은 스택 없는 warn 한 줄, 나머지는 그대로 `console.error`. `debug`를 넣지 않는다(`debug: false`가 깐 no-op을 덮어써 요청 본문 로그가 살아난다).
+- 운영 env·잠금·복구 절차: 루트 `claude.md` 9.7.
 
 ---
 
@@ -342,3 +362,5 @@ export async function PATCH(req, { params }) {
 | 2025-12-05 | 초기 생성 |
 | 2025-12-05 | /docs 참조 섹션 추가 |
 | 2025-12-15 | 허브 연결 섹션 추가, 디렉토리 구조 확장 |
+| 2026-11-17 | 4.3 관리자 판정(`getAdminSession` 하나), `/admin-login` 모듈 구조 추가 |
+| 2026-11-17 | 4.3 잠금 IP 버킷 선읽기, 거부 `reason` 분리·해시 trim, Auth.js `logger`, IP 없음 경고 |

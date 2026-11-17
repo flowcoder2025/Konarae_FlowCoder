@@ -465,6 +465,7 @@ CRAWLER_IMAGE=$(R flowmate-crawler) EMBEDDING_IMAGE=$(R flowmate-embedding) PARS
 - `--network flowmate`는 빠뜨리면 안 된다. DB 전환 뒤 워커는 `flowmate-db:5432`로 붙으므로, 빠지면 재배포 직후 DB 연결이 조용히 끊긴다. `--cap-drop NET_RAW`는 워커가 그 브리지에서 다른 주소를 흉내 내지 못하게 막는다.
 
 **Vercel 환경변수**:
+- `ADMIN_LOGIN_EMAIL`, `ADMIN_PASSWORD_HASH`: 관리자 비밀번호 로그인(9.7). 값은 레포·문서·채팅에 쓰지 않는다.
 - `RAILWAY_CRAWLER_URL=https://worker.jerome87.com`
 - `RAILWAY_WORKER_URL=https://worker.jerome87.com`
 - `TEXT_PARSER_URL=https://worker.jerome87.com`
@@ -496,6 +497,38 @@ CRAWLER_IMAGE=$(R flowmate-crawler) EMBEDDING_IMAGE=$(R flowmate-embedding) PARS
 | 브라우저 idle 타이머 | Playwright 싱글톤 | 5분 미사용 시 자동 종료 |
 | 순차 배치 처리 | batch crawl/embedding | `await` 순차 실행 (병렬 금지) |
 | Graceful shutdown | SIGTERM/SIGINT | `prisma.$disconnect()`, `closeBrowser()` |
+
+### 9.7 관리자 로그인 (이메일 + 비밀번호)
+
+- 로그인 화면 `/admin-login`. 관리자 = `role=admin` **그리고** 12시간 안의 비밀번호 로그인. 카카오·구글 세션은 role과 관계없이 관리자가 아니다. 판정은 `getAdminSession()`(`src/lib/auth-utils.ts`) 하나다.
+- 비로그인 `/admin/**` → 미들웨어가 `/admin-login?callbackUrl=<경로>`. 소셜 세션·12시간 초과·role 회수 → 페이지 가드가 `/admin-login?callbackUrl=%2Fadmin`, `/api/admin/**`은 403. 관리자 레이아웃의 로그아웃 버튼은 `/admin-login`으로 돌아간다.
+- Vercel env (둘 중 하나라도 없으면 관리자 로그인은 전부 거부된다):
+  - `ADMIN_LOGIN_EMAIL`: 관리자 `User` 행(role=admin)의 이메일.
+  - `ADMIN_PASSWORD_HASH`: `node scripts/hash-admin-password.mjs`가 출력한 한 줄(앞뒤 공백·줄바꿈은 무시한다). 터미널에서 직접 실행한다(비밀번호를 가려서 두 번 입력, 14자 이상, 인자·환경변수·파이프로는 받지 않는다). Vercel에 넣을 때는 해시를 변수에 먼저 받은 뒤 넘긴다. vercel CLI 54는 파이프 입력을 0.5초만 기다리므로, 스크립트를 바로 파이프하면 빈 값이 저장될 수 있다.
+    ```bash
+    H=$(node scripts/hash-admin-password.mjs) && printf '%s\n' "$H" | vercel env add ADMIN_PASSWORD_HASH production; unset H
+    ```
+- 잠금(`admin_login_buckets`, 15분 고정 창): 시도 하나가 IP(20회) → 이메일+IP 쌍(5회) → 이메일 전체(50회) 순서로 버킷 카운터를 하나씩 올리고, 올린 값이 한도 이하면 통과다. 앞 버킷이 거부하면 뒤 버킷은 건드리지 않고(쌍·이메일 버킷은 거부할 때도 카운터가 올라간다), 앞에서 올린 값은 돌려주지 않는다. IP 버킷만 먼저 읽어서 이미 한도에 찼으면 올리지 않고 거부한다(한 IP의 폭주가 한 행 잠금에 몰려 PgBouncer 연결을 붙잡지 않게). 한도 아래면 올린 값으로 판정하므로 동시 요청에서도 한도만큼만 통과한다. 성공한 로그인도 한 번으로 센다. 창은 시각 기준으로 고정이라 모든 버킷이 15분 경계(매시 00·15·30·45분)에 함께 리셋된다. 창 번호가 키에 들어 있어 창마다 새 행이 생기고, 지난 창의 행은 그다음 창이 끝난 뒤의 첫 시도 때 지워진다. 경계 직전과 직후에 몰아 쓰면 짧은 시간에 한도의 두 배까지 시도할 수 있다. IP를 모르면 이메일 전체 버킷만 쓴다. 오류 문구는 실패·잠금 모두 같다.
+- 한 IP는 한 이메일의 50칸 중 자기 쌍의 5칸만 쓸 수 있다. 이메일 전체를 잠그려면 15분마다 IP 10개 이상이 필요하다. 그런 분산 공격이 이어지는 동안에는 표를 비워도 곧 다시 잠긴다. 이 잔여 위험은 받아들였다(로그인에 성공한 기기의 쿠키 면제는 후속 작업).
+- IP 한도는 런타임 env `VERCEL=1`일 때만 켜진다. Vercel 프로젝트 설정 Environment Variables의 "Enable access to System Environment Variables"가 켜져 있어야 이 값이 생긴다(이 프로젝트는 2026-11-17 켜져 있음 확인). 꺼져 있으면 IP 헤더를 믿지 않아 IP를 모르고, 이메일 전체 한도만 걸린다(이메일을 아는 사람 하나가 50회로 그 15분 창이 끝날 때까지 잠글 수 있다). 이때 운영(`NODE_ENV=production`)에서는 인스턴스(프로세스)마다 한 번 경고 `Admin login IP limit disabled …`(`reason: vercel_system_env_not_exposed`)가 남는다. Vercel인데 IP 헤더가 없으면 `reason: no_client_ip_header`. 헤더 값은 남기지 않는다.
+- 실패 로그 `Admin login rejected`의 `reason`: `invalid_credentials`·`throttled`·`no_admin_user`·`internal_error`, 그리고 설정 문제 `not_configured`(`ADMIN_LOGIN_EMAIL`·`ADMIN_PASSWORD_HASH` 중 하나가 없음)와 `malformed_hash`(해시를 읽을 수 없음)는 error 수준이다. 이메일·IP·비밀번호·해시 값은 남기지 않는다. Auth.js의 `CredentialsSignin`은 스택 없는 경고 한 줄(`Auth.js sign-in rejected`)이고, 다른 Auth.js 오류는 그대로 `console.error`로 나간다.
+- 복구:
+  - 잠김: 다음 15분 경계까지 기다린다. 급하면 DB 터널로 버킷 표를 비운다. 키가 `AUTH_SECRET` HMAC이라 이메일로 행을 고를 수 없으므로 표 전체를 지운다(시도 횟수만 담는 표라 지워도 무해하다). 위 분산 공격 중이면 지워도 소용없다. 비밀번호는 명령줄에 쓰지 않는다(`ps`·셸 히스토리에 남는다): 가려서 입력받아 그 명령의 env로만 넘긴다. 특수문자는 `node` 한 줄이 URL 인코딩한다.
+    ```bash
+    # on Mini (터미널 1): 터널
+    ssh -L 5433:127.0.0.1:5433 oci
+    # on Mini (터미널 2, FlowMate 디렉터리)
+    # 다음 줄에서 OCI /home/ubuntu/flowmate-db/.env 의 flowmate_owner 비밀번호를 입력한다(화면에 보이지 않는다).
+    read -rs PW
+    U="postgresql://flowmate_owner:$(PW="$PW" node -e 'process.stdout.write(encodeURIComponent(process.env.PW))')@127.0.0.1:5433/flowmate"
+    echo 'DELETE FROM admin_login_buckets;' | DATABASE_URL="$U" DIRECT_URL="$U" npx prisma db execute --stdin --schema prisma/schema.prisma
+    unset PW U
+    ```
+  - 비밀번호 교체·분실: 새 해시로 기존 값을 덮어쓴 뒤 재배포한다(env는 재배포 뒤에 적용된다). 먼저 `vercel-account` 스킬로 scope를 확인한다. 덮어쓰기는 `--force`다(vercel CLI 54.14 `vercel env add --help`: "Override an existing Environment Variable of same target". CLI가 `?upsert=true`로 보낸다).
+    ```bash
+    H=$(node scripts/hash-admin-password.mjs) && printf '%s\n' "$H" | vercel env add ADMIN_PASSWORD_HASH production --force; unset H
+    ```
+  - 비밀번호 유출 의심: 위처럼 해시를 교체하고 `NEXTAUTH_SECRET`도 새 값(예: `openssl rand -base64 32`)으로 바꾼 뒤 재배포한다. 해시만 바꾸면 이미 로그인한 관리자 세션(최대 12시간 관리자)이 남는다. 시크릿을 바꾸면 모든 JWT가 무효가 되어 소셜 로그인 사용자까지 전원 로그아웃되고, 잠금 버킷 키(HMAC)도 바뀌어 지금 창의 시도 횟수가 처음부터 다시 센다. next-auth와 잠금은 `AUTH_SECRET`이 있으면 그것을 먼저 쓰므로, Vercel에 `AUTH_SECRET`이 있다면 그 값을 바꾼다. 바꾸기 전에 그 env가 어느 환경·유형으로 저장돼 있는지 확인한다(위 `--force` 명령은 production 하나에 넣은 `ADMIN_PASSWORD_HASH`를 기준으로만 확인했다).
 
 ---
 
@@ -593,3 +626,7 @@ CREATE POLICY "users can view own data" ON companies
 | 2026-03-06 | 3.2.0 | Railway → OCI 마이그레이션, Worker 인프라 섹션 추가 |
 | 2026-03-06 | 3.3.0 | Worker 메모리 관리 규칙 추가, OCI 배포 절차 문서화 |
 | 2026-11-02 | 3.4.0 | 9.5 OCI 사양(2 OCPU/12GB)·SSH(`ssh oci`) 정정, DB 스택(Postgres 17 + PgBouncer)·DB 연결 문자열 추가 |
+| 2026-11-17 | 3.5.0 | 9.7 관리자 비밀번호 로그인(`/admin-login`)·Vercel env `ADMIN_LOGIN_EMAIL`/`ADMIN_PASSWORD_HASH`·잠금/분실 복구 절차 추가 |
+| 2026-11-17 | 3.5.1 | 9.7 잠금을 버킷 카운터(`admin_login_buckets`, IP → 쌍 → 이메일)로 교체, 잠김 복구 명령에서 비밀번호를 명령줄 밖으로 |
+| 2026-11-17 | 3.5.2 | 9.7 잠금 창을 15분 고정 경계로, `ADMIN_PASSWORD_HASH` 등록 명령(변수에 받은 뒤 파이프) |
+| 2026-11-17 | 3.5.3 | 9.7 IP 버킷은 한도에 차면 읽기만, IP 한도 꺼짐 경고·실패 `reason`, 비밀번호 교체(`--force`)·유출 시 `NEXTAUTH_SECRET` 교체 |

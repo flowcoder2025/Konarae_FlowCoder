@@ -50,15 +50,33 @@ describe("authConfig.callbacks.authorized", () => {
     expect(await authorize("/login?callbackUrl=%2Fadmin")).toBe(true);
   });
 
-  it("redirects an anonymous /admin request to the sign-in page on the same origin", async () => {
-    expect(locationOf(await authorize("/admin"))).toBe(`${ORIGIN}/login?callbackUrl=%2Fadmin`);
+  it("redirects an anonymous /admin request to the admin sign-in on the same origin", async () => {
+    expect(locationOf(await authorize("/admin"))).toBe(`${ORIGIN}/admin-login?callbackUrl=%2Fadmin`);
     expect(locationOf(await authorize("/admin/crawler?tab=jobs"))).toBe(
-      `${ORIGIN}/login?callbackUrl=%2Fadmin%2Fcrawler%3Ftab%3Djobs`
+      `${ORIGIN}/admin-login?callbackUrl=%2Fadmin%2Fcrawler%3Ftab%3Djobs`
     );
   });
 
+  // State table, middleware column: a signed-in request reaches the page, whose
+  // guard then decides (social and expired sessions go to /admin-login).
   it("lets a signed-in request through to /admin", async () => {
     expect(await authorize("/admin", SIGNED_IN)).toBe(true);
+    expect(await authorize("/admin/users", SIGNED_IN)).toBe(true);
+  });
+
+  it("does not redirect the admin sign-in page, with or without a session", async () => {
+    expect(await authorize("/admin-login")).toBe(true);
+    expect(await authorize("/admin-login?callbackUrl=%2Fadmin&error=1")).toBe(true);
+    expect(await authorize("/admin-login", SIGNED_IN)).toBe(true);
+  });
+
+  it("sends /admin-login sub-paths to the admin sign-in page", async () => {
+    expect(locationOf(await authorize("/admin-login/x"))).toBe(`${ORIGIN}/admin-login`);
+    expect(locationOf(await authorize("/admin-login/x", SIGNED_IN))).toBe(`${ORIGIN}/admin-login`);
+  });
+
+  it("keeps sending other anonymous protected pages to the social sign-in", async () => {
+    expect(locationOf(await authorize("/reports"))).toBe(`${ORIGIN}/login?callbackUrl=%2Freports`);
   });
 
   it("still redirects legacy routes to /projects", async () => {
@@ -76,8 +94,10 @@ describe("middleware matcher", () => {
   const [pattern] = middlewareConfig.matcher;
   const matches = (path: string) => new RegExp(`^${pattern}$`).test(path);
 
-  it("runs on the sign-in page, admin pages, and legacy routes", () => {
+  it("runs on the sign-in pages, admin pages, and legacy routes", () => {
     expect(matches("/login")).toBe(true);
+    expect(matches("/admin-login")).toBe(true);
+    expect(matches("/admin-login/x")).toBe(true);
     expect(matches("/admin")).toBe(true);
     expect(matches("/admin/crawler")).toBe(true);
     expect(matches("/dashboard")).toBe(true);

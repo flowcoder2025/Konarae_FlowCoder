@@ -1,7 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
+import * as authRoutes from "@/lib/auth-routes";
 import {
-  ADMIN_DENIED_PATH,
+  ADMIN_LOGIN_PATH,
+  buildAdminLoginUrl,
   buildLoginUrl,
   resolveAuthRoute,
   sanitizeCallbackUrl,
@@ -23,18 +25,61 @@ describe("resolveAuthRoute", () => {
     expect(decide("/login?error=OAuthAccountNotLinked")).toEqual({ action: "allow" });
   });
 
-  it("sends an anonymous /admin request to the sign-in page with a relative callback", () => {
+  it("sends an anonymous /admin request to the admin sign-in with a relative callback", () => {
     expect(decide("/admin")).toEqual({
       action: "redirect",
-      location: "/login?callbackUrl=%2Fadmin",
+      location: "/admin-login?callbackUrl=%2Fadmin",
     });
   });
 
-  it("keeps the path and query of the protected page in the callback", () => {
+  it("keeps the path and query of the admin page in the admin sign-in callback", () => {
+    expect(decide("/admin/crawler?tab=jobs")).toEqual({
+      action: "redirect",
+      location: "/admin-login?callbackUrl=%2Fadmin%2Fcrawler%3Ftab%3Djobs",
+    });
     expect(decide("/admin/crawler?tab=jobs&page=2")).toEqual({
       action: "redirect",
-      location: "/login?callbackUrl=%2Fadmin%2Fcrawler%3Ftab%3Djobs%26page%3D2",
+      location: "/admin-login?callbackUrl=%2Fadmin%2Fcrawler%3Ftab%3Djobs%26page%3D2",
     });
+    expect(decide("/admin/users")).toEqual({
+      action: "redirect",
+      location: "/admin-login?callbackUrl=%2Fadmin%2Fusers",
+    });
+  });
+
+  it("keeps sending other anonymous protected pages to the social sign-in", () => {
+    expect(decide("/reports/2026?x=1")).toEqual({
+      action: "redirect",
+      location: "/login?callbackUrl=%2Freports%2F2026%3Fx%3D1",
+    });
+  });
+
+  it("lets anyone reach the admin sign-in page, with or without a session", () => {
+    expect(decide("/admin-login")).toEqual({ action: "allow" });
+    expect(decide("/admin-login?callbackUrl=%2Fadmin")).toEqual({ action: "allow" });
+    expect(decide("/admin-login?callbackUrl=%2Fadmin&error=1")).toEqual({ action: "allow" });
+    // A social session must see the form too; sending it away would loop via /admin.
+    expect(decide("/admin-login", true)).toEqual({ action: "allow" });
+    expect(decide("/admin-login?callbackUrl=%2Fadmin", true)).toEqual({ action: "allow" });
+  });
+
+  it("sends /admin-login sub-paths to the admin sign-in page itself", () => {
+    const expected = { action: "redirect", location: "/admin-login" };
+    expect(decide("/admin-login/x")).toEqual(expected);
+    expect(decide("/admin-login/x", true)).toEqual(expected);
+    expect(decide("/admin-login/")).toEqual(expected);
+  });
+
+  it("does not treat look-alike prefixes as admin routes", () => {
+    expect(decide("/admin-loginx")).toEqual({
+      action: "redirect",
+      location: "/login?callbackUrl=%2Fadmin-loginx",
+    });
+    expect(decide("/administrator")).toEqual({
+      action: "redirect",
+      location: "/login?callbackUrl=%2Fadministrator",
+    });
+    expect(decide("/admin-login-help", true)).toEqual({ action: "allow" });
   });
 
   it("allows a signed-in user through to protected pages", () => {
@@ -85,7 +130,7 @@ describe("resolveAuthRoute", () => {
     });
   });
 
-  it("produces a callback that survives sanitizing unchanged", () => {
+  it("produces an admin callback that survives sanitizing unchanged", () => {
     const decision = decide("/admin/crawler?tab=jobs");
     if (decision.action !== "redirect") throw new Error("expected a redirect");
     const callback = new URL(decision.location, "https://mate.flow-coder.com").searchParams.get("callbackUrl");
@@ -122,6 +167,10 @@ describe("sanitizeCallbackUrl", () => {
     ["a /login sub-path", "/login/x"],
     ["an API route", "/api/auth/signout"],
     ["the API root", "/api"],
+    ["the admin sign-in page", "/admin-login"],
+    ["the admin sign-in page with a nested callback", "/admin-login?callbackUrl=%2Fadmin"],
+    ["an /admin-login sub-path", "/admin-login/x"],
+    ["the admin sign-in page reached by dot segments", "/admin/../admin-login"],
   ])("rejects %s", (_label, input) => {
     expect(sanitizeCallbackUrl(input)).toBe("/projects");
   });
@@ -143,6 +192,11 @@ describe("sanitizeCallbackUrl", () => {
 
   it("returns the given fallback instead of the default", () => {
     expect(sanitizeCallbackUrl("https://evil.example", "/")).toBe("/");
+    expect(sanitizeCallbackUrl("/admin-login", "/admin")).toBe("/admin");
+  });
+
+  it("does not confuse look-alike paths with the admin sign-in page", () => {
+    expect(sanitizeCallbackUrl("/admin-loginx")).toBe("/admin-loginx");
   });
 
   it("keeps an encoded backslash inside the path, on the same origin", () => {
@@ -156,32 +210,64 @@ describe("buildLoginUrl", () => {
     expect(buildLoginUrl("/admin?a=1&b=2")).toBe("/login?callbackUrl=%2Fadmin%3Fa%3D1%26b%3D2");
   });
 
-  it("adds the switch-account flag only when asked", () => {
-    expect(buildLoginUrl("/admin", { switchAccount: true })).toBe(
-      "/login?callbackUrl=%2Fadmin&switchAccount=1"
-    );
-    expect(buildLoginUrl("/admin", { switchAccount: false })).toBe("/login?callbackUrl=%2Fadmin");
+  it("takes no options", () => {
+    expect(buildLoginUrl.length).toBe(1);
   });
 });
 
-describe("the access-denied page route", () => {
-  it("exists on disk at the path the admin guard redirects to", () => {
-    const pageFile = path.join(process.cwd(), "src", "app", ADMIN_DENIED_PATH, "page.tsx");
-
-    expect(fs.existsSync(pageFile)).toBe(true);
+describe("buildAdminLoginUrl", () => {
+  it("points at the admin sign-in page", () => {
+    expect(ADMIN_LOGIN_PATH).toBe("/admin-login");
   });
 
-  it("is not public: an anonymous visitor signs in first", () => {
-    expect(resolveAuthRoute({ pathname: ADMIN_DENIED_PATH, search: "", isLoggedIn: false })).toEqual({
-      action: "redirect",
-      location: "/login?callbackUrl=%2Faccess-denied",
+  it("encodes the callback path like buildLoginUrl", () => {
+    expect(buildAdminLoginUrl("/admin")).toBe("/admin-login?callbackUrl=%2Fadmin");
+    expect(buildAdminLoginUrl("/admin/crawler?tab=jobs&x=1")).toBe(
+      "/admin-login?callbackUrl=%2Fadmin%2Fcrawler%3Ftab%3Djobs%26x%3D1"
+    );
+  });
+});
+
+describe("removed account-switch flow", () => {
+  const SRC_DIR = path.join(process.cwd(), "src");
+  const CODE_FILE = /\.(ts|tsx|js|jsx|mjs|cjs)$/;
+  const FORBIDDEN = [
+    /access-denied/,
+    /switchAccount/,
+    /SWITCH_ACCOUNT/,
+    /ADMIN_DENIED/,
+    /prompt:\s*["']login["']/,
+    /select_account/,
+  ];
+
+  function codeFiles(dir: string): string[] {
+    return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) return codeFiles(full);
+      return CODE_FILE.test(entry.name) ? [full] : [];
     });
+  }
+
+  it("has no page left at the old access-denied route", () => {
+    expect(fs.existsSync(path.join(SRC_DIR, "app", "access-denied"))).toBe(false);
   });
 
-  it("opens for a signed-in user and is a valid place to return to after sign-in", () => {
-    expect(resolveAuthRoute({ pathname: ADMIN_DENIED_PATH, search: "", isLoggedIn: true })).toEqual({
-      action: "allow",
+  it("exports no denied-page path or switch-account flag", () => {
+    expect(authRoutes).not.toHaveProperty("ADMIN_DENIED_PATH");
+    expect(authRoutes).not.toHaveProperty("SWITCH_ACCOUNT_PARAM");
+  });
+
+  it("leaves no code in src referring to it", () => {
+    const files = codeFiles(SRC_DIR);
+    expect(files.length).toBeGreaterThan(100);
+
+    const hits = files.flatMap((file) => {
+      const source = fs.readFileSync(file, "utf8");
+      return FORBIDDEN.filter((pattern) => pattern.test(source)).map(
+        (pattern) => `${path.relative(process.cwd(), file)}: ${pattern}`
+      );
     });
-    expect(sanitizeCallbackUrl(ADMIN_DENIED_PATH)).toBe("/access-denied");
+
+    expect(hits).toEqual([]);
   });
 });

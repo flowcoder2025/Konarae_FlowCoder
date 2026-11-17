@@ -1,8 +1,8 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import AdminLayout from "@/app/admin/layout";
 import LoginPage from "@/app/login/page";
-import { auth, signIn } from "@/lib/auth";
-import { isAdmin } from "@/lib/auth-utils";
+import { auth, signIn, signOut } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
 
 class RedirectSignal extends Error {
   constructor(public readonly location: string) {
@@ -19,15 +19,25 @@ jest.mock("next/navigation", () => ({
 jest.mock("@/lib/auth", () => ({
   auth: jest.fn(),
   signIn: jest.fn(),
+  signOut: jest.fn(),
 }));
 
-jest.mock("@/lib/auth-utils", () => ({
-  isAdmin: jest.fn(),
+// auth-utils -> api-error loads next/server, which needs Fetch API globals that
+// jsdom lacks. Nothing here builds a response, so a stub is enough.
+jest.mock("next/server", () => ({ NextResponse: { json: jest.fn() } }));
+
+// The admin layout runs the real admin judgement; only the database is mocked.
+jest.mock("@/lib/prisma", () => ({
+  prisma: { user: { findUnique: jest.fn() } },
 }));
 
 const mockAuth = auth as unknown as jest.Mock;
 const mockSignIn = signIn as unknown as jest.Mock;
-const mockIsAdmin = isAdmin as jest.MockedFunction<typeof isAdmin>;
+const mockSignOut = signOut as unknown as jest.Mock;
+const mockFindUnique = prisma.user.findUnique as unknown as jest.Mock;
+
+const ADMIN_LOGIN = "/admin-login?callbackUrl=%2Fadmin";
+const passwordSignInAt = () => Date.now() - 60 * 60 * 1000;
 
 async function redirectTarget(run: () => Promise<unknown>): Promise<string> {
   try {
@@ -46,31 +56,41 @@ beforeEach(() => {
 describe("AdminLayout", () => {
   const renderLayout = () => AdminLayout({ children: <div>admin content</div> });
 
-  it("sends an anonymous visitor to the sign-in page with /admin as the callback", async () => {
+  it("sends an anonymous visitor to the admin sign-in with /admin as the callback", async () => {
     mockAuth.mockResolvedValue(null);
 
-    expect(await redirectTarget(renderLayout)).toBe("/login?callbackUrl=%2Fadmin");
-    expect(mockIsAdmin).not.toHaveBeenCalled();
+    expect(await redirectTarget(renderLayout)).toBe(ADMIN_LOGIN);
+    expect(mockFindUnique).not.toHaveBeenCalled();
   });
 
   it("treats a session without a user id as anonymous", async () => {
     mockAuth.mockResolvedValue({ user: { email: "a@example.com" } });
 
-    expect(await redirectTarget(renderLayout)).toBe("/login?callbackUrl=%2Fadmin");
-    expect(mockIsAdmin).not.toHaveBeenCalled();
+    expect(await redirectTarget(renderLayout)).toBe(ADMIN_LOGIN);
+    expect(mockFindUnique).not.toHaveBeenCalled();
   });
 
-  it("sends a signed-in non-admin to the access-denied page", async () => {
+  it.each([
+    ["role=user", "user"],
+    ["role=admin", "admin"],
+  ])("sends a social session with %s to the admin sign-in", async (_label, role) => {
     mockAuth.mockResolvedValue({ user: { id: "user-1" } });
-    mockIsAdmin.mockResolvedValue(false);
+    mockFindUnique.mockResolvedValue({ role });
 
-    expect(await redirectTarget(renderLayout)).toBe("/access-denied");
-    expect(mockIsAdmin).toHaveBeenCalledWith("user-1");
+    expect(await redirectTarget(renderLayout)).toBe(ADMIN_LOGIN);
+    expect(mockFindUnique).not.toHaveBeenCalled();
   });
 
-  it("renders the admin shell for an admin", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "admin-1" } });
-    mockIsAdmin.mockResolvedValue(true);
+  it("sends a password sign-in whose role was revoked to the admin sign-in", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "admin-1" }, adminAuthAt: passwordSignInAt() });
+    mockFindUnique.mockResolvedValue({ role: "user" });
+
+    expect(await redirectTarget(renderLayout)).toBe(ADMIN_LOGIN);
+  });
+
+  it("renders the admin shell for a password admin", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "admin-1" }, adminAuthAt: passwordSignInAt() });
+    mockFindUnique.mockResolvedValue({ role: "admin" });
 
     render(await renderLayout());
 
@@ -78,10 +98,26 @@ describe("AdminLayout", () => {
   });
 
   it("surfaces a database failure instead of redirecting", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "admin-1" } });
-    mockIsAdmin.mockRejectedValue(new Error("db down"));
+    mockAuth.mockResolvedValue({ user: { id: "admin-1" }, adminAuthAt: passwordSignInAt() });
+    mockFindUnique.mockRejectedValue(new Error("db down"));
 
     await expect(renderLayout()).rejects.toThrow("db down");
+  });
+
+  it("offers a sign-out button that returns to the admin sign-in", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "admin-1" }, adminAuthAt: passwordSignInAt() });
+    mockFindUnique.mockResolvedValue({ role: "admin" });
+    mockSignOut.mockResolvedValue(undefined);
+    render(await renderLayout());
+
+    const button = screen.getByRole("button", { name: "로그아웃" });
+    expect(button.getAttribute("type")).toBe("submit");
+    expect(mockSignOut).not.toHaveBeenCalled();
+
+    fireEvent.click(button);
+
+    await waitFor(() => expect(mockSignOut).toHaveBeenCalledTimes(1));
+    expect(mockSignOut).toHaveBeenCalledWith({ redirectTo: "/admin-login" });
   });
 });
 
@@ -125,6 +161,7 @@ describe("LoginPage", () => {
     ["a backslash host", "/\\evil.example"],
     ["a repeated parameter", ["/admin", "https://evil.example"]],
     ["the sign-in page itself", "/login"],
+    ["the admin sign-in page", "/admin-login"],
   ])("ignores %s as the callback", async (_label, callbackUrl) => {
     mockAuth.mockResolvedValue({ user: { id: "user-1" } });
 
@@ -158,38 +195,16 @@ describe("LoginPage", () => {
   });
 
   it.each([
-    ["kakao", /카카오/, { prompt: "login" }],
-    ["google", /Google/, { prompt: "select_account" }],
-  ])("asks %s for another account after a switch-account sign-out", async (provider, buttonName, prompt) => {
+    ["kakao", /카카오/],
+    ["google", /Google/],
+  ])("starts %s sign-in without provider prompt options, even with an old switchAccount flag", async (provider, buttonName) => {
     mockAuth.mockResolvedValue(null);
     render(await renderLogin({ callbackUrl: "/admin", switchAccount: "1" }));
 
     fireEvent.click(screen.getByRole("button", { name: buttonName }));
 
     await waitFor(() => expect(mockSignIn).toHaveBeenCalledTimes(1));
-    expect(mockSignIn).toHaveBeenCalledWith(provider, { redirectTo: "/admin" }, prompt);
-  });
-
-  it.each([
-    ["0", "0"],
-    ["true", "true"],
-    ["a repeated flag", ["1", "1"]],
-  ])("does not ask for another account when the flag is %s", async (_label, switchAccount) => {
-    mockAuth.mockResolvedValue(null);
-    render(await renderLogin({ callbackUrl: "/admin", switchAccount }));
-
-    fireEvent.click(screen.getByRole("button", { name: /Google/ }));
-
-    await waitFor(() => expect(mockSignIn).toHaveBeenCalledTimes(1));
-    expect(mockSignIn).toHaveBeenCalledWith("google", { redirectTo: "/admin" });
-  });
-
-  it("ignores a switch-account flag for a user who is already signed in", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "user-1" } });
-
-    expect(
-      await redirectTarget(() => renderLogin({ callbackUrl: "/admin", switchAccount: "1" }))
-    ).toBe("/admin");
+    expect(mockSignIn.mock.calls[0]).toEqual([provider, { redirectTo: "/admin" }]);
   });
 
   it("does not start sign-in while rendering", async () => {

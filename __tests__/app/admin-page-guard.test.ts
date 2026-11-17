@@ -43,6 +43,15 @@ jest.mock("next/cache", () => ({
 // Client components import these actions; the real module pulls in the crawler worker.
 jest.mock("@/lib/actions/admin-actions", () => ({}));
 
+// The admin layout's sign-out form imports next-auth (ESM only). Every export
+// throws, so an entry that reads the session or signs out before the guard fails.
+jest.mock("@/lib/auth", () => {
+  const reached = (name: string) => () => {
+    throw new Error(`${name}() was reached before the admin guard`);
+  };
+  return { auth: reached("auth"), signIn: reached("signIn"), signOut: reached("signOut") };
+});
+
 import { requireAdminPage } from "@/lib/admin-guard";
 
 const requireAdminPageMock = requireAdminPage as jest.MockedFunction<typeof requireAdminPage>;
