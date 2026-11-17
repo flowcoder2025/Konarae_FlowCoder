@@ -43,6 +43,8 @@ jest.mock("@/lib/prisma", () => {
       return Promise.resolve(count);
     }
     if (operation === "user.findUnique") {
+      const { where } = args[0] as { where: { id?: string } };
+      if (where.id !== "user-1") return Promise.resolve(null);
       return Promise.resolve(mockUserRole === null ? null : { role: mockUserRole });
     }
     return Promise.reject(new Error(`unexpected database call: ${operation}`));
@@ -190,6 +192,20 @@ describe("POST /api/rag/embed", () => {
 
     expect(res.status).toBe(400);
     expect(mockPrismaCalls).toEqual([]);
+    expect(mockStore).not.toHaveBeenCalled();
+  });
+
+  it("rejects content over 100,000 characters with 400, even for an admin", async () => {
+    mockAuth.mockResolvedValue(passwordSession());
+    mockUserRole = "admin";
+
+    const atLimit = await embed({ sourceType: "support_project", sourceId: "p", content: "가".repeat(100_000) });
+    expect(atLimit.status).toBe(200);
+    mockStore.mockClear();
+
+    const res = await embed({ sourceType: "support_project", sourceId: "p", content: "가".repeat(100_001) });
+
+    expect(res.status).toBe(400);
     expect(mockStore).not.toHaveBeenCalled();
   });
 

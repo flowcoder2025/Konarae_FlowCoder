@@ -2,8 +2,9 @@
  * RAG Embedding API (PRD 4.8)
  * POST /api/rag/embed - Generate embeddings for content
  *
- * Overwrites the embeddings of one source, so it needs write access to that
- * source (`canAccessEmbeddings` in src/lib/rag-access.ts).
+ * Upserts the embedding chunks (0..n-1) of one source, so it needs write
+ * access to that source (`canAccessEmbeddings` in src/lib/rag-access.ts).
+ * Each chunk is one OpenAI call, so the content length is capped.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -15,10 +16,15 @@ import { createLogger } from "@/lib/logger";
 
 const logger = createLogger({ api: "rag-embed" });
 
+// Chunks are 512 whitespace-separated words (50 overlap): about 50 for typical
+// Korean text, at most about 110. Not exported: a route file may only export
+// handlers and segment config.
+const MAX_EMBED_CONTENT_LENGTH = 100_000;
+
 const embedSchema = z.object({
   sourceType: z.enum(["support_project", "company", "business_plan"]),
   sourceId: z.string().min(1),
-  content: z.string().min(1),
+  content: z.string().min(1).max(MAX_EMBED_CONTENT_LENGTH),
   metadata: z.record(z.any()).optional(),
 });
 

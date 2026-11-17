@@ -23,7 +23,8 @@
  * outside src/lib/actions/, or one there without "admin" in its path, fails
  * unless it is in OTHER_ACTION_FILES, and a file outside src/app/admin/ must
  * have exactly the number of inline actions PUBLIC_INLINE_ACTIONS gives it
- * (none if absent). A new server action anywhere therefore fails until it is
+ * (none if absent), each of which is only the one call listed there. A new
+ * server action anywhere therefore fails until it is
  * guarded as an admin action or listed here with the reason it needs no admin.
  *
  * @jest-environment node
@@ -39,18 +40,19 @@ const ADMIN_API_DIR = path.join(ROOT, "src", "app", "api", "admin");
 const ACTIONS_DIR = path.join(ROOT, "src", "lib", "actions");
 const ADMIN_APP_DIR = path.join(ROOT, "src", "app", "admin");
 const ADMIN_LAYOUT = path.join("src", "app", "admin", "layout.tsx");
-const SOURCE_FILE = /\.(ts|tsx|js|jsx)$/;
+const SOURCE_FILE = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
 const USE_SERVER = "use server";
 
 /**
- * Inline server actions outside src/app/admin/ (file -> how many). Each is a
+ * Inline server actions outside src/app/admin/: file -> how many, and the one
+ * call each action's whole body must be (`await <call>(...)`). Each is a
  * public endpoint, so each entry says why it needs no admin.
  */
-const PUBLIC_INLINE_ACTIONS: Record<string, number> = {
+const PUBLIC_INLINE_ACTIONS: Record<string, { count: number; call: string }> = {
   // Kakao and Google sign-in buttons: start an OAuth redirect, nothing else.
-  [path.join("src", "app", "login", "page.tsx")]: 2,
+  [path.join("src", "app", "login", "page.tsx")]: { count: 2, call: "signIn" },
   // The admin password sign-in form; attempts are throttled in authorizeAdmin.
-  [path.join("src", "app", "admin-login", "page.tsx")]: 1,
+  [path.join("src", "app", "admin-login", "page.tsx")]: { count: 1, call: "submitAdminLogin" },
 };
 
 /**
@@ -285,22 +287,35 @@ function unaccountedServerActions(relativePath: string, source: ts.SourceFile): 
       "file-level \"use server\" outside the admin action files: put admin actions in src/lib/actions/ with admin in the path, or list the file in OTHER_ACTION_FILES"
     );
   }
-  const expected = PUBLIC_INLINE_ACTIONS[relativePath] ?? 0;
+  const listed = PUBLIC_INLINE_ACTIONS[relativePath];
+  const expected = listed?.count ?? 0;
   if (actions.length !== expected) {
     failures.push(
       `${actions.length} inline server action(s), PUBLIC_INLINE_ACTIONS lists ${expected}: guard admin actions under src/app/admin/, or list public ones`
     );
   }
+  if (listed) {
+    for (const action of actions) {
+      if (!isOnlyAwaitedCall(action.rest, listed.call)) {
+        failures.push(`line ${action.line}: a listed public action must be only \`await ${listed.call}(...)\``);
+      }
+    }
+  }
   return failures;
 }
 
-/** `await signOut(...)` and nothing else. */
-function isSignOutOnly(statements: readonly ts.Statement[]): boolean {
+/** `await <name>(...)` and nothing else. */
+function isOnlyAwaitedCall(statements: readonly ts.Statement[], name: string): boolean {
   if (statements.length !== 1) return false;
   const [only] = statements;
   if (!ts.isExpressionStatement(only) || !ts.isAwaitExpression(only.expression)) return false;
   const call = only.expression.expression;
-  return ts.isCallExpression(call) && ts.isIdentifier(call.expression) && call.expression.text === "signOut";
+  return ts.isCallExpression(call) && ts.isIdentifier(call.expression) && call.expression.text === name;
+}
+
+/** `await signOut(...)` and nothing else. */
+function isSignOutOnly(statements: readonly ts.Statement[]): boolean {
+  return isOnlyAwaitedCall(statements, "signOut");
 }
 
 /** Inline actions of one file under src/app/admin that are not guarded (and not the exempt sign-out). */
@@ -741,10 +756,11 @@ describe("the scan itself", () => {
     const LOGIN = path.join("src", "app", "login", "page.tsx");
     const unaccounted = (file: string, code: string) => unaccountedServerActions(file, parseSource(file, code));
     const action = 'async () => { "use server"; await go(); }';
+    const signInAction = 'async () => { "use server"; await signIn("kakao", { redirectTo }); }';
 
     it.each([
       ["an admin action file", path.join("src", "lib", "actions", "admin-actions.ts"), '"use server";\nexport async function a() {}'],
-      ["the listed login actions", LOGIN, `export default function P() { return <><form action={${action}} /><form action={${action}} /></>; }`],
+      ["the listed login actions", LOGIN, `export default function P() { return <><form action={${signInAction}} /><form action={${signInAction}} /></>; }`],
       ["a file without server actions", path.join("src", "lib", "rag.ts"), "export async function f() {}"],
     ])("accepts %s", (_label, file, code) => {
       expect(unaccounted(file, code)).toEqual([]);
@@ -754,7 +770,13 @@ describe("the scan itself", () => {
       ["a \"use server\" file outside src/lib/actions", path.join("src", "features", "admin", "actions.ts"), '"use server";\nexport async function a() {}'],
       ["a \"use server\" file without admin in the path", path.join("src", "lib", "actions", "user-actions.ts"), '"use server";\nexport async function a() {}'],
       ["an inline action in an unlisted page", path.join("src", "app", "(app)", "settings", "page.tsx"), `export default function P() { return <form action={${action}} />; }`],
-      ["a third login action", LOGIN, `export default function P() { return <><form action={${action}} /><form action={${action}} /><form action={${action}} /></>; }`],
+      ["a third login action", LOGIN, `export default function P() { return <><form action={${signInAction}} /><form action={${signInAction}} /><form action={${signInAction}} /></>; }`],
+      ["a login action replaced by another call (same count)", LOGIN, `export default function P() { return <><form action={${signInAction}} /><form action={${action}} /></>; }`],
+      [
+        "a login action that does more than sign in",
+        LOGIN,
+        `export default function P() { return <><form action={${signInAction}} /><form action={async () => { "use server"; await prisma.user.deleteMany(); await signIn("google"); }} /></>; }`,
+      ],
       ["a stray \"use server\" string", path.join("src", "lib", "x.ts"), 'export const mode = "use server";'],
     ])("rejects %s", (_label, file, code) => {
       expect(unaccounted(file, code).length).toBeGreaterThan(0);
