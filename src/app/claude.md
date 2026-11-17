@@ -30,15 +30,12 @@
 │   ├── /projects          #    프로젝트 관리
 │   └── /users             #    사용자 관리
 │
-├── /api                   # 🔌 API Routes
+├── /api                   # 🔌 API Routes (목록: api-surface.test.ts KEEP_ROUTES)
 │   ├── /auth              #    NextAuth 핸들러
-│   ├── /companies         #    기업 API
-│   ├── /projects          #    프로젝트 API
-│   ├── /matching          #    매칭 API
-│   ├── /documents         #    문서 분석 API
-│   ├── /rag               #    RAG 검색 API
-│   ├── /cron              #    Cron Job 엔드포인트
-│   └── /admin             #    관리자 API
+│   ├── /admin             #    관리자 API (requireAdmin)
+│   ├── /cron              #    Cron Job 엔드포인트 (CRON_SECRET·QStash 서명)
+│   ├── /internal          #    서버 간 호출 (INTERNAL_API_KEY)
+│   └── /v1                #    공개 게시판 API (rate limit)
 │
 ├── /login                 # 로그인 페이지 (카카오·구글)
 ├── /admin-login           # 관리자 로그인 (이메일 + 비밀번호)
@@ -68,6 +65,8 @@ export default async function AppLayout({ children }) {
 ### 2.2 admin 그룹 - 관리자 전용
 
 레이아웃은 접근 경계가 아니다(클라이언트 내비게이션 형식의 요청은 레이아웃 없이 페이지만 렌더링한다). `/admin/**`의 **모든 `page`·`layout`·`template`·`default`는 첫 `await`로 `requireAdminPage()`를 호출**한다. `generateMetadata`·`generateViewport`를 내보내면 그 함수도 같다. `/admin` 아래에 `route.ts`는 두지 않는다(관리자 API는 `/api/admin`). `__tests__/app/admin-page-guard.test.ts`가 디스크의 파일 전부에 대해 이를 강제한다.
+
+API 표면은 `__tests__/app/api/api-surface.test.ts`의 `KEEP_ROUTES`가 정한다(`/api/auth`·`/api/admin`·`/api/cron`·`/api/internal`·`/api/v1`만, `src/app/api` 밖 `route.*` 금지). 새 라우트는 이유와 함께 목록에 넣는다.
 
 서버 액션은 전부 공개 엔드포인트다. `__tests__/app/api/admin/admin-guard-scan.test.ts`가 `src` 전체의 `"use server"`를 센다: 관리자 액션은 `src/lib/actions/`(경로에 admin)의 파일 단위 액션이거나 `/admin/**`의 인라인 액션이고 첫 줄이 `await requireAdmin()`이다. 그 밖의 액션(지금은 `/login`의 `await signIn(...)` 2개, `/admin-login`의 `await submitAdminLogin(...)` 1개)은 그 테스트의 `PUBLIC_INLINE_ACTIONS`(개수와 본문 호출 하나)·`OTHER_ACTION_FILES`에 이유와 함께 적어야 통과한다.
 
@@ -315,3 +314,4 @@ if (!canEdit) {
 | 2026-11-17 | `/access-denied` 제거, 관리자 로그인 `/admin-login`(이메일 + 비밀번호)으로 대체, 관리자 판정 설명 추가 |
 | 2026-11-17 | 2.2 서버 액션 목록 규칙(src 전체 스캔), `/api/rag` 권한은 `src/lib/claude.md` 4.4 |
 | 2026-11-17 | 사업계획서·평가 페이지와 API 제거(`/business-plans`·`/evaluations`는 레거시 리다이렉트로 남음) |
+| 2026-11-17 | 레거시 API 46개 삭제, 1절 `/api` 트리를 유지 5묶음으로, 2.2 API 표면 = `api-surface.test.ts` `KEEP_ROUTES`, `/pipeline` 레거시 리다이렉트 |
