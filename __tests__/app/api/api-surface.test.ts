@@ -2,7 +2,9 @@
  * The API surface is a fixed list. Every route handler on disk must be in
  * KEEP_ROUTES and every entry must exist on disk, so adding a route means
  * adding it here with a reason, and a deleted legacy route cannot come back
- * unnoticed. Reads the file system only.
+ * unnoticed. The other cases close the ways a route could be served without
+ * showing up here: the Pages Router, a root app directory, symlinks, route
+ * groups and custom page extensions. Reads the file system only.
  *
  * @jest-environment node
  */
@@ -41,8 +43,10 @@ const KEEP_ROUTES: readonly string[] = [
   "/api/admin/repair-filenames",
   "/api/admin/system-status",
 
-  // Scheduled jobs (vercel.json crons, QStash schedules), authenticated by
-  // CRON_SECRET or a QStash signature.
+  // Scheduled jobs (vercel.json crons, QStash schedules). Each handler checks its
+  // own credentials: Bearer CRON_SECRET and x-api-key = ADMIN_API_KEY (all but
+  // deadline-alerts), a QStash signature (all but close-expired and
+  // matching-refresh), and x-worker-key = WORKER_API_KEY (matching-refresh).
   "/api/cron/analyze-projects",
   "/api/cron/close-expired",
   "/api/cron/crawl-all",
@@ -76,6 +80,28 @@ function findFiles(dir: string, pattern: RegExp): string[] {
 
 /** Repo-relative path with forward slashes. */
 const relative = (file: string) => path.relative(ROOT, file).split(path.sep).join("/");
+
+/** True for anything at the path, including a dangling symlink. */
+function exists(target: string): boolean {
+  try {
+    fs.lstatSync(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function findSymlinks(dir: string): string[] {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const full = path.join(dir, entry.name);
+    if (entry.isSymbolicLink()) return [full];
+    return entry.isDirectory() ? findSymlinks(full) : [];
+  });
+}
+
+// Route groups "(x)" and intercepting routes "(.)x", "(..)x", "(...)x" start
+// with "("; parallel routes start with "@". None of them appear in the URL.
+const NON_LITERAL_SEGMENT = /^[(@]/;
 
 /**
  * URL patterns of the given route files (repo-relative, under src/app/api/).
@@ -128,6 +154,46 @@ describe("API surface", () => {
 
     expect(routeFiles.length).toBeGreaterThan(0);
     expect(routeFiles.filter((file) => !file.startsWith("src/app/api/"))).toEqual([]);
+  });
+
+  it("has no Pages Router and no root app directory", () => {
+    // pages/api/* would be served as API routes that discoverRoutes never sees,
+    // and a root app/ or pages/ makes Next.js ignore src/app altogether.
+    expect(["src/pages", "pages", "app"].filter((dir) => exists(path.join(ROOT, dir)))).toEqual([]);
+  });
+
+  it("serves every route from its literal directory (no group, parallel or intercepting segment)", () => {
+    // discoverRoutes drops route groups, so a grouped file such as
+    // src/app/api/(g)/admin/x/route.ts would match /api/admin/x in KEEP_ROUTES
+    // while scans that walk src/app/api/admin (admin-guard-scan) miss it.
+    const routeFiles = findFiles(API_DIR, ROUTE_FILE).map(relative);
+    const nonLiteral = routeFiles.filter((file) =>
+      path.posix.dirname(file).split("/").some((segment) => NON_LITERAL_SEGMENT.test(segment))
+    );
+    const withoutLiteralDirectory = KEEP_ROUTES.filter((route) => {
+      const dir = path.join(APP_DIR, ...route.split("/").filter(Boolean));
+      return !exists(dir) || !fs.readdirSync(dir).some((name) => ROUTE_FILE.test(name));
+    });
+
+    expect(routeFiles.length).toBeGreaterThan(0);
+    expect({ nonLiteral, withoutLiteralDirectory }).toEqual({ nonLiteral: [], withoutLiteralDirectory: [] });
+  });
+
+  it("has no symlinks under src/app", () => {
+    // The directory walk does not follow symlinks, but Next.js does: a linked
+    // directory could serve routes this test never sees.
+    expect(findSymlinks(APP_DIR).map(relative)).toEqual([]);
+  });
+
+  it("does not set pageExtensions in the Next.js config", () => {
+    // Custom page extensions change which file names are routes (e.g.
+    // route.api.ts), and ROUTE_FILE would no longer match them.
+    const configs = fs.readdirSync(ROOT).filter((name) => /^next\.config\.(js|mjs|cjs|ts|mts|cts)$/.test(name));
+
+    expect(configs.length).toBeGreaterThan(0);
+    expect(
+      configs.filter((name) => fs.readFileSync(path.join(ROOT, name), "utf8").includes("pageExtensions"))
+    ).toEqual([]);
   });
 
   it("turns route file paths into URL patterns", () => {

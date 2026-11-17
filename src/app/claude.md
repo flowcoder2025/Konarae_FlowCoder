@@ -33,7 +33,7 @@
 ├── /api                   # 🔌 API Routes (목록: api-surface.test.ts KEEP_ROUTES)
 │   ├── /auth              #    NextAuth 핸들러
 │   ├── /admin             #    관리자 API (requireAdmin)
-│   ├── /cron              #    Cron Job 엔드포인트 (CRON_SECRET·QStash 서명)
+│   ├── /cron              #    Cron Job: Bearer CRON_SECRET·x-api-key=ADMIN_API_KEY(deadline-alerts 제외), QStash 서명(close-expired·matching-refresh 제외), x-worker-key=WORKER_API_KEY(matching-refresh)
 │   ├── /internal          #    서버 간 호출 (INTERNAL_API_KEY)
 │   └── /v1                #    공개 게시판 API (rate limit)
 │

@@ -161,7 +161,7 @@ export default async function Page() {
 
 ### 4.4 RAG (rag.ts)
 
-- `/api/rag/*` 라우트와 권한 검사 `rag-access.ts`는 레거시 API와 함께 삭제했다(2026-11-17). `rag.ts`는 OCI 임베딩 워커(`src/embedding-server.ts`의 `storeDocumentEmbeddings`)와 매칭(`matching.ts`의 `hybridSearch`)이 쓴다.
+- `/api/rag/*` 라우트와 권한 검사 `rag-access.ts`는 레거시 API와 함께 삭제했다(2026-11-17). `rag.ts`는 OCI 임베딩 워커(`src/embedding-server.ts`의 `storeDocumentEmbeddings`), 매칭(`matching.ts`의 `hybridSearch`), 수동 스크립트 `scripts/generate-embeddings.ts`(`storeDocumentEmbeddings`)가 쓴다.
 - `hybridSearch()`는 source id로 거르지 못한다. 지금 서버 호출(`matching.ts`)은 support_project만 검색한다. company·business_plan을 검색하는 코드를 새로 만들면 결과를 사용자가 권한을 가진 source id로 거른다.
 
 ---
