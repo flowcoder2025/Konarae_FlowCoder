@@ -1172,3 +1172,21 @@ model PipelineSetting {
 
   @@map("pipeline_settings")
 }
+
+// ============================================
+// Admin Password Login (throttle)
+// ============================================
+
+/// Admin password login attempts, used to lock out repeated failures.
+/// keyHash/ipHash are HMAC-SHA256 under the auth secret; the raw email/IP is never stored.
+model AdminLoginAttempt {
+  id        String   @id @default(cuid())
+  keyHash   String // HMAC of the normalized email
+  ipHash    String? // HMAC of the client IP, null when unknown
+  success   Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([keyHash, createdAt])
+  @@index([ipHash, createdAt])
+  @@map("admin_login_attempts")
+}
