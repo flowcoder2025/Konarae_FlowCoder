@@ -7,6 +7,8 @@
 export const LOGIN_PATH = "/login";
 export const DEFAULT_AFTER_LOGIN = "/projects";
 export const ADMIN_HOME_PATH = "/admin";
+/** Admin email + password sign-in page. */
+export const ADMIN_LOGIN_PATH = "/admin-login";
 /** Where a signed-in non-admin lands after trying /admin. Offers sign-out. */
 export const ADMIN_DENIED_PATH = "/access-denied";
 
@@ -86,6 +88,11 @@ export function buildLoginUrl(
 ): string {
   const url = `${LOGIN_PATH}?callbackUrl=${encodeURIComponent(callbackPath)}`;
   return options.switchAccount ? `${url}&${SWITCH_ACCOUNT_PARAM}=1` : url;
+}
+
+/** Admin sign-in URL that returns to the given local path after sign-in. */
+export function buildAdminLoginUrl(callbackPath: string): string {
+  return `${ADMIN_LOGIN_PATH}?callbackUrl=${encodeURIComponent(callbackPath)}`;
 }
 
 export type AuthRouteDecision =

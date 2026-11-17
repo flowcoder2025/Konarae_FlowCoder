@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import AccessDeniedPage from "@/app/access-denied/page";
 import { auth, signOut } from "@/lib/auth";
-import { isAdmin } from "@/lib/auth-utils";
+import { prisma } from "@/lib/prisma";
 
 class RedirectSignal extends Error {
   constructor(public readonly location: string) {
@@ -20,13 +20,19 @@ jest.mock("@/lib/auth", () => ({
   signOut: jest.fn(),
 }));
 
-jest.mock("@/lib/auth-utils", () => ({
-  isAdmin: jest.fn(),
+// auth-utils -> api-error loads next/server, which needs Fetch API globals that
+// jsdom lacks. Nothing here builds a response, so a stub is enough.
+jest.mock("next/server", () => ({ NextResponse: { json: jest.fn() } }));
+
+// The page runs the real admin judgement; only the database is mocked.
+jest.mock("@/lib/prisma", () => ({
+  prisma: { user: { findUnique: jest.fn() } },
 }));
 
 const mockAuth = auth as unknown as jest.Mock;
 const mockSignOut = signOut as unknown as jest.Mock;
-const mockIsAdmin = isAdmin as jest.MockedFunction<typeof isAdmin>;
+const mockFindUnique = prisma.user.findUnique as unknown as jest.Mock;
+const passwordSignInAt = () => Date.now() - 60 * 60 * 1000;
 
 async function redirectTarget(run: () => Promise<unknown>): Promise<string> {
   try {
@@ -50,19 +56,22 @@ describe("AccessDeniedPage", () => {
     mockAuth.mockResolvedValue(session);
 
     expect(await redirectTarget(() => AccessDeniedPage())).toBe("/login?callbackUrl=%2Fadmin");
-    expect(mockIsAdmin).not.toHaveBeenCalled();
+    expect(mockFindUnique).not.toHaveBeenCalled();
   });
 
-  it("sends an admin on to /admin", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "admin-1", email: "admin@example.com" } });
-    mockIsAdmin.mockResolvedValue(true);
+  it("sends a password admin on to /admin", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "admin-1", email: "admin@example.com" },
+      adminAuthAt: passwordSignInAt(),
+    });
+    mockFindUnique.mockResolvedValue({ role: "admin" });
 
     expect(await redirectTarget(() => AccessDeniedPage())).toBe("/admin");
   });
 
   it("tells a non-admin which account is signed in and links back to the listing", async () => {
     mockAuth.mockResolvedValue({ user: { id: "user-1", email: "user@example.com" } });
-    mockIsAdmin.mockResolvedValue(false);
+    mockFindUnique.mockResolvedValue({ role: "admin" });
 
     render(await AccessDeniedPage());
 
@@ -74,7 +83,7 @@ describe("AccessDeniedPage", () => {
 
   it("signs out and returns to the /admin sign-in, asking for another account, when the button is pressed", async () => {
     mockAuth.mockResolvedValue({ user: { id: "user-1", email: "user@example.com" } });
-    mockIsAdmin.mockResolvedValue(false);
+    mockFindUnique.mockResolvedValue({ role: "admin" });
     render(await AccessDeniedPage());
 
     fireEvent.click(screen.getByRole("button", { name: "로그아웃 후 다른 계정으로 로그인" }));
@@ -90,7 +99,7 @@ describe("AccessDeniedPage", () => {
     ["a generic label when there is neither", { id: "user-1" }, "현재 로그인한 계정에는 관리자 권한이 없습니다."],
   ])("shows %s", async (_label, user, expected) => {
     mockAuth.mockResolvedValue({ user });
-    mockIsAdmin.mockResolvedValue(false);
+    mockFindUnique.mockResolvedValue({ role: "admin" });
 
     const { container } = render(await AccessDeniedPage());
 
@@ -98,8 +107,8 @@ describe("AccessDeniedPage", () => {
   });
 
   it("surfaces a database failure instead of showing the page", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "user-1" } });
-    mockIsAdmin.mockRejectedValue(new Error("db down"));
+    mockAuth.mockResolvedValue({ user: { id: "admin-1" }, adminAuthAt: passwordSignInAt() });
+    mockFindUnique.mockRejectedValue(new Error("db down"));
 
     await expect(AccessDeniedPage()).rejects.toThrow("db down");
   });

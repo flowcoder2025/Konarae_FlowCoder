@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   ADMIN_DENIED_PATH,
+  ADMIN_LOGIN_PATH,
+  buildAdminLoginUrl,
   buildLoginUrl,
   resolveAuthRoute,
   sanitizeCallbackUrl,
@@ -161,6 +163,19 @@ describe("buildLoginUrl", () => {
       "/login?callbackUrl=%2Fadmin&switchAccount=1"
     );
     expect(buildLoginUrl("/admin", { switchAccount: false })).toBe("/login?callbackUrl=%2Fadmin");
+  });
+});
+
+describe("buildAdminLoginUrl", () => {
+  it("points at the admin sign-in page", () => {
+    expect(ADMIN_LOGIN_PATH).toBe("/admin-login");
+  });
+
+  it("encodes the callback path like buildLoginUrl", () => {
+    expect(buildAdminLoginUrl("/admin")).toBe("/admin-login?callbackUrl=%2Fadmin");
+    expect(buildAdminLoginUrl("/admin/crawler?tab=jobs&x=1")).toBe(
+      "/admin-login?callbackUrl=%2Fadmin%2Fcrawler%3Ftab%3Djobs%26x%3D1"
+    );
   });
 });
 

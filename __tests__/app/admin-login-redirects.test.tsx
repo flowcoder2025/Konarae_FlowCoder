@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import AdminLayout from "@/app/admin/layout";
 import LoginPage from "@/app/login/page";
 import { auth, signIn } from "@/lib/auth";
-import { isAdmin } from "@/lib/auth-utils";
+import { prisma } from "@/lib/prisma";
 
 class RedirectSignal extends Error {
   constructor(public readonly location: string) {
@@ -21,13 +21,21 @@ jest.mock("@/lib/auth", () => ({
   signIn: jest.fn(),
 }));
 
-jest.mock("@/lib/auth-utils", () => ({
-  isAdmin: jest.fn(),
+// auth-utils -> api-error loads next/server, which needs Fetch API globals that
+// jsdom lacks. Nothing here builds a response, so a stub is enough.
+jest.mock("next/server", () => ({ NextResponse: { json: jest.fn() } }));
+
+// The admin layout runs the real admin judgement; only the database is mocked.
+jest.mock("@/lib/prisma", () => ({
+  prisma: { user: { findUnique: jest.fn() } },
 }));
 
 const mockAuth = auth as unknown as jest.Mock;
 const mockSignIn = signIn as unknown as jest.Mock;
-const mockIsAdmin = isAdmin as jest.MockedFunction<typeof isAdmin>;
+const mockFindUnique = prisma.user.findUnique as unknown as jest.Mock;
+
+const ADMIN_LOGIN = "/admin-login?callbackUrl=%2Fadmin";
+const passwordSignInAt = () => Date.now() - 60 * 60 * 1000;
 
 async function redirectTarget(run: () => Promise<unknown>): Promise<string> {
   try {
@@ -46,31 +54,41 @@ beforeEach(() => {
 describe("AdminLayout", () => {
   const renderLayout = () => AdminLayout({ children: <div>admin content</div> });
 
-  it("sends an anonymous visitor to the sign-in page with /admin as the callback", async () => {
+  it("sends an anonymous visitor to the admin sign-in with /admin as the callback", async () => {
     mockAuth.mockResolvedValue(null);
 
-    expect(await redirectTarget(renderLayout)).toBe("/login?callbackUrl=%2Fadmin");
-    expect(mockIsAdmin).not.toHaveBeenCalled();
+    expect(await redirectTarget(renderLayout)).toBe(ADMIN_LOGIN);
+    expect(mockFindUnique).not.toHaveBeenCalled();
   });
 
   it("treats a session without a user id as anonymous", async () => {
     mockAuth.mockResolvedValue({ user: { email: "a@example.com" } });
 
-    expect(await redirectTarget(renderLayout)).toBe("/login?callbackUrl=%2Fadmin");
-    expect(mockIsAdmin).not.toHaveBeenCalled();
+    expect(await redirectTarget(renderLayout)).toBe(ADMIN_LOGIN);
+    expect(mockFindUnique).not.toHaveBeenCalled();
   });
 
-  it("sends a signed-in non-admin to the access-denied page", async () => {
+  it.each([
+    ["role=user", "user"],
+    ["role=admin", "admin"],
+  ])("sends a social session with %s to the admin sign-in", async (_label, role) => {
     mockAuth.mockResolvedValue({ user: { id: "user-1" } });
-    mockIsAdmin.mockResolvedValue(false);
+    mockFindUnique.mockResolvedValue({ role });
 
-    expect(await redirectTarget(renderLayout)).toBe("/access-denied");
-    expect(mockIsAdmin).toHaveBeenCalledWith("user-1");
+    expect(await redirectTarget(renderLayout)).toBe(ADMIN_LOGIN);
+    expect(mockFindUnique).not.toHaveBeenCalled();
   });
 
-  it("renders the admin shell for an admin", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "admin-1" } });
-    mockIsAdmin.mockResolvedValue(true);
+  it("sends a password sign-in whose role was revoked to the admin sign-in", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "admin-1" }, adminAuthAt: passwordSignInAt() });
+    mockFindUnique.mockResolvedValue({ role: "user" });
+
+    expect(await redirectTarget(renderLayout)).toBe(ADMIN_LOGIN);
+  });
+
+  it("renders the admin shell for a password admin", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "admin-1" }, adminAuthAt: passwordSignInAt() });
+    mockFindUnique.mockResolvedValue({ role: "admin" });
 
     render(await renderLayout());
 
@@ -78,8 +96,8 @@ describe("AdminLayout", () => {
   });
 
   it("surfaces a database failure instead of redirecting", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "admin-1" } });
-    mockIsAdmin.mockRejectedValue(new Error("db down"));
+    mockAuth.mockResolvedValue({ user: { id: "admin-1" }, adminAuthAt: passwordSignInAt() });
+    mockFindUnique.mockRejectedValue(new Error("db down"));
 
     await expect(renderLayout()).rejects.toThrow("db down");
   });

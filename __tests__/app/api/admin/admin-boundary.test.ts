@@ -51,7 +51,6 @@ jest.mock("@/lib/auth-utils", () => {
   return {
     requireAdmin: jest.fn().mockRejectedValue(APIErrors.unauthorized()),
     requireAuth: jest.fn().mockRejectedValue(APIErrors.unauthorized()),
-    isAdmin: jest.fn().mockResolvedValue(false),
   };
 });
 

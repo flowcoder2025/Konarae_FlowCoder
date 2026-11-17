@@ -7,7 +7,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { auth, signOut } from "@/lib/auth";
-import { isAdmin } from "@/lib/auth-utils";
+import { getAdminSession } from "@/lib/auth-utils";
 import { ADMIN_HOME_PATH, DEFAULT_AFTER_LOGIN, buildLoginUrl } from "@/lib/auth-routes";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -30,7 +30,7 @@ export default async function AccessDeniedPage() {
   }
 
   // An admin has nothing to do here (for example after switching accounts).
-  if (await isAdmin(userId)) {
+  if (await getAdminSession()) {
     redirect(ADMIN_HOME_PATH);
   }
 

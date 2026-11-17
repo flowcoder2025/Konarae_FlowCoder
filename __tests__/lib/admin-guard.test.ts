@@ -1,10 +1,16 @@
 /**
+ * requireAdminPage uses the real admin judgement from auth-utils; only the
+ * session and the database are mocked. Rows follow the plan's state table
+ * (`/admin/**` column).
+ *
  * @jest-environment node
  */
 
+import type { Session } from "next-auth";
 import { requireAdminPage } from "@/lib/admin-guard";
 import { auth } from "@/lib/auth";
-import { isAdmin } from "@/lib/auth-utils";
+import { prisma } from "@/lib/prisma";
+import { ADMIN_SESSION_MAX_AGE_MS } from "@/lib/admin-login/constants";
 
 class RedirectSignal extends Error {
   constructor(public readonly location: string) {
@@ -22,12 +28,23 @@ jest.mock("@/lib/auth", () => ({
   auth: jest.fn(),
 }));
 
-jest.mock("@/lib/auth-utils", () => ({
-  isAdmin: jest.fn(),
+jest.mock("@/lib/prisma", () => ({
+  prisma: { user: { findUnique: jest.fn() } },
 }));
 
 const mockAuth = auth as unknown as jest.Mock;
-const mockIsAdmin = isAdmin as jest.MockedFunction<typeof isAdmin>;
+const mockFindUnique = prisma.user.findUnique as unknown as jest.Mock;
+
+const ADMIN_LOGIN = "/admin-login?callbackUrl=%2Fadmin";
+const HOUR = 60 * 60 * 1000;
+
+function session(userId: string | undefined, adminAuthAt?: number): Session {
+  return {
+    user: userId === undefined ? { email: "a@example.com" } : { id: userId },
+    expires: "2099-01-01T00:00:00.000Z",
+    ...(adminAuthAt === undefined ? {} : { adminAuthAt }),
+  } as Session;
+}
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -36,34 +53,51 @@ beforeEach(() => {
 describe("requireAdminPage", () => {
   it.each([
     ["no session", null],
-    ["a session without a user id", { user: { email: "a@example.com" } }],
-  ])("sends a visitor with %s to the sign-in page", async (_label, session) => {
-    mockAuth.mockResolvedValue(session);
+    ["a session without a user id", session(undefined)],
+  ])("sends a visitor with %s to the admin sign-in", async (_label, current) => {
+    mockAuth.mockResolvedValue(current);
 
-    await expect(requireAdminPage()).rejects.toMatchObject({
-      location: "/login?callbackUrl=%2Fadmin",
-    });
-    expect(mockIsAdmin).not.toHaveBeenCalled();
+    await expect(requireAdminPage()).rejects.toMatchObject({ location: ADMIN_LOGIN });
+    expect(mockFindUnique).not.toHaveBeenCalled();
   });
 
-  it("sends a signed-in non-admin to the access-denied page, where they can sign out", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "user-1" } });
-    mockIsAdmin.mockResolvedValue(false);
+  it.each([
+    ["role=user", "user"],
+    ["role=admin", "admin"],
+  ])("sends a social session with %s to the admin sign-in without a database lookup", async (_label, role) => {
+    mockAuth.mockResolvedValue(session("user-1"));
+    mockFindUnique.mockResolvedValue({ role });
 
-    await expect(requireAdminPage()).rejects.toMatchObject({ location: "/access-denied" });
-    expect(mockIsAdmin).toHaveBeenCalledWith("user-1");
+    await expect(requireAdminPage()).rejects.toMatchObject({ location: ADMIN_LOGIN });
+    expect(mockFindUnique).not.toHaveBeenCalled();
   });
 
-  it("lets an admin through", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "admin-1" } });
-    mockIsAdmin.mockResolvedValue(true);
+  it("lets a password admin through", async () => {
+    mockAuth.mockResolvedValue(session("admin-1", Date.now() - HOUR));
+    mockFindUnique.mockResolvedValue({ role: "admin" });
 
     await expect(requireAdminPage()).resolves.toBeUndefined();
+    expect(mockFindUnique).toHaveBeenCalledWith({ where: { id: "admin-1" }, select: { role: true } });
+  });
+
+  it("sends a password sign-in older than 12 hours to the admin sign-in", async () => {
+    mockAuth.mockResolvedValue(session("admin-1", Date.now() - ADMIN_SESSION_MAX_AGE_MS - 60_000));
+    mockFindUnique.mockResolvedValue({ role: "admin" });
+
+    await expect(requireAdminPage()).rejects.toMatchObject({ location: ADMIN_LOGIN });
+    expect(mockFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("sends a password sign-in whose role was revoked to the admin sign-in", async () => {
+    mockAuth.mockResolvedValue(session("admin-1", Date.now() - HOUR));
+    mockFindUnique.mockResolvedValue({ role: "user" });
+
+    await expect(requireAdminPage()).rejects.toMatchObject({ location: ADMIN_LOGIN });
   });
 
   it("surfaces a database failure instead of redirecting", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "admin-1" } });
-    mockIsAdmin.mockRejectedValue(new Error("db down"));
+    mockAuth.mockResolvedValue(session("admin-1", Date.now() - HOUR));
+    mockFindUnique.mockRejectedValue(new Error("db down"));
 
     await expect(requireAdminPage()).rejects.toThrow("db down");
   });
