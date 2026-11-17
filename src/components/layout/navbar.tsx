@@ -33,7 +33,6 @@ import {
   Shield,
   LogOut,
   Sparkles,
-  FileText,
   CreditCard,
 } from "lucide-react";
 
@@ -64,11 +63,6 @@ const navItems: NavItem[] = [
     label: "내 프로젝트",
     href: "/my-projects",
     icon: FolderKanban,
-  },
-  {
-    label: "사업계획서",
-    href: "/business-plans",
-    icon: FileText,
   },
   {
     label: "파이프라인",
