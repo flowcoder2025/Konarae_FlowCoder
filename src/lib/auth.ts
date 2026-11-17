@@ -24,4 +24,8 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     }),
   ],
   adapter: PrismaAdapter(prisma),
+  // Keep off, after the spread so nothing above can turn it on: at debug level
+  // @auth/core logs the credentials request body, admin password included,
+  // when authorize throws (0.41.0 lib/actions/callback/index.js L389).
+  debug: false,
 });

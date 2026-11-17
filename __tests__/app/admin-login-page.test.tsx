@@ -8,6 +8,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { AuthError, CredentialsSignin } from "next-auth";
 import AdminLoginPage, { metadata } from "@/app/admin-login/page";
 import { submitAdminLogin } from "@/lib/admin-login/submit";
@@ -196,7 +197,42 @@ describe("AdminLoginPage", () => {
     const email = screen.getByLabelText("이메일");
     expect(email.getAttribute("aria-invalid")).toBe("true");
     expect(email.getAttribute("aria-describedby")).toBe(alert.id);
+    expect(document.activeElement).toBe(email);
     expectForm();
+  });
+
+  it("does not move focus into the form without error=1", async () => {
+    mockAuth.mockResolvedValue(null);
+
+    render(await renderPage({ callbackUrl: "/admin" }));
+
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("marks only the email input autofocus in the server HTML when error=1", async () => {
+    mockAuth.mockResolvedValue(null);
+
+    const withError = renderToStaticMarkup(await renderPage({ callbackUrl: "/admin", error: "1" }));
+    const withoutError = renderToStaticMarkup(await renderPage({ callbackUrl: "/admin" }));
+
+    const autofocused = [...withError.matchAll(/<input\b[^>]*\bautofocus=""[^>]*>/g)].map((m) => m[0]);
+    expect(autofocused).toHaveLength(1);
+    expect(autofocused[0]).toContain('name="email"');
+    expect(withoutError).not.toMatch(/autofocus/i);
+  });
+
+  it("focuses the email input again when a failed sign-in returns the page with error=1", async () => {
+    // A failed submit comes back as a client-side navigation to the same page
+    // with error=1, so the form must remount for autofocus to apply again.
+    mockAuth.mockResolvedValue(null);
+    const { rerender } = render(await renderPage({ callbackUrl: "/admin" }));
+    const submit = screen.getByRole("button", { name: "로그인" });
+    submit.focus();
+    expect(document.activeElement).toBe(submit);
+
+    rerender(await renderPage({ callbackUrl: "/admin", error: "1" }));
+
+    expect(document.activeElement).toBe(screen.getByLabelText("이메일"));
   });
 
   it.each([

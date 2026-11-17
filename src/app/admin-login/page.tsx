@@ -54,7 +54,11 @@ export default async function AdminLoginPage({ searchParams }: AdminLoginPagePro
           <CardDescription>{ADMIN_LOGIN_TEXT.description}</CardDescription>
         </CardHeader>
         <CardContent>
+          {/* A failed submit can come back as a client-side navigation to
+              ?error=1, which would reuse the form. autoFocus acts only on
+              mount, so the key remounts the form when the error appears. */}
           <form
+            key={hasError ? "retry" : "first"}
             className="space-y-4"
             action={async (formData: FormData) => {
               "use server";
@@ -76,6 +80,7 @@ export default async function AdminLoginPage({ searchParams }: AdminLoginPagePro
                 type="email"
                 autoComplete="username"
                 required
+                autoFocus={hasError}
                 {...errorProps}
               />
             </div>

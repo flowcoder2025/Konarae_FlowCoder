@@ -1,9 +1,13 @@
 /**
  * Every admin API handler and every admin server action must start with
  * `await requireAdmin()` in its own body (first statement, or first statement
- * of a top-level `try`). Files are discovered from disk and parsed with the
- * TypeScript compiler, so a new handler or action is covered automatically,
- * and an export form the scan does not understand fails the test.
+ * of a top-level `try`). A guarding `try` has no `finally`, and it is either
+ * the function's only statement or its `catch` ends in `return`/`throw` on
+ * every path, so a failed guard cannot fall through to later code. Files are
+ * discovered from disk and parsed with the TypeScript compiler, so a new
+ * handler or action is covered automatically, and an export form the scan
+ * does not understand fails the test. Not detected: data read inside a
+ * `catch` before its `return`.
  *
  * @jest-environment node
  */
@@ -94,12 +98,34 @@ function isGuardStatement(statement: ts.Statement | undefined): boolean {
   return false;
 }
 
+/**
+ * Every path through `statement` ends in `return` or `throw`. Deliberately
+ * narrow: a trailing `return`/`throw`, or an `if`/`else` whose branches both
+ * qualify. Anything else (switch, loops, labels...) counts as falling through.
+ */
+function alwaysExits(statement: ts.Statement | undefined): boolean {
+  if (!statement) return false;
+  if (ts.isReturnStatement(statement) || ts.isThrowStatement(statement)) return true;
+  if (ts.isBlock(statement)) return alwaysExits(statement.statements[statement.statements.length - 1]);
+  if (ts.isIfStatement(statement)) {
+    return alwaysExits(statement.thenStatement) && alwaysExits(statement.elseStatement);
+  }
+  return false;
+}
+
 function startsWithGuard(fn: FunctionNode): boolean {
   const body = fn.body;
   if (!body || !ts.isBlock(body)) return false;
   const [first] = body.statements;
   if (isGuardStatement(first)) return true;
-  return !!first && ts.isTryStatement(first) && isGuardStatement(first.tryBlock.statements[0]);
+  if (!first || !ts.isTryStatement(first) || !isGuardStatement(first.tryBlock.statements[0])) {
+    return false;
+  }
+  // A failed guard throws into the catch (and the finally). Code there, or
+  // after the try when the catch can finish normally, runs without an admin.
+  if (first.finallyBlock) return false;
+  const tryIsLast = body.statements.length === 1;
+  return tryIsLast || alwaysExits(first.catchClause?.block);
 }
 
 function scanExports(
@@ -241,6 +267,81 @@ describe("the scan itself", () => {
     ["an assigned guard", "export const POST = async () => { const s = await requireAdmin(); return s; };"],
   ])("accepts %s", (_label, code) => {
     expect(check(code).guarded).toEqual([true]);
+  });
+
+  // A failed guard throws into the catch. If the catch can finish normally,
+  // whatever follows the try runs without an admin.
+  describe("a guard in a try followed by more code", () => {
+    it.each([
+      [
+        "a catch that only logs",
+        `export async function GET() {
+          try { await requireAdmin(); } catch (error) { console.error(error); }
+          return Response.json(await prisma.user.findMany());
+        }`,
+      ],
+      [
+        "a catch that returns on one path only",
+        `export async function GET() {
+          try { await requireAdmin(); } catch (error) {
+            if (error instanceof AuthError) { return deny(error); }
+            console.error(error);
+          }
+          return Response.json(await prisma.user.findMany());
+        }`,
+      ],
+      [
+        "a catch whose return is not its last statement on every path",
+        `export async function GET() {
+          try { await requireAdmin(); } catch (error) { if (error) return deny(error); }
+          return Response.json(await prisma.user.findMany());
+        }`,
+      ],
+      [
+        "a finally block (it runs after a failed guard)",
+        `export async function GET() {
+          try { await requireAdmin(); return ok(); } catch (error) { return deny(error); }
+          finally { await prisma.user.findMany(); }
+        }`,
+      ],
+    ])("rejects %s", (_label, code) => {
+      expect(check(code).guarded).toEqual([false]);
+    });
+
+    it.each([
+      [
+        "a catch that ends in return",
+        `export async function GET() {
+          try { await requireAdmin(); const users = await prisma.user.findMany(); return Response.json(users); }
+          catch (error) { console.error(error); return deny(error); }
+        }`,
+      ],
+      [
+        "a catch that ends in throw, with code after the try",
+        `export async function GET() {
+          try { await requireAdmin(); } catch (error) { console.error(error); throw error; }
+          return Response.json(await prisma.user.findMany());
+        }`,
+      ],
+      [
+        "a catch whose if/else ends in return or throw on both paths",
+        `export async function GET() {
+          try { await requireAdmin(); } catch (error) {
+            if (error instanceof AuthError) { return deny(error); } else { throw error; }
+          }
+          return Response.json(await prisma.user.findMany());
+        }`,
+      ],
+      [
+        "a swallowing catch when the try is the last statement",
+        `export async function GET() {
+          try { await requireAdmin(); return Response.json(await prisma.user.findMany()); }
+          catch (error) { console.error(error); }
+        }`,
+      ],
+    ])("accepts %s", (_label, code) => {
+      expect(check(code).guarded).toEqual([true]);
+    });
   });
 
   it.each([

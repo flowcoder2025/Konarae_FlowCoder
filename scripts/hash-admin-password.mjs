@@ -2,15 +2,27 @@
 /**
  * Prints the ADMIN_PASSWORD_HASH value for the admin email + password sign-in.
  *
- *   node scripts/hash-admin-password.mjs
+ *   node scripts/hash-admin-password.mjs            # hash on the terminal
+ *   node scripts/hash-admin-password.mjs | pbcopy   # hash on the clipboard
  *
  * Run it in an interactive terminal. It asks for the password twice with echo
- * off and prints exactly one line: the hash, in the format of
- * src/lib/admin-login/password.ts (`scrypt:<N>:<r>:<p>:<salt>:<hash>`). Prompts
- * and errors go to stderr, so `... | pbcopy` copies only the hash.
+ * off and prints exactly one line on stdout: the hash, in the format of
+ * src/lib/admin-login/password.ts (`scrypt:<N>:<r>:<p>:<salt>:<hash>`).
+ * Prompts and errors go to stderr, so stdout may be a pipe.
+ *
+ * To store it in Vercel, capture it first and pipe it afterwards. `vercel env
+ * add` waits only about half a second for piped input, much less than it
+ * takes to type the password twice:
+ *
+ *   H=$(node scripts/hash-admin-password.mjs) && printf '%s\n' "$H" | vercel env add ADMIN_PASSWORD_HASH production; unset H
  *
  * The password is read from the terminal only: never from arguments (shell
- * history), the environment, or a pipe.
+ * history), the environment, or a pipe. Echo is turned off before the first
+ * prompt and stays off until both entries are read, so input typed ahead of a
+ * prompt is never shown. Enter ends an entry; Backspace and Ctrl-U edit it;
+ * Ctrl-C or Ctrl-D cancels (exit 130). Any other control character (Tab, Esc,
+ * arrow keys...) is kept and makes the entry invalid: the sign-in form would
+ * not send it the same way, so the hash would never match.
  */
 
 import crypto from "node:crypto";
@@ -34,8 +46,15 @@ export const MIN_PASSWORD_LENGTH = 14;
 // The sign-in rejects longer passwords (authorize.ts, counted in UTF-16 units).
 export const MAX_PASSWORD_LENGTH = 1024;
 
+// C0 controls, DEL and C1 controls.
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHARACTER = /[\u0000-\u001f\u007f-\u009f]/;
+
 /** Why the password cannot be used, or null when it can. */
 export function passwordProblem(password) {
+  if (CONTROL_CHARACTER.test(password)) {
+    return "the password contains a control character (Tab, Esc, an arrow key...); use printable characters only";
+  }
   if ([...password].length < MIN_PASSWORD_LENGTH) {
     return `the password must be at least ${MIN_PASSWORD_LENGTH} characters`;
   }
@@ -59,82 +78,146 @@ export async function hashAdminPassword(password) {
 
 class Cancelled extends Error {}
 
-function restoreTerminal() {
-  if (process.stdin.isTTY && process.stdin.isRaw) process.stdin.setRawMode(false);
-}
+/**
+ * Puts the terminal in raw mode (no echo, no line editing, Ctrl-C as a byte)
+ * and reads entries from it until `close()`. One reader serves every prompt,
+ * so typed-ahead input is queued for the next entry instead of being lost or
+ * echoed between prompts. `close()` restores the terminal; it is idempotent.
+ */
+function openHiddenInput(stdin) {
+  const entries = [];
+  let current = "";
+  let afterCR = false;
+  let cancelled = false;
+  let waiting = null;
+  let open = true;
 
-/** Reads one line from the terminal with echo off (raw mode). */
-function readHidden(prompt) {
-  const { stdin, stderr } = process;
-  return new Promise((resolve, reject) => {
-    let value = "";
-    const finish = (error) => {
-      stdin.removeListener("data", onData);
-      restoreTerminal();
-      stdin.pause();
-      stderr.write("\n");
-      if (error) reject(error);
-      else resolve(value);
-    };
-    const onData = (chunk) => {
-      for (const ch of chunk) {
-        if (ch === "\r" || ch === "\n") return finish();
-        if (ch === "\u0003") return finish(new Cancelled()); // Ctrl-C
-        if (ch === "\u0004") {
-          // Ctrl-D on an empty line cancels; otherwise it is ignored.
-          if (value === "") return finish(new Cancelled());
-          continue;
-        }
-        if (ch === "\u007f" || ch === "\b") {
-          value = [...value].slice(0, -1).join("");
-          continue;
-        }
-        if (ch === "\u0015") {
-          value = ""; // Ctrl-U
-          continue;
-        }
-        // Escape sequences (arrow keys and the like): drop the rest of the chunk.
-        if (ch === "\u001b") return;
-        if (ch < " ") continue;
-        value += ch;
+  const settle = () => {
+    if (!waiting) return;
+    const { resolve, reject } = waiting;
+    if (cancelled) {
+      waiting = null;
+      reject(new Cancelled());
+    } else if (entries.length > 0) {
+      waiting = null;
+      resolve(entries.shift());
+    }
+  };
+
+  const onData = (chunk) => {
+    for (const ch of chunk) {
+      if (cancelled) break;
+      const wasCR = afterCR;
+      afterCR = ch === "\r";
+      if (ch === "\n" && wasCR) continue; // CR LF counts as one Enter
+      if (ch === "\r" || ch === "\n") {
+        entries.push(current);
+        current = "";
+      } else if (ch === "\u0003" || ch === "\u0004") {
+        cancelled = true; // Ctrl-C, Ctrl-D
+      } else if (ch === "\u007f" || ch === "\b") {
+        current = [...current].slice(0, -1).join(""); // Backspace
+      } else if (ch === "\u0015") {
+        current = ""; // Ctrl-U
+      } else {
+        current += ch; // control characters included; passwordProblem rejects them
       }
-    };
-    stderr.write(prompt);
-    stdin.setEncoding("utf8");
-    stdin.setRawMode(true);
-    stdin.on("data", onData);
-    stdin.resume();
-  });
+    }
+    settle();
+  };
+
+  stdin.setRawMode(true);
+  stdin.setEncoding("utf8");
+  stdin.on("data", onData);
+  stdin.resume();
+
+  return {
+    /** The next entry (without the Enter); rejects with Cancelled on Ctrl-C/Ctrl-D. */
+    read() {
+      return new Promise((resolve, reject) => {
+        waiting = { resolve, reject };
+        settle();
+      });
+    },
+    close() {
+      if (!open) return;
+      open = false;
+      stdin.removeListener("data", onData);
+      stdin.setRawMode(false);
+      stdin.pause();
+    },
+  };
 }
 
-function fail(message, code = 1) {
-  restoreTerminal();
+function report(message) {
   process.stderr.write(`hash-admin-password: ${message}\n`);
-  process.exit(code);
 }
 
 async function main() {
   if (process.argv.length > 2) {
-    fail("takes no arguments; run it without any and type the password at the prompt", 2);
+    report("takes no arguments; run it without any and type the password at the prompt");
+    process.exitCode = 2;
+    return;
   }
   if (!process.stdin.isTTY) {
-    fail("stdin is not a terminal; run it in an interactive terminal (the password is never read from a pipe, arguments or the environment)", 2);
+    report("stdin is not a terminal; run it in an interactive terminal (the password is never read from a pipe, arguments or the environment)");
+    process.exitCode = 2;
+    return;
   }
 
-  process.on("SIGTERM", () => fail("terminated", 143));
-  process.on("SIGHUP", () => fail("terminal closed", 129));
+  let input = null;
+  const restore = () => input?.close();
+  const exitOnSignal = (code, message) => () => {
+    restore();
+    process.stderr.write("\n");
+    report(message);
+    process.exit(code);
+  };
+  // In raw mode Ctrl-C arrives as a byte; these cover real signals (kill,
+  // a closed terminal), which would otherwise leave the terminal in raw mode.
+  process.on("SIGINT", exitOnSignal(130, "cancelled"));
+  process.on("SIGTERM", exitOnSignal(143, "terminated"));
+  process.on("SIGHUP", exitOnSignal(129, "terminal closed"));
+  process.on("exit", restore);
 
+  // Echo goes off before the first prompt is written.
+  input = openHiddenInput(process.stdin);
   try {
-    const password = await readHidden("Admin password (min 14 characters): ");
+    process.stderr.write("Admin password (min 14 characters): ");
+    const password = await input.read();
+    process.stderr.write("\n");
     const problem = passwordProblem(password);
-    if (problem) fail(problem);
-    const repeated = await readHidden("Repeat the password: ");
-    if (repeated !== password) fail("the passwords do not match");
+    if (problem) {
+      restore();
+      report(problem);
+      process.exitCode = 1;
+      return;
+    }
+
+    process.stderr.write("Repeat the password: ");
+    const repeated = await input.read();
+    // Both entries are in: give the terminal back (a Ctrl-C while hashing is
+    // then a real SIGINT, handled above).
+    restore();
+    process.stderr.write("\n");
+    if (repeated !== password) {
+      report("the passwords do not match");
+      process.exitCode = 1;
+      return;
+    }
 
     process.stdout.write(`${await hashAdminPassword(password)}\n`);
   } catch (error) {
-    if (error instanceof Cancelled) fail("cancelled", 130);
+    restore();
+    if (error instanceof Cancelled) {
+      process.stderr.write("\n");
+      report("cancelled");
+      process.exitCode = 130;
+      return;
+    }
     throw error;
+  } finally {
+    restore();
   }
 }
 
