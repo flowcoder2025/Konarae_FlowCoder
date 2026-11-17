@@ -6,8 +6,9 @@
  * `x-real-ip` and `x-vercel-forwarded-for` carry the same IP.
  * https://vercel.com/docs/headers/request-headers
  *
- * Anywhere else these headers are client-controlled, so no IP is reported and
- * only the per-email limit applies.
+ * Anywhere else these headers are client-controlled, so no IP is reported.
+ * With no IP the throttle uses only its email-wide bucket (50 attempts per
+ * 15 minutes); the per-IP and email+IP limits do not apply.
  */
 
 // An IPv6 address with a zone id fits well within this.

@@ -1177,19 +1177,15 @@ model PipelineSetting {
 // Admin Password Login (throttle)
 // ============================================
 
-/// Admin password login attempts, used to lock out repeated failures.
-/// keyHash/ipHash are HMAC-SHA256 under the auth secret; the raw email/IP is never stored.
-model AdminLoginAttempt {
-  id        String   @id @default(cuid())
-  keyHash   String // HMAC of the normalized email
-  ipHash    String? // HMAC of the client IP, null when unknown
-  success   Boolean  @default(false)
-  blocked   Boolean  @default(false) // denied by the throttle; never counted toward any limit
-  createdAt DateTime @default(now())
+/// Admin password login throttle: one fixed-window counter per bucket
+/// (src/lib/admin-login/throttle.ts). `key` is HMAC-SHA256 under the auth
+/// secret of the scoped bucket input (IP, email+IP pair, or email); the raw
+/// email/IP is never stored.
+model AdminLoginBucket {
+  key         String   @id
+  windowStart DateTime
+  count       Int
 
-  // blocked before createdAt: counting skips blocked rows without reading them during a flood
-  @@index([keyHash, blocked, createdAt])
-  @@index([ipHash, blocked, createdAt])
-  @@index([createdAt])
-  @@map("admin_login_attempts")
+  @@index([windowStart])
+  @@map("admin_login_buckets")
 }

@@ -1,67 +1,62 @@
 import { createHmac } from "node:crypto";
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { createLogger } from "@/lib/logger";
 
 /**
- * Admin password login throttle, backed by Postgres (`admin_login_attempts`).
+ * Admin password login throttle: fixed-window counters in Postgres
+ * (`admin_login_buckets`), one row per bucket.
  *
- * Buckets, each over a 15-minute window and counting only real failures
- * (`success = false AND blocked = false`):
- * - pair:  same email AND same IP (IP unknown: `ipHash IS NULL`)  limit 5
- * - ip:    same IP, any email (skipped when the IP is unknown)    limit 20
- * - email: same email, any IP (including unknown)                 limit 50
+ * Every attempt (failed or successful) takes one slot, in this order, over a
+ * fixed 15-minute window that starts with the first attempt in the bucket:
+ *   1. ip:    same client IP, any email           limit 20
+ *   2. pair:  same email AND same IP               limit 5
+ *   3. email: same email, any IP or no IP          limit 50
+ * A bucket is consumed only if every earlier bucket allowed the attempt, and
+ * slots already taken in earlier buckets are not given back when a later one
+ * denies (they belong to the requester's own IP and pair). With no IP only the
+ * email bucket applies. One IP can therefore spend at most 5 slots of an
+ * email's 50 per window (its pair limit), and at most 20 pair/email slots in
+ * total (its IP limit): locking an email for everyone takes 10 or more IPs.
  *
- * Steps:
- * 1. Pre-check (read only). If a bucket already holds its limit of real
- *    failures, the attempt is written directly as `blocked = true` and denied.
- *    It never passes through a pending phase, so a flood against a locked pair
- *    does not briefly fill the IP / email-wide buckets and lock out other IPs.
- * 2. Otherwise the attempt is written as a pending failure in its own
- *    autocommitted statement, and only then are the buckets counted (the row
- *    just written included). If any bucket is over its limit, that row is
- *    updated to `blocked = true` and the attempt is denied.
+ * Each bucket is decided with single statements only, so concurrent requests
+ * can never exceed a limit and nothing is left half-done if a request dies:
+ *   1. UPDATE ... SET count = count + 1 WHERE key AND window running AND count < limit
+ *   2. UPDATE ... SET count = 1, windowStart = now WHERE key AND window over
+ *   3. SELECT the row: running and full => denied; missing => INSERT it with
+ *      count 1 (a concurrent INSERT of the same key fails with P2002: retry).
+ *      Any other state means a concurrent request changed the row between the
+ *      statements: retry. After 3 rounds without a decision: denied.
+ * Postgres re-evaluates an UPDATE's WHERE on the newest row version after
+ * waiting for a concurrent writer, so the conditional increment and reset
+ * cannot overshoot or both win. No pending state, interactive transaction or
+ * advisory lock is used (PgBouncer transaction pooling).
  *
- * Step 2 alone decides every allow. Allowed rows are never blocked, so they
- * are never excluded later: the (L+1)-th allowed insert into a bucket would
- * have seen the L earlier allowed rows plus itself and been denied. Concurrent
- * requests therefore cannot exceed a limit. Do not wrap the steps in one
- * REPEATABLE READ / SERIALIZABLE transaction (its snapshot would hide
- * concurrent rows), and keep to single statements (PgBouncer transaction
- * pooling: no session state, no advisory locks).
- *
- * Consequences:
- * - Denied (blocked) attempts count toward no limit, so retrying while locked
- *   neither extends the lock nor spills into the IP / email-wide buckets. A
- *   lock clears 15 minutes after the limit-th most recent real failure.
- * - A success marks only its own row; earlier failures stay in the window.
- * - DB errors propagate (the caller must deny the login: fail-closed).
+ * After the decision, buckets whose window is over are deleted (best-effort;
+ * errors are logged and never change the result). Decision errors propagate:
+ * the caller must deny the login (fail-closed).
  *
  * Keys are HMAC-SHA256 under the Auth.js secret, never the raw email/IP.
  */
 
 const WINDOW_MS = 15 * 60 * 1000;
-const PAIR_LIMIT = 5;
 const IP_LIMIT = 20;
+const PAIR_LIMIT = 5;
 const EMAIL_LIMIT = 50;
-const RETENTION_MS = 24 * 60 * 60 * 1000;
+const MAX_ROUNDS = 3;
 
 export const ADMIN_LOGIN_THROTTLE = Object.freeze({
   windowMs: WINDOW_MS,
-  pairLimit: PAIR_LIMIT,
   ipLimit: IP_LIMIT,
+  pairLimit: PAIR_LIMIT,
   emailLimit: EMAIL_LIMIT,
-  retentionMs: RETENTION_MS,
 });
 
-export type RegisterAttemptResult =
-  | { allowed: true; attemptId: string }
-  | { allowed: false; retryAfterSeconds: number };
+export type ConsumeAttemptResult = { allowed: true } | { allowed: false; retryAfterSeconds: number };
 
-type Bucket = {
-  where: Pick<Prisma.AdminLoginAttemptWhereInput, "keyHash" | "ipHash">;
-  limit: number;
-};
-type FailureRow = { id: string; createdAt: Date };
+type Bucket = { key: string; limit: number };
+
+const logger = createLogger({ lib: "admin-login-throttle" });
 
 /** Same lookup next-auth uses (next-auth/lib/env.js `setEnvDefaults`). */
 function authSecret(): string {
@@ -72,116 +67,96 @@ function authSecret(): string {
   return secret;
 }
 
-function hashKey(secret: string, kind: "email" | "ip", value: string): string {
-  return createHmac("sha256", secret).update(`admin-login:${kind}:${value}`).digest("hex");
+function bucketKey(secret: string, scopedInput: string): string {
+  return createHmac("sha256", secret).update(`admin-login:${scopedInput}`).digest("hex");
 }
 
 function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
-/**
- * Newest real failures in the window for one bucket, capped at limit + 1 rows
- * (enough to tell "over the limit" and to find the limit-th newest other row).
- */
-function recentFailures(bucket: Bucket, windowStart: Date): Promise<FailureRow[]> {
-  return prisma.adminLoginAttempt.findMany({
-    where: { ...bucket.where, success: false, blocked: false, createdAt: { gt: windowStart } },
-    orderBy: { createdAt: "desc" },
-    take: bucket.limit + 1,
-    select: { id: true, createdAt: true },
-  });
+function buckets(secret: string, email: string, ip: string | null): Bucket[] {
+  const emailBucket = { key: bucketKey(secret, `email:${email}`), limit: EMAIL_LIMIT };
+  if (!ip) return [emailBucket];
+  return [
+    { key: bucketKey(secret, `ip:${ip}`), limit: IP_LIMIT },
+    // An IP never contains "\n" (header values cannot), so the split is unambiguous.
+    { key: bucketKey(secret, `pair:${email}\n${ip}`), limit: PAIR_LIMIT },
+    emailBucket,
+  ];
 }
 
-type BucketRead = { bucket: Bucket; rows: FailureRow[] };
-
-async function readBuckets(buckets: Bucket[], windowStart: Date): Promise<BucketRead[]> {
-  const rows = await Promise.all(buckets.map((bucket) => recentFailures(bucket, windowStart)));
-  return buckets.map((bucket, i) => ({ bucket, rows: rows[i] }));
+function denied(windowStart: Date, now: Date): ConsumeAttemptResult {
+  const reopensInMs = windowStart.getTime() + WINDOW_MS - now.getTime();
+  return { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil(reopensInMs / 1000)) };
 }
 
-/**
- * Seconds until a new attempt (which adds its own row) would fit every given
- * full bucket again, assuming no further attempts: for each bucket, when the
- * limit-th newest real failure other than this attempt's own row (blocked,
- * so no longer counted) leaves the window. Integer, at least 1.
- */
-function retryAfterSeconds(full: BucketRead[], ownId: string, now: Date): number {
-  const reopensAt = Math.max(
-    ...full.map(({ bucket, rows }) => {
-      const others = rows.filter((row) => row.id !== ownId);
-      return others[bucket.limit - 1].createdAt.getTime() + WINDOW_MS;
-    })
-  );
-  return Math.max(1, Math.ceil((reopensAt - now.getTime()) / 1000));
+function isUniqueViolation(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
 }
 
-async function pruneOldAttempts(): Promise<void> {
-  await prisma.adminLoginAttempt.deleteMany({
-    where: { createdAt: { lt: new Date(Date.now() - RETENTION_MS) } },
-  });
+async function tryConsume({ key, limit }: Bucket, now: Date): Promise<ConsumeAttemptResult> {
+  const windowOverAt = new Date(now.getTime() - WINDOW_MS);
+
+  for (let round = 0; round < MAX_ROUNDS; round++) {
+    const taken = await prisma.adminLoginBucket.updateMany({
+      where: { key, windowStart: { gt: windowOverAt }, count: { lt: limit } },
+      data: { count: { increment: 1 } },
+    });
+    if (taken.count === 1) return { allowed: true };
+
+    const reset = await prisma.adminLoginBucket.updateMany({
+      where: { key, windowStart: { lte: windowOverAt } },
+      data: { count: 1, windowStart: now },
+    });
+    if (reset.count === 1) return { allowed: true };
+
+    const bucket = await prisma.adminLoginBucket.findUnique({ where: { key } });
+    if (bucket === null) {
+      try {
+        await prisma.adminLoginBucket.create({ data: { key, windowStart: now, count: 1 } });
+        return { allowed: true };
+      } catch (error) {
+        if (!isUniqueViolation(error)) throw error;
+        continue; // created concurrently: count on that row
+      }
+    }
+    if (bucket.windowStart > windowOverAt && bucket.count >= limit) {
+      return denied(bucket.windowStart, now);
+    }
+    // Reset, emptied or expired by a concurrent request in between: start over.
+  }
+
+  return { allowed: false, retryAfterSeconds: WINDOW_MS / 1000 };
 }
 
-export async function registerAttempt(input: {
+async function pruneExpired(now: Date): Promise<void> {
+  try {
+    await prisma.adminLoginBucket.deleteMany({
+      where: { windowStart: { lt: new Date(now.getTime() - WINDOW_MS) } },
+    });
+  } catch (error) {
+    logger.warn("Admin login throttle prune failed", {
+      errorName: error instanceof Error ? error.name : typeof error,
+      errorCode: error instanceof Prisma.PrismaClientKnownRequestError ? error.code : undefined,
+    });
+  }
+}
+
+export async function consumeAttempt(input: {
   email: string;
   ip: string | null;
   now?: Date;
-}): Promise<RegisterAttemptResult> {
+}): Promise<ConsumeAttemptResult> {
   const now = input.now ?? new Date();
   const secret = authSecret();
-  const keyHash = hashKey(secret, "email", normalizeEmail(input.email));
-  const ipHash = typeof input.ip === "string" ? hashKey(secret, "ip", input.ip) : null;
 
-  const buckets: Bucket[] = [
-    { where: { keyHash, ipHash }, limit: PAIR_LIMIT },
-    ...(ipHash === null ? [] : [{ where: { ipHash }, limit: IP_LIMIT }]),
-    { where: { keyHash }, limit: EMAIL_LIMIT },
-  ];
-  const windowStart = new Date(now.getTime() - WINDOW_MS);
-
-  // 1. Pre-check. This step can only add denials, never allows: if it passes,
-  //    step 2 runs exactly as it would without it and makes the decision. If a
-  //    bucket already holds `limit` real failures, step 2 would count at least
-  //    those plus its own row (> limit) unless some of them expired or stopped
-  //    counting in between, so denying here is never looser than step 2.
-  //    Writing the row as blocked straight away keeps a flood against a locked
-  //    bucket out of the other buckets (no pending phase).
-  const before = await readBuckets(buckets, windowStart);
-  const alreadyFull = before.filter(({ bucket, rows }) => rows.length >= bucket.limit);
-  if (alreadyFull.length > 0) {
-    const denied = await prisma.adminLoginAttempt.create({
-      data: { keyHash, ipHash, success: false, blocked: true, createdAt: now },
-      select: { id: true },
-    });
-    await pruneOldAttempts();
-    return { allowed: false, retryAfterSeconds: retryAfterSeconds(alreadyFull, denied.id, now) };
+  let result: ConsumeAttemptResult = { allowed: true };
+  for (const bucket of buckets(secret, normalizeEmail(input.email), input.ip)) {
+    result = await tryConsume(bucket, now);
+    if (!result.allowed) break;
   }
 
-  // 2. Record the attempt as a pending failure (committed before anything is
-  //    counted), then count real failures per bucket, including that row.
-  const attempt = await prisma.adminLoginAttempt.create({
-    data: { keyHash, ipHash, success: false, blocked: false, createdAt: now },
-    select: { id: true },
-  });
-  const counted = await readBuckets(buckets, windowStart);
-  const exceeded = counted.filter(({ bucket, rows }) => rows.length > bucket.limit);
-  if (exceeded.length === 0) {
-    return { allowed: true, attemptId: attempt.id };
-  }
-
-  // 3. Denied: the row stops counting toward any limit.
-  await prisma.adminLoginAttempt.update({
-    where: { id: attempt.id },
-    data: { blocked: true },
-  });
-  await pruneOldAttempts();
-  return { allowed: false, retryAfterSeconds: retryAfterSeconds(exceeded, attempt.id, now) };
-}
-
-export async function markAttemptSucceeded(attemptId: string): Promise<void> {
-  await prisma.adminLoginAttempt.update({
-    where: { id: attemptId },
-    data: { success: true },
-  });
-  await pruneOldAttempts();
+  await pruneExpired(now);
+  return result;
 }

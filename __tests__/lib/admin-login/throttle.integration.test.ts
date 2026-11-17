@@ -7,33 +7,35 @@
  *   ADMIN_LOGIN_TEST_DATABASE_URL=postgresql://postgres:test@127.0.0.1:55432/<disposable_db> npx jest
  *
  * The URL must point at localhost and must not use port 5433 (the production
- * tunnel). The schema must already be pushed to that database.
+ * tunnel). The schema must already be pushed to that database. To run through
+ * PgBouncer in transaction mode (as production), point the URL at a local
+ * PgBouncer and add `pgbouncer=true&connection_limit=1`.
+ *
+ * Attempts are spread over ADMIN_LOGIN_TEST_CLIENTS (default 8) independent
+ * PrismaClient instances, each standing for one server instance, so
+ * concurrent attempts really run on different connections.
+ *
+ * Every test uses its own emails and IPs. Pruning is global and follows the
+ * `now` passed in, so `now` stays within base + ~16 minutes: far enough to
+ * cover a window, close enough not to prune rows of the authorize integration
+ * test that may run in parallel against the same database.
  */
 
 import { createHmac, randomUUID } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
+import { hashPassword } from "@/lib/admin-login/password";
+import {
+  assertDisposableDatabaseUrl,
+  loadIsolated,
+  withDefaultConnectionLimit,
+  type Isolated,
+} from "./disposable-db";
 
 type ThrottleModule = typeof import("@/lib/admin-login/throttle");
+type AuthorizeModule = typeof import("@/lib/admin-login/authorize");
+type Result = Awaited<ReturnType<ThrottleModule["consumeAttempt"]>>;
 
 const TEST_DATABASE_URL = process.env.ADMIN_LOGIN_TEST_DATABASE_URL;
-const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
-const FORBIDDEN_PORT = "5433";
-
-function assertDisposableDatabaseUrl(raw: string): URL {
-  const url = new URL(raw);
-  if (url.protocol !== "postgresql:" && url.protocol !== "postgres:") {
-    throw new Error(`ADMIN_LOGIN_TEST_DATABASE_URL must be a postgres URL, got ${url.protocol}`);
-  }
-  const host = url.hostname.replace(/^\[(.*)\]$/, "$1");
-  if (!LOCAL_HOSTS.has(host)) {
-    throw new Error(`ADMIN_LOGIN_TEST_DATABASE_URL host must be local, got ${host}`);
-  }
-  const port = url.port || "5432";
-  if (port === FORBIDDEN_PORT) {
-    throw new Error("ADMIN_LOGIN_TEST_DATABASE_URL must not use port 5433 (production tunnel)");
-  }
-  return url;
-}
 
 // Always runs (no connection): the guard must reject non-disposable targets.
 describe("assertDisposableDatabaseUrl", () => {
@@ -64,331 +66,360 @@ const suiteTitle = TEST_DATABASE_URL
 
 describeWithDb(suiteTitle, () => {
   const SECRET = `throttle-integration-${randomUUID()}`;
+  const CLIENTS = Number(process.env.ADMIN_LOGIN_TEST_CLIENTS ?? 8);
   const runId = randomUUID().replace(/-/g, "").slice(0, 8);
-  const MIN = 60 * 1000;
-  // Anchor to the real clock: markAttemptSucceeded prunes by real time.
   const base = Math.floor(Date.now() / 1000) * 1000;
   const at = (seconds: number) => new Date(base + seconds * 1000);
 
-  const usedEmails = new Set<string>();
-  const usedIps = new Set<string>();
   const savedEnv = {
-    DATABASE_URL: process.env.DATABASE_URL,
     AUTH_SECRET: process.env.AUTH_SECRET,
+    ADMIN_LOGIN_EMAIL: process.env.ADMIN_LOGIN_EMAIL,
+    ADMIN_PASSWORD_HASH: process.env.ADMIN_PASSWORD_HASH,
+    VERCEL: process.env.VERCEL,
   };
 
-  let prisma: PrismaClient;
-  let throttle: ThrottleModule;
+  let instances: Isolated<ThrottleModule>[] = [];
+  let db: PrismaClient;
+  const usedKeys = new Set<string>();
+  const createdUserIds: string[] = [];
 
-  const keyHashOf = (value: string) =>
-    createHmac("sha256", SECRET)
-      .update(`admin-login:email:${value.trim().toLowerCase()}`)
-      .digest("hex");
-  const ipHashOf = (value: string) =>
-    createHmac("sha256", SECRET).update(`admin-login:ip:${value}`).digest("hex");
+  const hmac = (input: string) =>
+    createHmac("sha256", SECRET).update(`admin-login:${input}`).digest("hex");
+  const ipKey = (ip: string) => hmac(`ip:${ip}`);
+  const pairKey = (email: string, ip: string) => hmac(`pair:${email}\n${ip}`);
+  const emailKey = (email: string) => hmac(`email:${email}`);
 
-  const email = (label: string) => {
-    const value = `admin-${runId}-${label}@example.com`;
-    usedEmails.add(value);
-    return value;
+  const email = (label: string) => `admin-${runId}-${label}@example.com`;
+  // IPv6 documentation prefix, unique per run
+  const ip = (n: number) => `2001:db8:${runId.slice(0, 4)}:${runId.slice(4)}::${n.toString(16)}`;
+
+  let next = 0;
+  /** One attempt on the next client instance (round robin). */
+  const attempt = (e: string, i: string | null, now: Date): Promise<Result> => {
+    usedKeys.add(emailKey(e));
+    if (i) {
+      usedKeys.add(ipKey(i));
+      usedKeys.add(pairKey(e, i));
+    }
+    const instance = instances[next++ % instances.length];
+    return instance.module.consumeAttempt({ email: e, ip: i, now });
   };
-  const ip = (n: number) => {
-    // IPv6 documentation prefix, unique per run
-    const value = `2001:db8:${runId.slice(0, 4)}:${runId.slice(4)}::${n.toString(16)}`;
-    usedIps.add(value);
-    return value;
-  };
-
-  const attempt = (e: string, i: string | null, now: Date) =>
-    throttle.registerAttempt({ email: e, ip: i, now });
+  const concurrently = (n: number, make: (index: number) => Promise<Result>) =>
+    Promise.all(Array.from({ length: n }, (_, index) => make(index)));
+  const allowedCount = (results: Result[]) => results.filter((r) => r.allowed).length;
+  const bucket = (key: string) => db.adminLoginBucket.findUnique({ where: { key } });
+  const existing = async (keys: string[]) =>
+    db.adminLoginBucket.count({ where: { key: { in: keys } } });
 
   beforeAll(async () => {
     // Guard first: nothing below may run against a non-disposable database.
     const url = assertDisposableDatabaseUrl(TEST_DATABASE_URL as string);
-
-    process.env.DATABASE_URL = TEST_DATABASE_URL;
     process.env.AUTH_SECRET = SECRET;
-    // Import after DATABASE_URL is set so the Prisma singleton uses it.
-    prisma = (await import("@/lib/prisma")).prisma;
-    throttle = await import("@/lib/admin-login/throttle");
 
-    const [{ db }] = await prisma.$queryRaw<{ db: string }[]>`SELECT current_database() AS db`;
-    expect(db).toBe(decodeURIComponent(url.pathname.slice(1)));
+    const datasourceUrl = withDefaultConnectionLimit(TEST_DATABASE_URL as string, 4);
+    instances = Array.from({ length: CLIENTS }, () =>
+      loadIsolated<ThrottleModule>("@/lib/admin-login/throttle", datasourceUrl)
+    );
+    db = instances[0].client;
+
+    const [{ db: name }] = await db.$queryRaw<{ db: string }[]>`SELECT current_database() AS db`;
+    expect(name).toBe(decodeURIComponent(url.pathname.slice(1)));
   });
 
   afterAll(async () => {
-    if (prisma) {
-      await prisma.adminLoginAttempt.deleteMany({
-        where: {
-          OR: [
-            { keyHash: { in: [...usedEmails].map(keyHashOf) } },
-            { ipHash: { in: [...usedIps].map(ipHashOf) } },
-          ],
-        },
-      });
-      await prisma.$disconnect();
+    if (db) {
+      await db.adminLoginBucket.deleteMany({ where: { key: { in: [...usedKeys] } } });
+      if (createdUserIds.length > 0) {
+        await db.user.deleteMany({ where: { id: { in: createdUserIds } } });
+      }
     }
+    await Promise.all(instances.map((instance) => instance.client.$disconnect()));
     for (const [name, value] of Object.entries(savedEnv)) {
       if (value === undefined) delete process.env[name];
       else process.env[name] = value;
     }
   });
 
-  const countRows = (where: { keyHash?: string; ipHash?: string | null; blocked?: boolean; success?: boolean }) =>
-    prisma.adminLoginAttempt.count({ where });
+  describe("SQL per step (Prisma query log)", () => {
+    const DATA = new Set(["SELECT", "INSERT", "UPDATE", "DELETE"]);
+    // Prisma wraps some statements in BEGIN/COMMIT, and with pgbouncer=true
+    // every statement, after a DEALLOCATE ALL. Nothing else may appear.
+    const CONTROL = new Set(["BEGIN", "COMMIT", "DEALLOCATE"]);
+    const kind = (query: string) => query.trim().split(/\s+/)[0].toUpperCase();
 
-  it("locks an email+IP pair after 5 failures; retryAfterSeconds is exact; it reopens on time", async () => {
-    const e = email("pair");
-    const a = ip(1);
-    for (let i = 0; i < 5; i++) {
-      await expect(attempt(e, a, at(0))).resolves.toMatchObject({ allowed: true });
-    }
-
-    await expect(attempt(e, a, at(60))).resolves.toEqual({
-      allowed: false,
-      retryAfterSeconds: 15 * 60 - 60,
-    });
-    expect(await countRows({ keyHash: keyHashOf(e), ipHash: ipHashOf(a), blocked: false })).toBe(5);
-    expect(await countRows({ keyHash: keyHashOf(e), ipHash: ipHashOf(a), blocked: true })).toBe(1);
-
-    // one second early: still locked, and the retry time did not move
-    await expect(attempt(e, a, at(899))).resolves.toEqual({ allowed: false, retryAfterSeconds: 1 });
-    // exactly when the 5th newest real failure leaves the window
-    await expect(attempt(e, a, at(900))).resolves.toMatchObject({ allowed: true });
-  });
-
-  it("treats an unknown IP as its own pair (email, no IP)", async () => {
-    const e = email("no-ip");
-    for (let i = 0; i < 5; i++) {
-      await expect(attempt(e, null, at(0))).resolves.toMatchObject({ allowed: true });
-    }
-    await expect(attempt(e, null, at(1))).resolves.toEqual({
-      allowed: false,
-      retryAfterSeconds: 15 * 60 - 1,
-    });
-    // the same email from a known IP is a different pair
-    await expect(attempt(e, ip(2), at(2))).resolves.toMatchObject({ allowed: true });
-  });
-
-  it("buckets the email case- and whitespace-insensitively", async () => {
-    const e = email("case");
-    const variants = [e, e.toUpperCase(), ` ${e}`, `${e}\t`, e.replace("admin", "ADMIN")];
-    for (const v of variants) {
-      await expect(attempt(v, null, at(0))).resolves.toMatchObject({ allowed: true });
-    }
-    await expect(attempt(e, null, at(1))).resolves.toMatchObject({ allowed: false });
-  });
-
-  it("denied attempts do not extend the lock and do not count toward the IP or email-wide limits", async () => {
-    const e = email("hammer");
-    const a = ip(3);
-    for (let i = 0; i < 5; i++) await attempt(e, a, at(0));
-
-    // one IP hammers the same email 100 times while locked
-    for (let i = 0; i < 100; i++) {
-      const t = 10 + i * 5;
-      await expect(attempt(e, a, at(t))).resolves.toEqual({
-        allowed: false,
-        retryAfterSeconds: 900 - t,
-      });
-    }
-
-    expect(await countRows({ keyHash: keyHashOf(e), success: false, blocked: false })).toBe(5);
-    expect(await countRows({ keyHash: keyHashOf(e), blocked: true })).toBe(100);
-
-    // the IP bucket saw only 5 real failures, so another email from that IP is fine
-    await expect(attempt(email("hammer-other"), a, at(506))).resolves.toMatchObject({
-      allowed: true,
-    });
-    // the lock clears 15 minutes after the 5th newest real failure, not after the last denial
-    await expect(attempt(e, a, at(900))).resolves.toMatchObject({ allowed: true });
-  });
-
-  it("still allows the same email from a different IP after one IP's pair is locked", async () => {
-    const e = email("other-ip");
-    const a = ip(4);
-    for (let i = 0; i < 5; i++) await attempt(e, a, at(0));
-    await expect(attempt(e, a, at(10))).resolves.toMatchObject({ allowed: false });
-
-    await expect(attempt(e, ip(5), at(11))).resolves.toMatchObject({ allowed: true });
-    await expect(attempt(e, null, at(12))).resolves.toMatchObject({ allowed: true });
-  });
-
-  it("a concurrent flood against a locked pair does not lock the email for another IP", async () => {
-    for (let round = 0; round < 3; round++) {
-      const e = email(`flood-${round}`);
-      const x = ip(600 + round * 2);
-      const y = ip(601 + round * 2);
-      for (let i = 0; i < 5; i++) await attempt(e, x, at(0));
-
-      // 60 concurrent attempts from X, with one attempt from a new IP Y in the same burst
-      const results = await Promise.all([
-        ...Array.from({ length: 60 }, () => attempt(e, x, at(1))),
-        attempt(e, y, at(1)),
-      ]);
-      const fromX = results.slice(0, 60);
-      const fromY = results[60];
-
-      expect(fromX.every((r) => !r.allowed)).toBe(true);
-      expect(fromY).toMatchObject({ allowed: true });
-      // the flood went straight to blocked rows; only the 5 real failures + Y count
-      expect(await countRows({ keyHash: keyHashOf(e), ipHash: ipHashOf(x), blocked: true })).toBe(60);
-      expect(await countRows({ keyHash: keyHashOf(e), blocked: false })).toBe(6);
-    }
-  });
-
-  it("locks the email everywhere after 50 real failures from 10 IPs", async () => {
-    const e = email("global");
-    for (let k = 0; k < 10; k++) {
-      const source = ip(100 + k);
-      for (let i = 0; i < 5; i++) {
-        await expect(attempt(e, source, at(0))).resolves.toMatchObject({ allowed: true });
+    /** Data statements in order; fails on anything unexpected or two in one transaction. */
+    function dataStatements(queries: string[]): string[] {
+      let inTransaction = false;
+      let inThisTransaction = 0;
+      const statements: string[] = [];
+      for (const query of queries) {
+        const k = kind(query);
+        if (k === "BEGIN") {
+          expect(inTransaction).toBe(false);
+          inTransaction = true;
+          inThisTransaction = 0;
+        } else if (k === "COMMIT") {
+          expect(inTransaction).toBe(true);
+          inTransaction = false;
+        } else if (DATA.has(k)) {
+          if (inTransaction) expect(++inThisTransaction).toBe(1);
+          statements.push(k);
+        } else {
+          expect(CONTROL.has(k) ? k : `unexpected: ${query}`).toBe(k);
+        }
       }
+      expect(inTransaction).toBe(false);
+      return statements;
     }
 
-    // an 11th IP, and an unknown IP, are both denied by the email-wide limit
-    await expect(attempt(e, ip(110), at(30))).resolves.toEqual({
-      allowed: false,
-      retryAfterSeconds: 15 * 60 - 30,
-    });
-    await expect(attempt(e, null, at(31))).resolves.toMatchObject({ allowed: false });
-    expect(await countRows({ keyHash: keyHashOf(e), blocked: false })).toBe(50);
-
-    // other emails from those IPs are unaffected (each IP has only 5 real failures)
-    await expect(attempt(email("global-other"), ip(100), at(32))).resolves.toMatchObject({
-      allowed: true,
-    });
-  });
-
-  it("limits one IP to 20 real failures across different emails", async () => {
-    const shared = ip(6);
-    for (let i = 0; i < 20; i++) {
-      await expect(attempt(email(`ip-${i}`), shared, at(0))).resolves.toMatchObject({
-        allowed: true,
-      });
+    async function logged(run: () => Promise<Result>): Promise<{ result: Result; queries: string[] }> {
+      const instance = instances[0];
+      await new Promise((resolve) => setImmediate(resolve));
+      instance.queries.length = 0;
+      const result = await run();
+      await new Promise((resolve) => setImmediate(resolve));
+      return { result, queries: [...instance.queries] };
     }
+    const once = (e: string, now: Date) => () => {
+      usedKeys.add(emailKey(e));
+      return instances[0].module.consumeAttempt({ email: e, ip: null, now });
+    };
 
-    const late = email("ip-20");
-    await expect(attempt(late, shared, at(30))).resolves.toEqual({
-      allowed: false,
-      retryAfterSeconds: 15 * 60 - 30,
+    it("increment and reset are one conditional UPDATE each; create is one INSERT", async () => {
+      const e = email("sql");
+
+      // missing: increment misses, reset misses, read, insert; then prune
+      const fresh = await logged(once(e, at(0)));
+      expect(fresh.result).toEqual({ allowed: true });
+      expect(dataStatements(fresh.queries)).toEqual(["UPDATE", "UPDATE", "SELECT", "INSERT", "DELETE"]);
+      const [increment, reset] = fresh.queries.filter((q) => kind(q) === "UPDATE");
+      expect(increment).toMatch(/SET "count" = \("public"\."admin_login_buckets"\."count" \+ \$1\)/);
+      expect(increment).toMatch(/WHERE \(.*"key" = \$2 AND .*"windowStart" > \$3 AND .*"count" < \$4\)$/);
+      expect(reset).toMatch(/SET "count" = \$1, "windowStart" = \$2/);
+      expect(reset).toMatch(/WHERE \(.*"key" = \$3 AND .*"windowStart" <= \$4\)$/);
+      const [insert] = fresh.queries.filter((q) => kind(q) === "INSERT");
+      expect(insert).toMatch(/^INSERT INTO "public"\."admin_login_buckets"/);
+
+      // running, below the limit: the increment alone decides
+      const running = await logged(once(e, at(1)));
+      expect(running.result).toEqual({ allowed: true });
+      expect(dataStatements(running.queries)).toEqual(["UPDATE", "DELETE"]);
+
+      // full: both updates miss, one read, no write
+      for (let i = 2; i < 50; i++) await once(e, at(1))();
+      const full = await logged(once(e, at(2)));
+      expect(full.result).toEqual({ allowed: false, retryAfterSeconds: 898 });
+      expect(dataStatements(full.queries)).toEqual(["UPDATE", "UPDATE", "SELECT", "DELETE"]);
+
+      // window over: the reset decides
+      const reset2 = await logged(once(e, at(900)));
+      expect(reset2.result).toEqual({ allowed: true });
+      expect(dataStatements(reset2.queries)).toEqual(["UPDATE", "UPDATE", "DELETE"]);
+      await expect(bucket(emailKey(e))).resolves.toMatchObject({ windowStart: at(900), count: 1 });
     });
-    expect(await countRows({ ipHash: ipHashOf(shared), blocked: false })).toBe(20);
-
-    // other IPs, unknown IPs, and the denied email elsewhere are not affected
-    await expect(attempt(email("ip-21"), ip(7), at(31))).resolves.toMatchObject({ allowed: true });
-    await expect(attempt(email("ip-22"), null, at(32))).resolves.toMatchObject({ allowed: true });
-    await expect(attempt(late, ip(8), at(33))).resolves.toMatchObject({ allowed: true });
   });
 
-  it("keeps earlier failures in the window after a success", async () => {
-    const e = email("success");
-    const a = ip(9);
-    for (let i = 0; i < 4; i++) await attempt(e, a, at(0));
+  describe("exact counts under concurrency", () => {
+    it.each([
+      [10, 5],
+      [60, 3],
+    ])("allows exactly 5 of %i concurrent attempts on one fresh email+IP pair (%i rounds)", async (n, rounds) => {
+      for (let round = 0; round < rounds; round++) {
+        const e = email(`pair-${n}-${round}`);
+        const x = ip(1000 + n * 10 + round);
+        const results = await concurrently(n, () => attempt(e, x, at(0)));
 
-    const ok = await attempt(e, a, at(10));
-    expect(ok.allowed).toBe(true);
-    if (!ok.allowed) return;
-    await throttle.markAttemptSucceeded(ok.attemptId);
-
-    const row = await prisma.adminLoginAttempt.findUniqueOrThrow({ where: { id: ok.attemptId } });
-    expect(row).toMatchObject({ success: true, blocked: false });
-    expect(await countRows({ keyHash: keyHashOf(e), success: false })).toBe(4);
-
-    // 4 earlier failures + this one = 5: allowed. Then 6: denied.
-    await expect(attempt(e, a, at(20))).resolves.toMatchObject({ allowed: true });
-    await expect(attempt(e, a, at(30))).resolves.toMatchObject({ allowed: false });
-  });
-
-  describe("concurrency", () => {
-    const allowedCount = (results: { allowed: boolean }[]) => results.filter((r) => r.allowed).length;
-
-    it("allows at most 5 of 10 concurrent attempts for one fresh email (no IP)", async () => {
-      for (let round = 0; round < 5; round++) {
-        const e = email(`concurrent-${round}`);
-        const results = await Promise.all(
-          Array.from({ length: 10 }, () => attempt(e, null, at(0)))
-        );
-        expect(allowedCount(results)).toBeLessThanOrEqual(5);
-        expect(await countRows({ keyHash: keyHashOf(e) })).toBe(10);
+        expect(allowedCount(results)).toBe(5);
+        await expect(bucket(ipKey(x))).resolves.toMatchObject({ count: Math.min(n, 20) });
+        await expect(bucket(pairKey(e, x))).resolves.toMatchObject({ count: 5 });
+        await expect(bucket(emailKey(e))).resolves.toMatchObject({ count: 5 });
       }
     });
 
-    it("allows at most 5 of 10 concurrent attempts for one fresh email+IP pair", async () => {
-      for (let round = 0; round < 5; round++) {
-        const e = email(`concurrent-pair-${round}`);
-        const a = ip(200 + round);
-        const results = await Promise.all(Array.from({ length: 10 }, () => attempt(e, a, at(0))));
-        expect(allowedCount(results)).toBeLessThanOrEqual(5);
-        expect(await countRows({ keyHash: keyHashOf(e), ipHash: ipHashOf(a) })).toBe(10);
-      }
-    });
-
-    it("allows at most 5 per pair when two IPs hit one email concurrently", async () => {
+    it("allows exactly 20 of 30 concurrent attempts from one IP over 30 emails (3 rounds)", async () => {
       for (let round = 0; round < 3; round++) {
-        const e = email(`concurrent-two-ips-${round}`);
-        const a = ip(300 + round * 2);
-        const b = ip(301 + round * 2);
-        const [fromA, fromB] = await Promise.all([
-          Promise.all(Array.from({ length: 10 }, () => attempt(e, a, at(0)))),
-          Promise.all(Array.from({ length: 10 }, () => attempt(e, b, at(0)))),
-        ]);
-        expect(allowedCount(fromA)).toBeLessThanOrEqual(5);
-        expect(allowedCount(fromB)).toBeLessThanOrEqual(5);
-        expect(await countRows({ keyHash: keyHashOf(e) })).toBe(20);
+        const x = ip(2000 + round);
+        const emails = Array.from({ length: 30 }, (_, i) => email(`ip-${round}-${i}`));
+        const results = await concurrently(30, (i) => attempt(emails[i], x, at(0)));
+
+        expect(allowedCount(results)).toBe(20);
+        await expect(bucket(ipKey(x))).resolves.toMatchObject({ count: 20 });
+        expect(await existing(emails.map((e) => pairKey(e, x)))).toBe(20);
+        expect(await existing(emails.map(emailKey))).toBe(20);
       }
     });
 
-    it("allows at most 20 of 30 concurrent attempts from one IP", async () => {
-      const shared = ip(400);
-      const results = await Promise.all(
-        Array.from({ length: 30 }, (_, i) => attempt(email(`concurrent-ip-${i}`), shared, at(0)))
-      );
-      expect(allowedCount(results)).toBeLessThanOrEqual(20);
-      expect(await countRows({ ipHash: ipHashOf(shared) })).toBe(30);
+    it("one IP cannot create more than 20 pair (or email) buckets per window", async () => {
+      const x = ip(2100);
+      const emails = Array.from({ length: 30 }, (_, i) => email(`ip-seq-${i}`));
+      const results: Result[] = [];
+      for (const e of emails) results.push(await attempt(e, x, at(0)));
+
+      expect(results.slice(0, 20).every((r) => r.allowed)).toBe(true);
+      expect(results.slice(20)).toEqual(Array(10).fill({ allowed: false, retryAfterSeconds: 900 }));
+      expect(await existing(emails.map((e) => pairKey(e, x)))).toBe(20);
+      expect(await existing(emails.map(emailKey))).toBe(20);
     });
 
-    it("allows at most 50 of 60 concurrent attempts for one email from 60 IPs", async () => {
-      const e = email("concurrent-global");
-      const results = await Promise.all(
-        Array.from({ length: 60 }, (_, i) => attempt(e, ip(500 + i), at(0)))
-      );
-      expect(allowedCount(results)).toBeLessThanOrEqual(50);
-      expect(await countRows({ keyHash: keyHashOf(e) })).toBe(60);
+    it("allows exactly 50 of 150 IPs x 2 concurrent attempts on one email", async () => {
+      const e = email("email-wide");
+      const results = await concurrently(300, (i) => attempt(e, ip(3000 + Math.floor(i / 2)), at(0)));
+
+      expect(allowedCount(results)).toBe(50);
+      await expect(bucket(emailKey(e))).resolves.toMatchObject({ count: 50 });
+    });
+
+    it("allows exactly 50 of 60 concurrent attempts on one email with no IP", async () => {
+      const e = email("no-ip-concurrent");
+      const results = await concurrently(60, () => attempt(e, null, at(0)));
+      expect(allowedCount(results)).toBe(50);
+      await expect(bucket(emailKey(e))).resolves.toMatchObject({ count: 50 });
     });
   });
 
-  describe("pruning rows older than 24 hours", () => {
-    const longAgo = () => new Date(Date.now() - 25 * 60 * MIN);
+  describe("liveness: one IP's bursts do not lock the email for other IPs (I1)", () => {
+    it("20 synchronized bursts of 60 from X: X gets exactly 5, every other IP gets through", async () => {
+      const e = email("liveness");
+      const x = ip(4000);
+      const y = ip(4001);
+      const fromX: Result[] = [];
+      const fromY: Result[] = [];
+      const fromOthers: Result[] = [];
 
-    it("happens in markAttemptSucceeded", async () => {
-      const old = email("old-success");
-      await attempt(old, null, longAgo());
-      expect(await countRows({ keyHash: keyHashOf(old) })).toBe(1);
+      for (let burst = 0; burst < 20; burst++) {
+        const now = at(1 + burst);
+        const others: Promise<Result>[] = [attempt(e, ip(4100 + burst), now)]; // inside the burst
+        const yInside = burst % 4 === 0 ? [attempt(e, y, now)] : [];
+        const xBurst = concurrently(60, () => attempt(e, x, now));
+        fromX.push(...(await xBurst));
+        fromY.push(...(await Promise.all(yInside)));
+        fromOthers.push(...(await Promise.all(others)));
+        if (burst % 2 === 1) {
+          fromOthers.push(await attempt(e, ip(4200 + burst), now)); // between bursts
+        }
+      }
 
-      const ok = await attempt(email("fresh-success"), null, new Date());
-      expect(ok.allowed).toBe(true);
-      if (!ok.allowed) return;
-      await throttle.markAttemptSucceeded(ok.attemptId);
+      expect(allowedCount(fromX)).toBe(5);
+      expect(fromY).toHaveLength(5);
+      expect(fromY.every((r) => r.allowed)).toBe(true);
+      expect(fromOthers).toHaveLength(30);
+      expect(fromOthers.every((r) => r.allowed)).toBe(true);
+      // X spent only its pair's 5 slots of the email's 50.
+      await expect(bucket(emailKey(e))).resolves.toMatchObject({ count: 5 + 5 + 30 });
+      await expect(bucket(ipKey(x))).resolves.toMatchObject({ count: 20 });
 
-      expect(await countRows({ keyHash: keyHashOf(old) })).toBe(0);
-      const row = await prisma.adminLoginAttempt.findUniqueOrThrow({ where: { id: ok.attemptId } });
-      expect(row.success).toBe(true);
+      // Y's own pair limit still applies.
+      await expect(attempt(e, y, at(30))).resolves.toEqual({ allowed: false, retryAfterSeconds: 900 - 29 });
+    });
+  });
+
+  describe("fixed window", () => {
+    it("is still closed at +899 s and reopens at +900 s", async () => {
+      const e = email("window");
+      const x = ip(5000);
+      for (let i = 0; i < 5; i++) await expect(attempt(e, x, at(0))).resolves.toEqual({ allowed: true });
+
+      await expect(attempt(e, x, at(60))).resolves.toEqual({ allowed: false, retryAfterSeconds: 840 });
+      await expect(attempt(e, x, at(899))).resolves.toEqual({ allowed: false, retryAfterSeconds: 1 });
+      await expect(attempt(e, x, at(900))).resolves.toEqual({ allowed: true });
+      await expect(bucket(pairKey(e, x))).resolves.toMatchObject({ windowStart: at(900), count: 1 });
     });
 
-    it("happens when an attempt is denied", async () => {
-      const old = email("old-denied");
-      await attempt(old, null, longAgo());
-      expect(await countRows({ keyHash: keyHashOf(old) })).toBe(1);
+    it("allows exactly the limit when concurrent attempts arrive exactly at expiry", async () => {
+      for (let round = 0; round < 3; round++) {
+        const e = email(`expiry-${round}`);
+        const x = ip(5100 + round);
+        for (let i = 0; i < 5; i++) await attempt(e, x, at(0));
 
-      const e = email("fresh-denied");
-      const now = new Date();
-      for (let i = 0; i < 5; i++) await attempt(e, null, now);
-      expect(await countRows({ keyHash: keyHashOf(old) })).toBe(1); // allowed attempts do not prune
+        const results = await concurrently(30, () => attempt(e, x, at(900)));
+        expect(allowedCount(results)).toBe(5);
+        await expect(bucket(pairKey(e, x))).resolves.toMatchObject({ windowStart: at(900), count: 5 });
+      }
+    });
 
-      await expect(attempt(e, null, now)).resolves.toMatchObject({ allowed: false });
-      expect(await countRows({ keyHash: keyHashOf(old) })).toBe(0);
-      expect(await countRows({ keyHash: keyHashOf(e) })).toBe(6);
+    it("allows exactly 50 when 60 attempts with no IP arrive exactly at expiry", async () => {
+      const e = email("expiry-no-ip");
+      for (let i = 0; i < 50; i++) await attempt(e, null, at(0));
+      await expect(attempt(e, null, at(1))).resolves.toMatchObject({ allowed: false });
+
+      const results = await concurrently(60, () => attempt(e, null, at(900)));
+      expect(allowedCount(results)).toBe(50);
+      await expect(bucket(emailKey(e))).resolves.toMatchObject({ windowStart: at(900), count: 50 });
+    });
+  });
+
+  describe("no IP", () => {
+    it("allows 50 attempts for one email, denies the 51st, and leaves other emails alone", async () => {
+      const e = email("no-ip");
+      for (let i = 0; i < 50; i++) {
+        await expect(attempt(e, null, at(10))).resolves.toEqual({ allowed: true });
+      }
+      await expect(attempt(e, null, at(20))).resolves.toEqual({ allowed: false, retryAfterSeconds: 890 });
+      // the email-wide bucket is shared with attempts that do have an IP
+      await expect(attempt(e, ip(6000), at(21))).resolves.toEqual({ allowed: false, retryAfterSeconds: 889 });
+      await expect(attempt(email("no-ip-other"), null, at(22))).resolves.toEqual({ allowed: true });
+    });
+  });
+
+  describe("pruning", () => {
+    it("deletes buckets whose window is over and keeps running ones", async () => {
+      const old = email("prune-old");
+      const running = email("prune-running");
+      await attempt(old, null, at(0));
+      await attempt(running, null, at(100));
+
+      await attempt(email("prune-trigger"), null, at(950));
+      await expect(bucket(emailKey(old))).resolves.toBeNull();
+      await expect(bucket(emailKey(running))).resolves.toMatchObject({ count: 1 });
+    });
+  });
+
+  describe("with authorizeAdmin (real time)", () => {
+    let authorize: Isolated<AuthorizeModule>;
+
+    beforeAll(() => {
+      const datasourceUrl = withDefaultConnectionLimit(TEST_DATABASE_URL as string, 4);
+      authorize = loadIsolated<AuthorizeModule>("@/lib/admin-login/authorize", datasourceUrl);
+    });
+
+    afterAll(async () => {
+      process.env.VERCEL = savedEnv.VERCEL;
+      if (savedEnv.VERCEL === undefined) delete process.env.VERCEL;
+      await authorize?.client.$disconnect();
+    });
+
+    it("a successful login consumes a slot like any attempt", async () => {
+      const adminEmail = email("success");
+      const clientIp = ip(7000);
+      const secretPassword = `integration-${randomUUID()}`;
+      const user = await db.user.create({
+        data: { email: adminEmail, name: "Integration Admin", role: "admin" },
+      });
+      createdUserIds.push(user.id);
+      process.env.ADMIN_LOGIN_EMAIL = adminEmail;
+      process.env.ADMIN_PASSWORD_HASH = await hashPassword(secretPassword);
+      process.env.VERCEL = "1";
+      usedKeys.add(ipKey(clientIp)).add(pairKey(adminEmail, clientIp)).add(emailKey(adminEmail));
+
+      const request = () =>
+        new Request("https://mate.example.test/api/auth/callback/admin-credentials", {
+          method: "POST",
+          headers: { "x-real-ip": clientIp },
+        });
+      const login = (pw: string) =>
+        authorize.module.authorizeAdmin({ email: adminEmail, password: pw }, request());
+
+      for (let i = 0; i < 3; i++) await expect(login("wrong-password")).resolves.toBeNull();
+      await expect(login(secretPassword)).resolves.toEqual({
+        id: user.id,
+        email: adminEmail,
+        name: "Integration Admin",
+      });
+      await expect(bucket(pairKey(adminEmail, clientIp))).resolves.toMatchObject({ count: 4 });
+
+      await expect(login(secretPassword)).resolves.not.toBeNull(); // 5th slot
+      await expect(login(secretPassword)).resolves.toBeNull(); // the pair is full
+      await expect(bucket(pairKey(adminEmail, clientIp))).resolves.toMatchObject({ count: 5 });
     });
   });
 });

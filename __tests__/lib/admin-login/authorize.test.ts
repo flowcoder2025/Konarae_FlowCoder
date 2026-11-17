@@ -7,12 +7,11 @@ type UserRow = { id: string; email: string; name: string | null; role: string };
 const mockUsers: UserRow[] = [];
 
 jest.mock("@/lib/prisma", () => ({
-  prisma: { user: { findFirst: jest.fn() } },
+  prisma: { user: { findMany: jest.fn() } },
 }));
 
 jest.mock("@/lib/admin-login/throttle", () => ({
-  registerAttempt: jest.fn(),
-  markAttemptSucceeded: jest.fn(),
+  consumeAttempt: jest.fn(),
 }));
 
 jest.mock("@/lib/admin-login/client-ip", () => ({
@@ -27,15 +26,15 @@ jest.mock("@/lib/admin-login/password", () => {
   return { ...actual, verifyPassword: jest.fn(actual.verifyPassword) };
 });
 
+import { Prisma } from "@prisma/client";
 import { authorizeAdmin } from "@/lib/admin-login/authorize";
 import { getClientIp } from "@/lib/admin-login/client-ip";
 import { hashPassword, verifyPassword } from "@/lib/admin-login/password";
-import { markAttemptSucceeded, registerAttempt } from "@/lib/admin-login/throttle";
+import { consumeAttempt } from "@/lib/admin-login/throttle";
 import { prisma } from "@/lib/prisma";
 
-const mockFindFirst = prisma.user.findFirst as unknown as jest.Mock;
-const mockRegisterAttempt = registerAttempt as jest.MockedFunction<typeof registerAttempt>;
-const mockMarkSucceeded = markAttemptSucceeded as jest.MockedFunction<typeof markAttemptSucceeded>;
+const mockFindMany = prisma.user.findMany as unknown as jest.Mock;
+const mockConsumeAttempt = consumeAttempt as jest.MockedFunction<typeof consumeAttempt>;
 const mockGetClientIp = getClientIp as jest.MockedFunction<typeof getClientIp>;
 const mockVerifyPassword = verifyPassword as jest.MockedFunction<typeof verifyPassword>;
 
@@ -43,7 +42,6 @@ const mockVerifyPassword = verifyPassword as jest.MockedFunction<typeof verifyPa
 const ADMIN_EMAIL = "admin@example.com";
 const PASSWORD = "unit-test-password-0123";
 const CLIENT_IP = "203.0.113.9";
-const ATTEMPT_ID = "attempt-1";
 const ADMIN_ROW: UserRow = { id: "admin-1", email: ADMIN_EMAIL, name: "Admin", role: "admin" };
 
 const ENV_KEYS = ["ADMIN_LOGIN_EMAIL", "ADMIN_PASSWORD_HASH"] as const;
@@ -58,16 +56,22 @@ function request(): Request {
   });
 }
 
-/** Mimics Postgres for the where clause authorizeAdmin is expected to send. */
-function findFirstFromRows(args: {
-  where: { email: { equals: string; mode: "insensitive" }; role: string };
-}): Promise<Pick<UserRow, "id" | "email" | "name"> | null> {
-  const { where } = args;
-  const row = mockUsers.find(
-    (user) =>
-      user.email.toLowerCase() === where.email.equals.toLowerCase() && user.role === where.role
+const ADMIN_QUERY = {
+  where: { role: "admin" },
+  select: { id: true, email: true, name: true },
+};
+
+/** Mimics Postgres for the query authorizeAdmin is expected to send. */
+function findManyFromRows(args: {
+  where: { role: string };
+  select: Record<string, boolean>;
+}): Promise<Array<Pick<UserRow, "id" | "email" | "name">>> {
+  expect(args).toEqual(ADMIN_QUERY);
+  return Promise.resolve(
+    mockUsers
+      .filter((user) => user.role === args.where.role)
+      .map((user) => ({ id: user.id, email: user.email, name: user.name }))
   );
-  return Promise.resolve(row ? { id: row.id, email: row.email, name: row.name } : null);
 }
 
 function loggedText(): string {
@@ -87,10 +91,9 @@ beforeEach(() => {
   mockUsers.push(ADMIN_ROW);
   process.env.ADMIN_LOGIN_EMAIL = ADMIN_EMAIL;
   process.env.ADMIN_PASSWORD_HASH = passwordHash;
-  mockRegisterAttempt.mockResolvedValue({ allowed: true, attemptId: ATTEMPT_ID });
-  mockMarkSucceeded.mockResolvedValue(undefined);
+  mockConsumeAttempt.mockResolvedValue({ allowed: true });
   mockGetClientIp.mockReturnValue(CLIENT_IP);
-  mockFindFirst.mockImplementation(findFirstFromRows);
+  mockFindMany.mockImplementation(findManyFromRows);
   consoleSpies = (["log", "info", "warn", "error", "debug"] as const).map((method) =>
     jest.spyOn(console, method).mockImplementation(() => undefined)
   );
@@ -118,21 +121,19 @@ describe("authorizeAdmin", () => {
     });
 
     expect(mockGetClientIp).toHaveBeenCalledWith(req);
-    expect(mockRegisterAttempt).toHaveBeenCalledWith({ email: ADMIN_EMAIL, ip: CLIENT_IP });
+    // A success takes a throttle slot like any attempt; nothing is given back.
+    expect(mockConsumeAttempt).toHaveBeenCalledTimes(1);
+    expect(mockConsumeAttempt).toHaveBeenCalledWith({ email: ADMIN_EMAIL, ip: CLIENT_IP });
     expect(mockVerifyPassword).toHaveBeenCalledWith(PASSWORD, passwordHash);
-    expect(mockFindFirst).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { email: { equals: ADMIN_EMAIL, mode: "insensitive" }, role: "admin" },
-      })
-    );
-    expect(mockMarkSucceeded).toHaveBeenCalledWith(ATTEMPT_ID);
+    expect(mockFindMany).toHaveBeenCalledTimes(1);
+    expect(mockFindMany).toHaveBeenCalledWith(ADMIN_QUERY);
   });
 
   it("passes a null IP through to the throttle", async () => {
     mockGetClientIp.mockReturnValue(null);
 
     await expect(authorizeAdmin({ email: ADMIN_EMAIL, password: PASSWORD }, request())).resolves.not.toBeNull();
-    expect(mockRegisterAttempt).toHaveBeenCalledWith({ email: ADMIN_EMAIL, ip: null });
+    expect(mockConsumeAttempt).toHaveBeenCalledWith({ email: ADMIN_EMAIL, ip: null });
   });
 
   it("ignores extra form fields such as csrfToken and callbackUrl", async () => {
@@ -154,7 +155,7 @@ describe("authorizeAdmin", () => {
     await expect(authorizeAdmin({ email, password: PASSWORD }, request())).resolves.toMatchObject({
       id: "admin-1",
     });
-    expect(mockRegisterAttempt).toHaveBeenCalledWith({ email: ADMIN_EMAIL, ip: CLIENT_IP });
+    expect(mockConsumeAttempt).toHaveBeenCalledWith({ email: ADMIN_EMAIL, ip: CLIENT_IP });
   });
 
   it("normalizes the configured email the same way", async () => {
@@ -171,8 +172,7 @@ describe("authorizeAdmin", () => {
     ).resolves.toBeNull();
 
     expect(mockVerifyPassword).toHaveBeenCalledWith(`${PASSWORD}x`, passwordHash);
-    expect(mockFindFirst).not.toHaveBeenCalled();
-    expect(mockMarkSucceeded).not.toHaveBeenCalled();
+    expect(mockFindMany).not.toHaveBeenCalled();
   });
 
   it("does not trim the password", async () => {
@@ -186,11 +186,10 @@ describe("authorizeAdmin", () => {
       authorizeAdmin({ email: "someone@example.com", password: PASSWORD }, request())
     ).resolves.toBeNull();
 
-    expect(mockRegisterAttempt).toHaveBeenCalledWith({ email: "someone@example.com", ip: CLIENT_IP });
+    expect(mockConsumeAttempt).toHaveBeenCalledWith({ email: "someone@example.com", ip: CLIENT_IP });
     expect(mockVerifyPassword).toHaveBeenCalledTimes(1);
     expect(mockVerifyPassword).toHaveBeenCalledWith(PASSWORD, undefined);
-    expect(mockFindFirst).not.toHaveBeenCalled();
-    expect(mockMarkSucceeded).not.toHaveBeenCalled();
+    expect(mockFindMany).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -208,17 +207,17 @@ describe("authorizeAdmin", () => {
     await expect(authorizeAdmin({ email: ADMIN_EMAIL, password: PASSWORD }, request())).resolves.toBeNull();
 
     // Same work as any other failure: the attempt is recorded and scrypt runs once.
-    expect(mockRegisterAttempt).toHaveBeenCalledTimes(1);
+    expect(mockConsumeAttempt).toHaveBeenCalledTimes(1);
     expect(mockVerifyPassword).toHaveBeenCalledTimes(1);
-    expect(mockFindFirst).not.toHaveBeenCalled();
-    expect(mockMarkSucceeded).not.toHaveBeenCalled();
+    expect(mockFindMany).not.toHaveBeenCalled();
   });
 
   it("rejects when no User row has the email", async () => {
     mockUsers.length = 0;
+    mockUsers.push({ id: "other-admin", email: "someone@example.com", name: null, role: "admin" });
 
     await expect(authorizeAdmin({ email: ADMIN_EMAIL, password: PASSWORD }, request())).resolves.toBeNull();
-    expect(mockMarkSucceeded).not.toHaveBeenCalled();
+    expect(mockFindMany).toHaveBeenCalledTimes(1);
   });
 
   it("rejects when the User row with the email has role=user", async () => {
@@ -226,32 +225,82 @@ describe("authorizeAdmin", () => {
     mockUsers.push({ ...ADMIN_ROW, role: "user" });
 
     await expect(authorizeAdmin({ email: ADMIN_EMAIL, password: PASSWORD }, request())).resolves.toBeNull();
-    expect(mockMarkSucceeded).not.toHaveBeenCalled();
   });
 
-  it("rejects a row whose email is not exactly the configured one (no wildcard matches)", async () => {
-    process.env.ADMIN_LOGIN_EMAIL = "admin_ops@example.com";
-    mockFindFirst.mockResolvedValue({ id: "other-1", email: "adminxops@example.com", name: null });
+  it("matches the stored email after trimming and lower-casing it", async () => {
+    mockUsers.length = 0;
+    mockUsers.push({ ...ADMIN_ROW, email: " Admin@Example.COM" });
 
-    await expect(
-      authorizeAdmin({ email: "admin_ops@example.com", password: PASSWORD }, request())
-    ).resolves.toBeNull();
-    expect(mockMarkSucceeded).not.toHaveBeenCalled();
+    await expect(authorizeAdmin({ email: ADMIN_EMAIL, password: PASSWORD }, request())).resolves.toEqual({
+      id: "admin-1",
+      email: " Admin@Example.COM",
+      name: "Admin",
+    });
+  });
+
+  describe("picks the admin row by exact email, never by pattern (M2)", () => {
+    const CONFIGURED = "probe_a@example.com";
+
+    beforeEach(() => {
+      process.env.ADMIN_LOGIN_EMAIL = CONFIGURED;
+    });
+
+    it.each([
+      ["before", "first"],
+      ["after", "last"],
+    ])("finds the real row when LIKE-pattern decoys sort %s it", async (_label, position) => {
+      // `_` and `%` are LIKE wildcards: an ILIKE lookup for the configured
+      // email would match each of these decoys too.
+      const decoys: UserRow[] = [
+        { id: "decoy-underscore", email: "probeXa@example.com", name: null, role: "admin" },
+        { id: "decoy-percent", email: "probe%a@example.com", name: null, role: "admin" },
+        { id: "decoy-upper", email: "PROBE-A@EXAMPLE.COM", name: null, role: "admin" },
+      ];
+      const real: UserRow = { id: "real-admin", email: CONFIGURED, name: "Real", role: "admin" };
+      mockUsers.length = 0;
+      mockUsers.push(...(position === "first" ? [real, ...decoys] : [...decoys, real]));
+
+      await expect(authorizeAdmin({ email: CONFIGURED, password: PASSWORD }, request())).resolves.toEqual({
+        id: "real-admin",
+        email: CONFIGURED,
+        name: "Real",
+      });
+    });
+
+    it("rejects when only a decoy row exists", async () => {
+      mockUsers.length = 0;
+      mockUsers.push({ id: "decoy", email: "probeXa@example.com", name: null, role: "admin" });
+
+      await expect(
+        authorizeAdmin({ email: CONFIGURED, password: PASSWORD }, request())
+      ).resolves.toBeNull();
+    });
+
+    it("rejects when several admin rows normalize to the configured email", async () => {
+      mockUsers.length = 0;
+      mockUsers.push(
+        { id: "admin-a", email: CONFIGURED, name: null, role: "admin" },
+        { id: "admin-b", email: "PROBE_A@example.com", name: null, role: "admin" }
+      );
+
+      await expect(
+        authorizeAdmin({ email: CONFIGURED, password: PASSWORD }, request())
+      ).resolves.toBeNull();
+    });
   });
 
   it("rejects the right password while the throttle denies the attempt, still running scrypt", async () => {
-    mockRegisterAttempt.mockResolvedValue({ allowed: false, retryAfterSeconds: 600 });
+    mockConsumeAttempt.mockResolvedValue({ allowed: false, retryAfterSeconds: 600 });
 
     await expect(authorizeAdmin({ email: ADMIN_EMAIL, password: PASSWORD }, request())).resolves.toBeNull();
 
     expect(mockVerifyPassword).toHaveBeenCalledTimes(1);
     expect(mockVerifyPassword).toHaveBeenCalledWith(PASSWORD, passwordHash);
-    expect(mockFindFirst).not.toHaveBeenCalled();
-    expect(mockMarkSucceeded).not.toHaveBeenCalled();
+    expect(mockFindMany).not.toHaveBeenCalled();
   });
 
   it("runs scrypt for another email while the throttle denies the attempt", async () => {
-    mockRegisterAttempt.mockResolvedValue({ allowed: false, retryAfterSeconds: 600 });
+    mockConsumeAttempt.mockResolvedValue({ allowed: false, retryAfterSeconds: 600 });
 
     await expect(
       authorizeAdmin({ email: "someone@example.com", password: PASSWORD }, request())
@@ -277,33 +326,69 @@ describe("authorizeAdmin", () => {
       authorizeAdmin(credentials as Partial<Record<"email" | "password", unknown>>, request())
     ).resolves.toBeNull();
 
-    expect(mockRegisterAttempt).not.toHaveBeenCalled();
-    expect(mockFindFirst).not.toHaveBeenCalled();
+    expect(mockConsumeAttempt).not.toHaveBeenCalled();
+    expect(mockFindMany).not.toHaveBeenCalled();
   });
 
-  it("throws when the throttle cannot reach the database (fail-closed)", async () => {
-    mockRegisterAttempt.mockRejectedValue(new Error("db down"));
+  describe("errors deny the attempt instead of throwing (M4)", () => {
+    // The message carries the email and password on purpose: none of it may be logged.
+    const leakyError = () => new Error(`db down for ${ADMIN_EMAIL} / ${PASSWORD} from ${CLIENT_IP}`);
+    const knownError = () =>
+      new Prisma.PrismaClientKnownRequestError(`Timed out for ${ADMIN_EMAIL}`, {
+        code: "P2024",
+        clientVersion: "test",
+      });
 
-    await expect(authorizeAdmin({ email: ADMIN_EMAIL, password: PASSWORD }, request())).rejects.toThrow(
-      "db down"
-    );
-  });
+    function expectSafeErrorLog(expectedCode?: string) {
+      const errorLines = consoleSpies[3].mock.calls.map((args) => String(args[0]));
+      expect(errorLines).toHaveLength(1);
+      const entry = JSON.parse(errorLines[0]);
+      expect(entry).toMatchObject({ level: "error", context: { reason: "internal_error" } });
+      if (expectedCode) expect(entry.context.errorCode).toBe(expectedCode);
+      const logs = loggedText();
+      expect(logs).not.toContain(ADMIN_EMAIL);
+      expect(logs).not.toContain(PASSWORD);
+      expect(logs).not.toContain(CLIENT_IP);
+    }
 
-  it("throws when the User lookup fails", async () => {
-    mockFindFirst.mockRejectedValue(new Error("db down"));
+    it("returns null when the throttle throws, still running scrypt, and logs no secrets", async () => {
+      mockConsumeAttempt.mockRejectedValue(leakyError());
 
-    await expect(authorizeAdmin({ email: ADMIN_EMAIL, password: PASSWORD }, request())).rejects.toThrow(
-      "db down"
-    );
-    expect(mockMarkSucceeded).not.toHaveBeenCalled();
-  });
+      await expect(authorizeAdmin({ email: ADMIN_EMAIL, password: PASSWORD }, request())).resolves.toBeNull();
+      expect(mockVerifyPassword).toHaveBeenCalledTimes(1);
+      expect(mockFindMany).not.toHaveBeenCalled();
+      expectSafeErrorLog();
+    });
 
-  it("throws when the success cannot be recorded", async () => {
-    mockMarkSucceeded.mockRejectedValue(new Error("db down"));
+    it("returns null when the throttle throws a Prisma error, logging only its code", async () => {
+      mockConsumeAttempt.mockRejectedValue(knownError());
 
-    await expect(authorizeAdmin({ email: ADMIN_EMAIL, password: PASSWORD }, request())).rejects.toThrow(
-      "db down"
-    );
+      await expect(authorizeAdmin({ email: ADMIN_EMAIL, password: PASSWORD }, request())).resolves.toBeNull();
+      expectSafeErrorLog("P2024");
+    });
+
+    it("returns null when the User lookup throws", async () => {
+      mockFindMany.mockRejectedValue(leakyError());
+
+      await expect(authorizeAdmin({ email: ADMIN_EMAIL, password: PASSWORD }, request())).resolves.toBeNull();
+      expectSafeErrorLog();
+    });
+
+    it("returns null when the IP lookup throws", async () => {
+      mockGetClientIp.mockImplementation(() => {
+        throw leakyError();
+      });
+
+      await expect(authorizeAdmin({ email: ADMIN_EMAIL, password: PASSWORD }, request())).resolves.toBeNull();
+      expectSafeErrorLog();
+    });
+
+    it("returns null when a non-Error value is thrown", async () => {
+      mockConsumeAttempt.mockRejectedValue(`${ADMIN_EMAIL}:${PASSWORD}`);
+
+      await expect(authorizeAdmin({ email: ADMIN_EMAIL, password: PASSWORD }, request())).resolves.toBeNull();
+      expectSafeErrorLog();
+    });
   });
 
   it("never logs the submitted email or the client IP", async () => {
@@ -313,9 +398,13 @@ describe("authorizeAdmin", () => {
       [{ email: ADMIN_EMAIL, password: "wrong-password" }, () => undefined],
       [
         { email: ADMIN_EMAIL, password: PASSWORD },
-        () => mockRegisterAttempt.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 60 }),
+        () => mockConsumeAttempt.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 60 }),
       ],
       [{ email: ADMIN_EMAIL, password: PASSWORD }, () => (mockUsers.length = 0)],
+      [
+        { email: ADMIN_EMAIL, password: PASSWORD },
+        () => mockConsumeAttempt.mockRejectedValueOnce(new Error(`down: ${ADMIN_EMAIL} ${CLIENT_IP}`)),
+      ],
       [{ email: `${"a".repeat(300)}@example.com`, password: PASSWORD }, () => undefined],
     ];
 
