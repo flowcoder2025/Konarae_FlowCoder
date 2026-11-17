@@ -214,6 +214,29 @@ describeWithDb(suiteTitle, () => {
     await expect(attempt(e, null, at(12))).resolves.toMatchObject({ allowed: true });
   });
 
+  it("a concurrent flood against a locked pair does not lock the email for another IP", async () => {
+    for (let round = 0; round < 3; round++) {
+      const e = email(`flood-${round}`);
+      const x = ip(600 + round * 2);
+      const y = ip(601 + round * 2);
+      for (let i = 0; i < 5; i++) await attempt(e, x, at(0));
+
+      // 60 concurrent attempts from X, with one attempt from a new IP Y in the same burst
+      const results = await Promise.all([
+        ...Array.from({ length: 60 }, () => attempt(e, x, at(1))),
+        attempt(e, y, at(1)),
+      ]);
+      const fromX = results.slice(0, 60);
+      const fromY = results[60];
+
+      expect(fromX.every((r) => !r.allowed)).toBe(true);
+      expect(fromY).toMatchObject({ allowed: true });
+      // the flood went straight to blocked rows; only the 5 real failures + Y count
+      expect(await countRows({ keyHash: keyHashOf(e), ipHash: ipHashOf(x), blocked: true })).toBe(60);
+      expect(await countRows({ keyHash: keyHashOf(e), blocked: false })).toBe(6);
+    }
+  });
+
   it("locks the email everywhere after 50 real failures from 10 IPs", async () => {
     const e = email("global");
     for (let k = 0; k < 10; k++) {

@@ -1187,8 +1187,9 @@ model AdminLoginAttempt {
   blocked   Boolean  @default(false) // denied by the throttle; never counted toward any limit
   createdAt DateTime @default(now())
 
-  @@index([keyHash, createdAt])
-  @@index([ipHash, createdAt])
+  // blocked before createdAt: counting skips blocked rows without reading them during a flood
+  @@index([keyHash, blocked, createdAt])
+  @@index([ipHash, blocked, createdAt])
   @@index([createdAt])
   @@map("admin_login_attempts")
 }

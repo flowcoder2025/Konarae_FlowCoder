@@ -32,6 +32,12 @@ type Where = {
 };
 type FindManyArgs = { where: Where; orderBy: unknown; take: number; select: unknown };
 type BucketName = "pair" | "ip" | "email";
+/**
+ * Real failures of OTHER attempts in a bucket, newest first. A plain array is
+ * the same before and after this attempt's insert; `{ before, after }` models
+ * concurrent rows landing between the pre-check and the count.
+ */
+type BucketSpec = Date[] | { before: Date[]; after: Date[] };
 
 const db = prisma.adminLoginAttempt as unknown as {
   create: jest.Mock;
@@ -56,12 +62,6 @@ function at(msFromNow: number): Date {
   return new Date(NOW.getTime() + msFromNow);
 }
 
-let rowSeq = 0;
-/** Rows newest first. The own row (just written) is always the first one. */
-function withOwn(...others: Date[]): Row[] {
-  return [{ id: OWN_ID, createdAt: NOW }, ...others.map((createdAt) => ({ id: `r${++rowSeq}`, createdAt }))];
-}
-
 function repeat(date: Date, n: number): Date[] {
   return Array.from({ length: n }, () => date);
 }
@@ -74,17 +74,24 @@ function bucketOf(where: Where): BucketName {
   return "email";
 }
 
-/** Serve findMany from per-bucket rows (newest first), honouring `take`. */
-function serveFailures(byBucket: Partial<Record<BucketName, Row[]>>) {
+/** Whether this attempt's own row is in the table as a pending (non-blocked) failure. */
+let ownPending = false;
+
+/** Serve findMany like the DB would: other rows, plus the own row once pending. */
+function serveFailures(byBucket: Partial<Record<BucketName, BucketSpec>>) {
   db.findMany.mockImplementation(async (args: FindManyArgs) => {
-    return (byBucket[bucketOf(args.where)] ?? withOwn()).slice(0, args.take);
+    const spec = byBucket[bucketOf(args.where)] ?? [];
+    const dates = Array.isArray(spec) ? spec : ownPending ? spec.after : spec.before;
+    const rows: Row[] = dates.map((createdAt, i) => ({ id: `other-${i}`, createdAt }));
+    if (ownPending) rows.push({ id: OWN_ID, createdAt: NOW });
+    // newest first; stable, so the own row sorts after others with the same time
+    rows.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    return rows.slice(0, args.take);
   });
 }
 
-function findManyCall(bucket: BucketName): FindManyArgs {
-  const call = db.findMany.mock.calls.map(([args]) => args as FindManyArgs).find((args) => bucketOf(args.where) === bucket);
-  if (!call) throw new Error(`no findMany call for ${bucket}`);
-  return call;
+function findManyCalls(): FindManyArgs[] {
+  return db.findMany.mock.calls.map(([args]) => args as FindManyArgs);
 }
 
 const savedEnv = {
@@ -102,8 +109,15 @@ beforeEach(() => {
   jest.useFakeTimers({ now: NOW, doNotFake: ["nextTick", "setImmediate", "queueMicrotask"] });
   process.env.AUTH_SECRET = SECRET;
   process.env.NEXTAUTH_SECRET = OTHER_SECRET;
-  db.create.mockResolvedValue({ id: OWN_ID });
-  db.update.mockResolvedValue({});
+  ownPending = false;
+  db.create.mockImplementation(async (args: { data: { blocked: boolean } }) => {
+    ownPending = !args.data.blocked;
+    return { id: OWN_ID };
+  });
+  db.update.mockImplementation(async (args: { data: { blocked?: boolean } }) => {
+    if (args.data.blocked) ownPending = false;
+    return {};
+  });
   db.deleteMany.mockResolvedValue({ count: 0 });
   serveFailures({});
 });
@@ -197,27 +211,35 @@ describe("key hashing", () => {
 describe("registerAttempt query shape", () => {
   const counted = { success: false, blocked: false, createdAt: { gt: at(-15 * MIN) } };
 
-  it("writes the failure row before reading any bucket", async () => {
+  it("pre-checks all buckets, then writes a pending row, then counts all buckets again", async () => {
     await registerAttempt({ email: EMAIL, ip: IP, now: NOW });
 
-    expect(db.findMany).toHaveBeenCalledTimes(3);
+    expect(db.findMany).toHaveBeenCalledTimes(6);
     const createOrder = db.create.mock.invocationCallOrder[0];
-    for (const order of db.findMany.mock.invocationCallOrder) {
-      expect(createOrder).toBeLessThan(order);
-    }
+    const orders = db.findMany.mock.invocationCallOrder;
+    expect(orders.filter((o) => o < createOrder)).toHaveLength(3);
+    expect(orders.filter((o) => o > createOrder)).toHaveLength(3);
+    expect(db.create.mock.calls[0][0].data.blocked).toBe(false);
   });
 
   it("counts only non-blocked failures after the window start, with no upper bound", async () => {
     await registerAttempt({ email: EMAIL, ip: IP, now: NOW });
     const keyHash = hmac(SECRET, "email", EMAIL);
     const ipHash = hmac(SECRET, "ip", IP);
+    const expected: Record<BucketName, { where: object; take: number }> = {
+      pair: { where: { keyHash, ipHash, ...counted }, take: 6 },
+      ip: { where: { ipHash, ...counted }, take: 21 },
+      email: { where: { keyHash, ...counted }, take: 51 },
+    };
 
-    expect(findManyCall("pair").where).toEqual({ keyHash, ipHash, ...counted });
-    expect(findManyCall("pair").take).toBe(6);
-    expect(findManyCall("ip").where).toEqual({ ipHash, ...counted });
-    expect(findManyCall("ip").take).toBe(21);
-    expect(findManyCall("email").where).toEqual({ keyHash, ...counted });
-    expect(findManyCall("email").take).toBe(51);
+    for (const call of findManyCalls()) {
+      const bucket = bucketOf(call.where);
+      expect(call.where).toEqual(expected[bucket].where);
+      expect(call.take).toBe(expected[bucket].take);
+    }
+    expect(findManyCalls().map((c) => bucketOf(c.where)).sort()).toEqual(
+      ["email", "email", "ip", "ip", "pair", "pair"]
+    );
   });
 
   it("uses (email, ipHash IS NULL) as the pair and skips the IP bucket when ip is null", async () => {
@@ -226,9 +248,14 @@ describe("registerAttempt query shape", () => {
 
     expect(result).toEqual({ allowed: true, attemptId: OWN_ID });
     expect(db.create.mock.calls[0][0].data.ipHash).toBeNull();
-    expect(db.findMany).toHaveBeenCalledTimes(2);
-    expect(findManyCall("pair").where).toEqual({ keyHash, ipHash: null, ...counted });
-    expect(findManyCall("email").where).toEqual({ keyHash, ...counted });
+    expect(db.findMany).toHaveBeenCalledTimes(4);
+    for (const call of findManyCalls()) {
+      const bucket = bucketOf(call.where);
+      expect(bucket).not.toBe("ip");
+      expect(call.where).toEqual(
+        bucket === "pair" ? { keyHash, ipHash: null, ...counted } : { keyHash, ...counted }
+      );
+    }
   });
 
   it("uses the current time when now is omitted", async () => {
@@ -240,9 +267,9 @@ describe("registerAttempt query shape", () => {
 describe("allowed attempts", () => {
   it("allows exactly at every limit (row just written included) and never blocks or prunes", async () => {
     serveFailures({
-      pair: withOwn(...repeat(at(-MIN), 4)),
-      ip: withOwn(...repeat(at(-MIN), 19)),
-      email: withOwn(...repeat(at(-MIN), 49)),
+      pair: repeat(at(-MIN), 4),
+      ip: repeat(at(-MIN), 19),
+      email: repeat(at(-MIN), 49),
     });
     await expect(registerAttempt({ email: EMAIL, ip: IP, now: NOW })).resolves.toEqual({
       allowed: true,
@@ -253,75 +280,56 @@ describe("allowed attempts", () => {
   });
 });
 
-describe("denied attempts", () => {
-  it("marks the just-written row blocked, prunes rows older than 24h, in that order", async () => {
-    serveFailures({ pair: withOwn(...repeat(at(-10 * MIN), 5)) });
+describe("pre-check: a bucket already at its limit", () => {
+  it("inserts the row as blocked directly (never pending), prunes, and does not count again", async () => {
+    serveFailures({ pair: repeat(at(-10 * MIN), 5) });
 
-    await expect(registerAttempt({ email: EMAIL, ip: IP, now: NOW })).resolves.toMatchObject({
+    await expect(registerAttempt({ email: EMAIL, ip: IP, now: NOW })).resolves.toEqual({
       allowed: false,
+      retryAfterSeconds: 5 * 60,
     });
 
-    expect(db.update).toHaveBeenCalledTimes(1);
-    expect(db.update).toHaveBeenCalledWith({ where: { id: OWN_ID }, data: { blocked: true } });
+    expect(db.create).toHaveBeenCalledTimes(1);
+    expect(db.create.mock.calls[0][0].data).toMatchObject({ success: false, blocked: true });
+    expect(db.findMany).toHaveBeenCalledTimes(3);
+    expect(Math.max(...db.findMany.mock.invocationCallOrder)).toBeLessThan(
+      db.create.mock.invocationCallOrder[0]
+    );
+    expect(db.update).not.toHaveBeenCalled();
     expect(db.deleteMany).toHaveBeenCalledWith({
       where: { createdAt: { lt: at(-24 * 60 * MIN) } },
     });
-    const findOrders = db.findMany.mock.invocationCallOrder;
-    const updateOrder = db.update.mock.invocationCallOrder[0];
-    expect(Math.max(...findOrders)).toBeLessThan(updateOrder);
-    expect(updateOrder).toBeLessThan(db.deleteMany.mock.invocationCallOrder[0]);
+    expect(db.create.mock.invocationCallOrder[0]).toBeLessThan(
+      db.deleteMany.mock.invocationCallOrder[0]
+    );
   });
 
   it.each<[BucketName, number]>([
     ["pair", 5],
     ["ip", 20],
     ["email", 50],
-  ])("denies one over the %s limit", async (bucket, limit) => {
-    serveFailures({ [bucket]: withOwn(...repeat(at(-10 * MIN), limit)) });
+  ])("denies when the %s bucket already holds %i real failures", async (bucket, limit) => {
+    serveFailures({ [bucket]: repeat(at(-10 * MIN), limit) });
     await expect(registerAttempt({ email: EMAIL, ip: IP, now: NOW })).resolves.toEqual({
       allowed: false,
       retryAfterSeconds: 5 * 60,
     });
+    expect(db.create.mock.calls[0][0].data.blocked).toBe(true);
   });
 
-  it("denies over the email limit even when ip is null", async () => {
-    serveFailures({ email: withOwn(...repeat(at(-10 * MIN), 50)) });
+  it("denies at the email limit even when ip is null", async () => {
+    serveFailures({ email: repeat(at(-10 * MIN), 50) });
     await expect(registerAttempt({ email: EMAIL, ip: null, now: NOW })).resolves.toEqual({
       allowed: false,
       retryAfterSeconds: 5 * 60,
     });
-  });
-});
-
-describe("retryAfterSeconds", () => {
-  it("is when the limit-th newest real failure (excluding the blocked own row) expires", async () => {
-    // excluding own: [-1m, -2m, -3m, -4m, -5m] -> 5th newest is -5m -> reopens at +10m
-    // (counting own would give -4m -> +11m)
-    serveFailures({ pair: withOwn(at(-1 * MIN), at(-2 * MIN), at(-3 * MIN), at(-4 * MIN), at(-5 * MIN)) });
-    await expect(registerAttempt({ email: EMAIL, ip: IP, now: NOW })).resolves.toEqual({
-      allowed: false,
-      retryAfterSeconds: 10 * 60,
-    });
+    expect(db.create.mock.calls[0][0].data.blocked).toBe(true);
   });
 
-  it("excludes the own row by id even when it is not the newest row", async () => {
-    const rows: Row[] = [
-      { id: "later-1", createdAt: at(1000) },
-      { id: OWN_ID, createdAt: NOW },
-      ...repeat(at(-10 * MIN), 4).map((createdAt, i) => ({ id: `old-${i}`, createdAt })),
-    ];
-    serveFailures({ pair: rows });
-    // others newest first: [+1s, -10m x4] -> 5th newest is -10m -> +5m
-    await expect(registerAttempt({ email: EMAIL, ip: IP, now: NOW })).resolves.toEqual({
-      allowed: false,
-      retryAfterSeconds: 5 * 60,
-    });
-  });
-
-  it("ignores buckets that are at, but not over, their limit", async () => {
+  it("only constrains on buckets at their limit, not below it", async () => {
     serveFailures({
-      pair: withOwn(...repeat(at(-1 * MIN), 4)), // 5 incl. own: not over
-      ip: withOwn(...repeat(at(-12 * MIN), 20)), // over
+      pair: repeat(at(-1 * MIN), 4), // below: no constraint
+      ip: repeat(at(-12 * MIN), 20), // at limit
     });
     await expect(registerAttempt({ email: EMAIL, ip: IP, now: NOW })).resolves.toEqual({
       allowed: false,
@@ -329,11 +337,11 @@ describe("retryAfterSeconds", () => {
     });
   });
 
-  it("takes the latest reopening time across exceeded buckets", async () => {
+  it("takes the latest reopening time across buckets at their limit", async () => {
     serveFailures({
-      pair: withOwn(...repeat(at(-14 * MIN), 5)), // +1m
-      ip: withOwn(...repeat(at(-2 * MIN), 20)), // +13m
-      email: withOwn(...repeat(at(-8 * MIN), 50)), // +7m
+      pair: repeat(at(-14 * MIN), 5), // +1m
+      ip: repeat(at(-2 * MIN), 20), // +13m
+      email: repeat(at(-8 * MIN), 50), // +7m
     });
     await expect(registerAttempt({ email: EMAIL, ip: IP, now: NOW })).resolves.toEqual({
       allowed: false,
@@ -342,7 +350,7 @@ describe("retryAfterSeconds", () => {
   });
 
   it("rounds partial seconds up", async () => {
-    serveFailures({ pair: withOwn(...repeat(at(-10 * MIN + 500), 5)) });
+    serveFailures({ pair: repeat(at(-10 * MIN + 500), 5) });
     await expect(registerAttempt({ email: EMAIL, ip: IP, now: NOW })).resolves.toEqual({
       allowed: false,
       retryAfterSeconds: 5 * 60 + 1,
@@ -350,10 +358,49 @@ describe("retryAfterSeconds", () => {
   });
 
   it("is at least 1 second", async () => {
-    serveFailures({ pair: withOwn(...repeat(at(-15 * MIN + 1), 5)) });
+    serveFailures({ pair: repeat(at(-15 * MIN + 1), 5) });
     await expect(registerAttempt({ email: EMAIL, ip: IP, now: NOW })).resolves.toEqual({
       allowed: false,
       retryAfterSeconds: 1,
+    });
+  });
+});
+
+describe("count after insert: concurrent rows land between pre-check and count", () => {
+  it("marks the pending row blocked, then prunes, and denies", async () => {
+    serveFailures({ pair: { before: repeat(at(-10 * MIN), 4), after: repeat(at(-10 * MIN), 5) } });
+
+    await expect(registerAttempt({ email: EMAIL, ip: IP, now: NOW })).resolves.toEqual({
+      allowed: false,
+      retryAfterSeconds: 5 * 60,
+    });
+
+    expect(db.create.mock.calls[0][0].data.blocked).toBe(false);
+    expect(db.findMany).toHaveBeenCalledTimes(6);
+    expect(db.update).toHaveBeenCalledTimes(1);
+    expect(db.update).toHaveBeenCalledWith({ where: { id: OWN_ID }, data: { blocked: true } });
+    const updateOrder = db.update.mock.invocationCallOrder[0];
+    expect(Math.max(...db.findMany.mock.invocationCallOrder)).toBeLessThan(updateOrder);
+    expect(updateOrder).toBeLessThan(db.deleteMany.mock.invocationCallOrder[0]);
+  });
+
+  it("computes retryAfterSeconds without the own (now blocked) row", async () => {
+    // others after: [-1m .. -5m] -> 5th newest is -5m -> +10m (counting own would give -4m -> +11m)
+    const after = [1, 2, 3, 4, 5].map((m) => at(-m * MIN));
+    serveFailures({ pair: { before: after.slice(0, 4), after } });
+    await expect(registerAttempt({ email: EMAIL, ip: IP, now: NOW })).resolves.toEqual({
+      allowed: false,
+      retryAfterSeconds: 10 * 60,
+    });
+  });
+
+  it("excludes the own row by id even when it is not the newest row", async () => {
+    // others after: [+1s, -10m x4] -> 5th newest is -10m -> +5m
+    const after = [at(1000), ...repeat(at(-10 * MIN), 4)];
+    serveFailures({ pair: { before: after.slice(0, 4), after } });
+    await expect(registerAttempt({ email: EMAIL, ip: IP, now: NOW })).resolves.toEqual({
+      allowed: false,
+      retryAfterSeconds: 5 * 60,
     });
   });
 });
@@ -377,30 +424,53 @@ describe("markAttemptSucceeded", () => {
 
 describe("DB errors propagate (fail-closed)", () => {
   const boom = new Error("db down");
-  const lockPair = () => serveFailures({ pair: withOwn(...repeat(at(-MIN), 5)) });
+  const preCheckLock = () => serveFailures({ pair: repeat(at(-MIN), 5) });
+  const raceLock = () =>
+    serveFailures({ pair: { before: repeat(at(-MIN), 4), after: repeat(at(-MIN), 5) } });
 
-  it("when writing the attempt fails", async () => {
-    db.create.mockRejectedValue(boom);
-    await expect(registerAttempt({ email: EMAIL, ip: IP, now: NOW })).rejects.toBe(boom);
-    expect(db.findMany).not.toHaveBeenCalled();
-  });
-
-  it.each<BucketName>(["pair", "ip", "email"])("when reading the %s bucket fails", async (bucket) => {
+  it.each<BucketName>(["pair", "ip", "email"])("when the pre-check read of %s fails", async (bucket) => {
     db.findMany.mockImplementation(async (args: FindManyArgs) => {
       if (bucketOf(args.where) === bucket) throw boom;
-      return withOwn();
+      return [];
+    });
+    await expect(registerAttempt({ email: EMAIL, ip: IP, now: NOW })).rejects.toBe(boom);
+    expect(db.create).not.toHaveBeenCalled();
+  });
+
+  it.each<BucketName>(["pair", "ip", "email"])("when the count of %s after the insert fails", async (bucket) => {
+    db.findMany.mockImplementation(async (args: FindManyArgs) => {
+      if (ownPending && bucketOf(args.where) === bucket) throw boom;
+      return ownPending ? [{ id: OWN_ID, createdAt: NOW }] : [];
     });
     await expect(registerAttempt({ email: EMAIL, ip: IP, now: NOW })).rejects.toBe(boom);
   });
 
-  it("when marking a denied row blocked fails", async () => {
-    lockPair();
+  it("when writing the pending row fails", async () => {
+    db.create.mockRejectedValue(boom);
+    await expect(registerAttempt({ email: EMAIL, ip: IP, now: NOW })).rejects.toBe(boom);
+  });
+
+  it("when writing the blocked row (pre-check denial) fails", async () => {
+    preCheckLock();
+    db.create.mockRejectedValue(boom);
+    await expect(registerAttempt({ email: EMAIL, ip: IP, now: NOW })).rejects.toBe(boom);
+    expect(db.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("when pruning after a pre-check denial fails", async () => {
+    preCheckLock();
+    db.deleteMany.mockRejectedValue(boom);
+    await expect(registerAttempt({ email: EMAIL, ip: IP, now: NOW })).rejects.toBe(boom);
+  });
+
+  it("when marking a denied pending row blocked fails", async () => {
+    raceLock();
     db.update.mockRejectedValue(boom);
     await expect(registerAttempt({ email: EMAIL, ip: IP, now: NOW })).rejects.toBe(boom);
   });
 
-  it("when pruning after a denial fails", async () => {
-    lockPair();
+  it("when pruning after a denial at count time fails", async () => {
+    raceLock();
     db.deleteMany.mockRejectedValue(boom);
     await expect(registerAttempt({ email: EMAIL, ip: IP, now: NOW })).rejects.toBe(boom);
   });

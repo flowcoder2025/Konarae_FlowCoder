@@ -11,14 +11,21 @@ import { prisma } from "@/lib/prisma";
  * - ip:    same IP, any email (skipped when the IP is unknown)    limit 20
  * - email: same email, any IP (including unknown)                 limit 50
  *
- * Every attempt is first written as a pending failure in its own autocommitted
- * statement, and only then are the buckets counted (the row just written
- * included). If any bucket is over its limit, that row is updated to
- * `blocked = true` and the attempt is denied. Allowed rows are never blocked,
- * so they are never excluded later: the (L+1)-th allowed insert into a bucket
- * would have seen the L earlier allowed rows plus itself and been denied.
- * Concurrent requests therefore cannot exceed a limit. Do not wrap the steps
- * in one REPEATABLE READ / SERIALIZABLE transaction (its snapshot would hide
+ * Steps:
+ * 1. Pre-check (read only). If a bucket already holds its limit of real
+ *    failures, the attempt is written directly as `blocked = true` and denied.
+ *    It never passes through a pending phase, so a flood against a locked pair
+ *    does not briefly fill the IP / email-wide buckets and lock out other IPs.
+ * 2. Otherwise the attempt is written as a pending failure in its own
+ *    autocommitted statement, and only then are the buckets counted (the row
+ *    just written included). If any bucket is over its limit, that row is
+ *    updated to `blocked = true` and the attempt is denied.
+ *
+ * Step 2 alone decides every allow. Allowed rows are never blocked, so they
+ * are never excluded later: the (L+1)-th allowed insert into a bucket would
+ * have seen the L earlier allowed rows plus itself and been denied. Concurrent
+ * requests therefore cannot exceed a limit. Do not wrap the steps in one
+ * REPEATABLE READ / SERIALIZABLE transaction (its snapshot would hide
  * concurrent rows), and keep to single statements (PgBouncer transaction
  * pooling: no session state, no advisory locks).
  *
@@ -86,15 +93,27 @@ function recentFailures(bucket: Bucket, windowStart: Date): Promise<FailureRow[]
   });
 }
 
+type BucketRead = { bucket: Bucket; rows: FailureRow[] };
+
+async function readBuckets(buckets: Bucket[], windowStart: Date): Promise<BucketRead[]> {
+  const rows = await Promise.all(buckets.map((bucket) => recentFailures(bucket, windowStart)));
+  return buckets.map((bucket, i) => ({ bucket, rows: rows[i] }));
+}
+
 /**
- * For a bucket that was over its limit: when a new attempt (which adds its own
- * row) would fit again, assuming no further attempts. The denied row is now
- * blocked and no longer counts, so this is when the limit-th newest of the
- * other rows leaves the window.
+ * Seconds until a new attempt (which adds its own row) would fit every given
+ * full bucket again, assuming no further attempts: for each bucket, when the
+ * limit-th newest real failure other than this attempt's own row (blocked,
+ * so no longer counted) leaves the window. Integer, at least 1.
  */
-function bucketReopensAt(rows: FailureRow[], limit: number, ownId: string): number {
-  const others = rows.filter((row) => row.id !== ownId);
-  return others[limit - 1].createdAt.getTime() + WINDOW_MS;
+function retryAfterSeconds(full: BucketRead[], ownId: string, now: Date): number {
+  const reopensAt = Math.max(
+    ...full.map(({ bucket, rows }) => {
+      const others = rows.filter((row) => row.id !== ownId);
+      return others[bucket.limit - 1].createdAt.getTime() + WINDOW_MS;
+    })
+  );
+  return Math.max(1, Math.ceil((reopensAt - now.getTime()) / 1000));
 }
 
 async function pruneOldAttempts(): Promise<void> {
@@ -113,24 +132,39 @@ export async function registerAttempt(input: {
   const keyHash = hashKey(secret, "email", normalizeEmail(input.email));
   const ipHash = typeof input.ip === "string" ? hashKey(secret, "ip", input.ip) : null;
 
-  // 1. Record the attempt as a pending failure (committed before anything is counted).
-  const attempt = await prisma.adminLoginAttempt.create({
-    data: { keyHash, ipHash, success: false, blocked: false, createdAt: now },
-    select: { id: true },
-  });
-
-  // 2. Count real failures in the window per bucket, including the row just written.
   const buckets: Bucket[] = [
     { where: { keyHash, ipHash }, limit: PAIR_LIMIT },
     ...(ipHash === null ? [] : [{ where: { ipHash }, limit: IP_LIMIT }]),
     { where: { keyHash }, limit: EMAIL_LIMIT },
   ];
   const windowStart = new Date(now.getTime() - WINDOW_MS);
-  const counted = await Promise.all(buckets.map((bucket) => recentFailures(bucket, windowStart)));
 
-  const exceeded = buckets
-    .map((bucket, i) => ({ bucket, rows: counted[i] }))
-    .filter(({ bucket, rows }) => rows.length > bucket.limit);
+  // 1. Pre-check. This step can only add denials, never allows: if it passes,
+  //    step 2 runs exactly as it would without it and makes the decision. If a
+  //    bucket already holds `limit` real failures, step 2 would count at least
+  //    those plus its own row (> limit) unless some of them expired or stopped
+  //    counting in between, so denying here is never looser than step 2.
+  //    Writing the row as blocked straight away keeps a flood against a locked
+  //    bucket out of the other buckets (no pending phase).
+  const before = await readBuckets(buckets, windowStart);
+  const alreadyFull = before.filter(({ bucket, rows }) => rows.length >= bucket.limit);
+  if (alreadyFull.length > 0) {
+    const denied = await prisma.adminLoginAttempt.create({
+      data: { keyHash, ipHash, success: false, blocked: true, createdAt: now },
+      select: { id: true },
+    });
+    await pruneOldAttempts();
+    return { allowed: false, retryAfterSeconds: retryAfterSeconds(alreadyFull, denied.id, now) };
+  }
+
+  // 2. Record the attempt as a pending failure (committed before anything is
+  //    counted), then count real failures per bucket, including that row.
+  const attempt = await prisma.adminLoginAttempt.create({
+    data: { keyHash, ipHash, success: false, blocked: false, createdAt: now },
+    select: { id: true },
+  });
+  const counted = await readBuckets(buckets, windowStart);
+  const exceeded = counted.filter(({ bucket, rows }) => rows.length > bucket.limit);
   if (exceeded.length === 0) {
     return { allowed: true, attemptId: attempt.id };
   }
@@ -141,12 +175,7 @@ export async function registerAttempt(input: {
     data: { blocked: true },
   });
   await pruneOldAttempts();
-
-  const reopensAt = Math.max(
-    ...exceeded.map(({ bucket, rows }) => bucketReopensAt(rows, bucket.limit, attempt.id))
-  );
-  const retryAfterSeconds = Math.max(1, Math.ceil((reopensAt - now.getTime()) / 1000));
-  return { allowed: false, retryAfterSeconds };
+  return { allowed: false, retryAfterSeconds: retryAfterSeconds(exceeded, attempt.id, now) };
 }
 
 export async function markAttemptSucceeded(attemptId: string): Promise<void> {
