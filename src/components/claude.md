@@ -17,8 +17,6 @@
 ├── /companies          # 기업 관련 컴포넌트
 ├── /projects           # 프로젝트 컴포넌트
 ├── /matching           # 매칭 컴포넌트
-├── /business-plans     # 사업계획서 컴포넌트
-├── /evaluations        # 평가 컴포넌트
 ├── /documents          # 문서 관리 컴포넌트
 ├── /dashboard          # 대시보드 컴포넌트
 ├── /admin              # 관리자 컴포넌트
@@ -269,7 +267,6 @@ Transitions:
 | `/projects` | 지원사업 | ProjectCard, ProjectList |
 | `/matching` | 매칭 | MatchFilters, MatchResults |
 | `/documents` | 문서 관리 | DocumentUpload, DocumentList |
-| `/evaluations` | 평가 | EvaluationForm, FeedbackCard |
 
 ---
 
@@ -282,3 +279,4 @@ Transitions:
 | 2025-12-05 | 모달 상태도 보강 | Modal 컴포넌트 |
 | 2025-12-05 | /docs 참조 섹션 추가, 토큰 효율 원칙 적용 | 절차 전체 |
 | 2025-12-15 | 허브 연결 섹션 추가, 디렉토리 구조 확장 | 전체 |
+| 2026-11-17 | 사업계획서·평가 컴포넌트 제거 | 디렉토리 구조 |

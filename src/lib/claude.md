@@ -42,7 +42,6 @@
 ├── rag-access.ts           # RAG 임베딩 읽기·쓰기 권한 canAccessEmbeddings()
 ├── text-config.ts          # i18n 텍스트 설정
 ├── notifications.ts        # 알림 시스템
-├── export.ts               # 데이터 내보내기
 │
 │   # 외부 서비스 연동
 ├── qstash.ts               # QStash 연동
@@ -170,7 +169,7 @@ export default async function Page() {
   - support_project: 읽기는 로그인한 누구나, 쓰기는 관리자(`getAdminSession()`)만.
   - company: 읽기 viewer, 쓰기 company admin(owner 포함).
   - business_plan: 읽기 viewer, 쓰기 owner.
-- `hybridSearch()`는 source id로 거르지 못한다. 그래서 `/api/rag/search`에서 관리자가 아니면 support_project만 검색한다(종류를 안 주면 support_project, company·business_plan을 주면 403). 서버 내부 호출(`business-plan-generator.ts`)은 결과를 사업계획서의 `companyId`·`projectId`로 거른다. 이 값이 사용자 권한으로 검증됐는지는 그 호출 쪽 책임이다(2026-11-17 기준 사업계획서 생성은 `companyId`를 검사하지 않는다 — 열린 gap).
+- `hybridSearch()`는 source id로 거르지 못한다. 그래서 `/api/rag/search`에서 관리자가 아니면 support_project만 검색한다(종류를 안 주면 support_project, company·business_plan을 주면 403). 서버 내부 호출(`matching.ts`, `/api/projects/search`)은 support_project만 검색한다. company·business_plan을 검색하는 서버 코드를 새로 만들면 결과를 사용자가 권한을 가진 source id로 거른다(사업계획서 생성·평가는 2026-11-17 제거).
 - `/api/rag/embed` 본문은 10만 자까지다(청크마다 OpenAI 호출 한 번).
 - 경계 테스트: `__tests__/app/api/rag/rag-access.test.ts`(ReBAC·관리자 판정은 실제 코드, 거부된 요청은 임베딩 함수에 닿지 않음).
 
@@ -376,3 +375,4 @@ export async function PATCH(req, { params }) {
 | 2026-11-17 | 4.3 관리자 판정(`getAdminSession` 하나), `/admin-login` 모듈 구조 추가 |
 | 2026-11-17 | 4.3 잠금 IP 버킷 선읽기, 거부 `reason` 분리·해시 trim, Auth.js `logger`, IP 없음 경고 |
 | 2026-11-17 | 4.4 RAG 임베딩 권한(`rag-access.ts`) |
+| 2026-11-17 | 사업계획서 생성·평가 제거(`business-plan-generator`·`evaluation-engine`·`export` 등) |

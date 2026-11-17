@@ -22,8 +22,6 @@
 │   ├── /companies         #    기업 관리 (CRUD)
 │   ├── /projects          #    지원사업 조회
 │   ├── /matching          #    매칭 시스템
-│   ├── /business-plans    #    사업계획서
-│   ├── /evaluations       #    평가 시스템
 │   └── /settings          #    사용자 설정
 │
 ├── /admin                 # 👑 관리자 전용 라우트
@@ -38,7 +36,6 @@
 │   ├── /projects          #    프로젝트 API
 │   ├── /matching          #    매칭 API
 │   ├── /documents         #    문서 분석 API
-│   ├── /evaluations       #    평가 API
 │   ├── /rag               #    RAG 검색 API
 │   ├── /cron              #    Cron Job 엔드포인트
 │   └── /admin             #    관리자 API
@@ -317,3 +314,4 @@ if (!canEdit) {
 | 2026-11-16 | `/access-denied` 추가, 비관리자 리다이렉트 대상 변경 |
 | 2026-11-17 | `/access-denied` 제거, 관리자 로그인 `/admin-login`(이메일 + 비밀번호)으로 대체, 관리자 판정 설명 추가 |
 | 2026-11-17 | 2.2 서버 액션 목록 규칙(src 전체 스캔), `/api/rag` 권한은 `src/lib/claude.md` 4.4 |
+| 2026-11-17 | 사업계획서·평가 페이지와 API 제거(`/business-plans`·`/evaluations`는 레거시 리다이렉트로 남음) |
