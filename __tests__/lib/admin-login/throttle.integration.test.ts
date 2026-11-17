@@ -152,6 +152,8 @@ describeWithDb(suiteTitle, () => {
     // ALL / ... / COMMIT. Nothing else may appear.
     const CONTROL = new Set(["BEGIN", "COMMIT", "DEALLOCATE"]);
     const kind = (query: string) => query.trim().split(/\s+/)[0].toUpperCase();
+    const IP_READ =
+      /^SELECT .*"public"\."admin_login_buckets"\."count".* FROM "public"\."admin_login_buckets" WHERE /;
     const UPSERT =
       /^INSERT INTO "public"\."admin_login_buckets" \("key","windowStart","count"\) VALUES \(\$1,\$2,\$3\) ON CONFLICT \("key"\) DO UPDATE SET "count" = \("public"\."admin_login_buckets"\."count" \+ \$4\) WHERE .* RETURNING .*"public"\."admin_login_buckets"\."count"$/;
 
@@ -191,13 +193,14 @@ describeWithDb(suiteTitle, () => {
       return { result, queries: [...instance.queries] };
     }
 
-    it("each bucket is one native upsert, and a new bucket costs exactly what an existing one does", async () => {
+    it("each bucket is one native upsert (the IP one after a read), and a new bucket costs exactly what an existing one does", async () => {
       const e = email("sql");
       const x = ip(1);
 
       const fresh = await logged(e, x, t(0, 1000));
       expect(fresh.result).toEqual({ allowed: true });
-      expect(dataStatements(fresh.queries)).toEqual(["INSERT", "INSERT", "INSERT", "DELETE"]);
+      expect(dataStatements(fresh.queries)).toEqual(["SELECT", "INSERT", "INSERT", "INSERT", "DELETE"]);
+      expect(fresh.queries.find((q) => kind(q) === "SELECT")).toMatch(IP_READ);
       const upserts = fresh.queries.filter((q) => kind(q) === "INSERT");
       for (const upsert of upserts) expect(upsert).toMatch(UPSERT);
       expect(fresh.queries.find((q) => kind(q) === "DELETE")).toMatch(
@@ -221,7 +224,8 @@ describeWithDb(suiteTitle, () => {
       for (const e of emails) await attempt(e, x, t(0, 1000));
       const atIp = await logged(email("sql-ip-21"), x, t(0, 1000));
       expect(atIp.result).toEqual({ allowed: false, retryAfterSeconds: 899 });
-      expect(dataStatements(atIp.queries)).toEqual(["INSERT", "DELETE"]);
+      // a full IP bucket is only read, never written
+      expect(dataStatements(atIp.queries)).toEqual(["SELECT", "DELETE"]);
 
       // a full pair: denied at the second stage
       const y = ip(3);
@@ -229,7 +233,29 @@ describeWithDb(suiteTitle, () => {
       for (let i = 0; i < 5; i++) await attempt(e, y, t(0, 1000));
       const atPair = await logged(e, y, t(0, 1000));
       expect(atPair.result).toMatchObject({ allowed: false });
-      expect(dataStatements(atPair.queries)).toEqual(["INSERT", "INSERT", "DELETE"]);
+      expect(dataStatements(atPair.queries)).toEqual(["SELECT", "INSERT", "INSERT", "DELETE"]);
+    });
+  });
+
+  describe("a full IP bucket is not written (hot-row flood)", () => {
+    it("after an IP is full, its further attempts leave its row, and every pair and email row, unchanged", async () => {
+      const x = ip(2200);
+      for (let i = 0; i < 20; i++) {
+        await expect(attempt(email(`flood-fill-${i}`), x, t(0, 5000))).resolves.toEqual({ allowed: true });
+      }
+      expect(await count(ipKey(x, K))).toBe(20);
+
+      // sequential, then a concurrent flood from all instances
+      const late = Array.from({ length: 10 }, (_, i) => email(`flood-late-${i}`));
+      for (const e of late) {
+        await expect(attempt(e, x, t(0, 6000))).resolves.toEqual({ allowed: false, retryAfterSeconds: 894 });
+      }
+      const flood = await concurrently(80, (i) => attempt(late[i % late.length], x, t(0, 7000)));
+      expect(allowedCount(flood)).toBe(0);
+
+      expect(await count(ipKey(x, K))).toBe(20);
+      expect(await existing(late.map((e) => pairKey(e, x, K)))).toBe(0);
+      expect(await existing(late.map((e) => emailKey(e, K)))).toBe(0);
     });
   });
 
@@ -244,8 +270,13 @@ describeWithDb(suiteTitle, () => {
         const results = await concurrently(n, () => attempt(e, x, t(0, 5000)));
 
         expect(allowedCount(results)).toBe(5);
-        // every attempt counts at the IP; only the IP's 20 reach the pair; only the pair's 5 reach the email
-        expect(await count(ipKey(x, K))).toBe(n);
+        // Below the IP limit every attempt counts there. Past it, an attempt that
+        // reads a full row is not written, so the row ends between 20 and n.
+        // Only the IP's 20 reach the pair; only the pair's 5 reach the email.
+        const atIp = await count(ipKey(x, K));
+        expect(atIp).toBeGreaterThanOrEqual(Math.min(n, 20));
+        expect(atIp).toBeLessThanOrEqual(n);
+        if (n <= 20) expect(atIp).toBe(n);
         expect(await count(pairKey(e, x, K))).toBe(Math.min(n, 20));
         expect(await count(emailKey(e, K))).toBe(5);
       }
@@ -258,7 +289,9 @@ describeWithDb(suiteTitle, () => {
         const results = await concurrently(30, (i) => attempt(emails[i], x, t(0, 5000)));
 
         expect(allowedCount(results)).toBe(20);
-        expect(await count(ipKey(x, K))).toBe(30);
+        const atIp = await count(ipKey(x, K));
+        expect(atIp).toBeGreaterThanOrEqual(20);
+        expect(atIp).toBeLessThanOrEqual(30);
         expect(await existing(emails.map((e) => pairKey(e, x, K)))).toBe(20);
         expect(await existing(emails.map((e) => emailKey(e, K)))).toBe(20);
       }
@@ -272,6 +305,7 @@ describeWithDb(suiteTitle, () => {
 
       expect(results.slice(0, 20).every((r) => r.allowed)).toBe(true);
       expect(results.slice(20)).toEqual(Array(10).fill({ allowed: false, retryAfterSeconds: 895 }));
+      expect(await count(ipKey(x, K))).toBe(20);
       expect(await existing(emails.map((e) => pairKey(e, x, K)))).toBe(20);
       expect(await existing(emails.map((e) => emailKey(e, K)))).toBe(20);
     });
@@ -322,7 +356,10 @@ describeWithDb(suiteTitle, () => {
       // X spent only its pair's 5 slots of the email's 50.
       expect(await count(emailKey(e, K))).toBe(5 + 5 + 30);
       expect(await count(pairKey(e, x, K))).toBe(20);
-      expect(await count(ipKey(x, K))).toBe(20 * 60);
+      // Only the first burst writes X's IP row; once it is full the rest only read it.
+      const atIp = await count(ipKey(x, K));
+      expect(atIp).toBeGreaterThanOrEqual(20);
+      expect(atIp).toBeLessThanOrEqual(60);
 
       // Y's own pair limit still applies.
       await expect(attempt(e, y, t(0, 60_000))).resolves.toEqual({ allowed: false, retryAfterSeconds: 840 });

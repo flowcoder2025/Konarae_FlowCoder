@@ -16,22 +16,35 @@ import { createLogger } from "@/lib/logger";
  *   1. ip:    same client IP, any email           limit 20
  *   2. pair:  same email AND same IP               limit 5
  *   3. email: same email, any IP or no IP          limit 50
- * An attempt reaches a bucket only if every earlier bucket allowed it. A
- * denied attempt still counts in the bucket that denied it (it never reaches
- * the later ones), and counts already taken in earlier buckets are not given
- * back (they belong to the requester's own IP and pair). With no IP only the
- * email bucket applies. One IP can therefore spend at most 5 of an email's 50
- * slots per window (its pair limit) and touch at most 20 pair/email buckets
- * (its IP limit): locking an email for everyone takes 10 or more IPs.
+ * An attempt reaches a bucket only if every earlier bucket allowed it. An
+ * attempt denied by a bucket's upsert still counts in that bucket (it never
+ * reaches the later ones), and counts already taken in earlier buckets are not
+ * given back (they belong to the requester's own IP and pair). An attempt that
+ * finds its IP bucket already full is denied without counting anywhere (see
+ * the IP read below). With no IP only the email bucket applies. One IP can
+ * therefore spend at most 5 of an email's 50 slots per window (its pair limit)
+ * and touch at most 20 pair/email buckets (its IP limit): locking an email for
+ * everyone takes 10 or more IPs.
  *
- * Each bucket is one statement, a native upsert:
+ * Each bucket is decided by one statement, a native upsert:
  *   INSERT ... (count 1) ON CONFLICT (key) DO UPDATE SET count = count + 1 RETURNING count
  * and the attempt is allowed iff the returned count is at most the limit.
  * Postgres serializes concurrent upserts of one key, so each gets a distinct
- * count and exactly `limit` of them are allowed. The statement is the same
- * whether or not the bucket exists, so the work done does not reveal that.
- * No read-then-write, interactive transaction or advisory lock (PgBouncer
- * transaction pooling), and nothing is left half-done if a request dies.
+ * count and exactly `limit` of them are allowed. The pair and email stages are
+ * only that statement, the same whether or not the bucket exists, so the work
+ * done does not reveal earlier attempts on an email.
+ *
+ * The IP stage first reads its row (`findUnique`) and, if the count is already
+ * at the limit, denies without writing. Under PgBouncer (`pgbouncer=true`)
+ * Prisma wraps every statement in BEGIN ... COMMIT, so a flood from one IP that
+ * kept upserting would serialize on that one hot row's lock while holding
+ * pooled server connections; once the row is full the flood only reads. The
+ * read never allows anything by itself: below the limit the upsert still
+ * decides, so a stale read (another instance filled the row in between) is
+ * denied by the upsert and the exact limits under concurrency are unchanged.
+ * The read reveals only the requester's own IP state. No interactive
+ * transaction or advisory lock (PgBouncer transaction pooling), and nothing is
+ * left half-done if a request dies.
  *
  * After the decision, rows older than the previous window are deleted
  * (best-effort; errors are logged and never change the result). The previous
@@ -56,7 +69,8 @@ export const ADMIN_LOGIN_THROTTLE = Object.freeze({
 
 export type ConsumeAttemptResult = { allowed: true } | { allowed: false; retryAfterSeconds: number };
 
-type Bucket = { key: string; limit: number };
+/** `readFirst`: skip the write when the row is already at the limit (the IP stage). */
+type Bucket = { key: string; limit: number; readFirst?: boolean };
 type Window = { index: number; start: Date };
 
 const logger = createLogger({ lib: "admin-login-throttle" });
@@ -89,23 +103,34 @@ function buckets(secret: string, email: string, ip: string | null, window: numbe
   const emailBucket = { key: bucketKey(secret, `email:${email}\n${window}`), limit: EMAIL_LIMIT };
   if (!ip) return [emailBucket];
   return [
-    { key: bucketKey(secret, `ip:${ip}\n${window}`), limit: IP_LIMIT },
+    { key: bucketKey(secret, `ip:${ip}\n${window}`), limit: IP_LIMIT, readFirst: true },
     { key: bucketKey(secret, `pair:${email}\n${ip}\n${window}`), limit: PAIR_LIMIT },
     emailBucket,
   ];
 }
 
-async function tryConsume({ key, limit }: Bucket, window: Window, now: Date): Promise<ConsumeAttemptResult> {
+function denied(window: Window, now: Date): ConsumeAttemptResult {
+  const reopensInMs = window.start.getTime() + WINDOW_MS - now.getTime();
+  return { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil(reopensInMs / 1000)) };
+}
+
+async function isFull({ key, limit }: Bucket): Promise<boolean> {
+  const row = await prisma.adminLoginBucket.findUnique({ where: { key }, select: { count: true } });
+  return row !== null && row.count >= limit;
+}
+
+async function tryConsume(bucket: Bucket, window: Window, now: Date): Promise<ConsumeAttemptResult> {
+  // Only short-circuits a denial; an allow always comes from the upsert below.
+  if (bucket.readFirst && (await isFull(bucket))) return denied(window, now);
+
+  const { key, limit } = bucket;
   const { count } = await prisma.adminLoginBucket.upsert({
     where: { key },
     create: { key, windowStart: window.start, count: 1 },
     update: { count: { increment: 1 } },
     select: { count: true },
   });
-  if (count <= limit) return { allowed: true };
-
-  const reopensInMs = window.start.getTime() + WINDOW_MS - now.getTime();
-  return { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil(reopensInMs / 1000)) };
+  return count <= limit ? { allowed: true } : denied(window, now);
 }
 
 async function pruneOldWindows(window: Window): Promise<void> {

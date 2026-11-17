@@ -4,7 +4,8 @@
  * Unit tests for the admin login throttle with Prisma mocked by an in-memory
  * table that applies the same upsert semantics as the SQL Prisma emits
  * (INSERT ... ON CONFLICT ("key") DO UPDATE SET count = count + 1 RETURNING;
- * see throttle.integration.test.ts for the real-database tests).
+ * see throttle.integration.test.ts for the real-database tests), plus the
+ * IP stage's read (findUnique).
  */
 
 import { createHash, createHmac } from "node:crypto";
@@ -12,6 +13,7 @@ import { createHash, createHmac } from "node:crypto";
 jest.mock("@/lib/prisma", () => ({
   prisma: {
     adminLoginBucket: {
+      findUnique: jest.fn(),
       upsert: jest.fn(),
       deleteMany: jest.fn(),
     },
@@ -19,7 +21,7 @@ jest.mock("@/lib/prisma", () => ({
 }));
 
 import { prisma } from "@/lib/prisma";
-import { ADMIN_LOGIN_THROTTLE, consumeAttempt } from "@/lib/admin-login/throttle";
+import { ADMIN_LOGIN_THROTTLE, consumeAttempt, type ConsumeAttemptResult } from "@/lib/admin-login/throttle";
 
 type Row = { key: string; windowStart: Date; count: number };
 type UpsertArgs = {
@@ -28,9 +30,12 @@ type UpsertArgs = {
   update: { count: { increment: number } };
   select: { count: true };
 };
+type FindUniqueArgs = { where: { key: string }; select: { count: true } };
 type DeleteManyArgs = { where: { windowStart: { lt: Date } } };
+type CallArgs = FindUniqueArgs | UpsertArgs | DeleteManyArgs;
 
 const db = prisma.adminLoginBucket as unknown as {
+  findUnique: jest.Mock;
   upsert: jest.Mock;
   deleteMany: jest.Mock;
 };
@@ -63,6 +68,11 @@ function seed(key: string, count: number, windowStart = WINDOW_START) {
   table.set(key, { key, windowStart, count });
 }
 
+async function fakeFindUnique({ where }: FindUniqueArgs): Promise<{ count: number } | null> {
+  const row = table.get(where.key);
+  return row ? { count: row.count } : null;
+}
+
 async function fakeUpsert({ where, create, update }: UpsertArgs): Promise<{ count: number }> {
   const row = table.get(where.key);
   if (row) {
@@ -85,11 +95,11 @@ async function fakeDeleteMany({ where }: DeleteManyArgs): Promise<{ count: numbe
 }
 
 /** Every Prisma call in invocation order, as [method, args]. */
-function callLog(): Array<[string, UpsertArgs | DeleteManyArgs]> {
+function callLog(): Array<[string, CallArgs]> {
   const entries = (Object.keys(db) as Array<keyof typeof db>).flatMap((method) =>
     db[method].mock.calls.map((call, i) => ({
       order: db[method].mock.invocationCallOrder[i],
-      entry: [method, call[0]] as [string, UpsertArgs | DeleteManyArgs],
+      entry: [method, call[0]] as [string, CallArgs],
     }))
   );
   return entries.sort((a, b) => a.order - b.order).map((e) => e.entry);
@@ -119,6 +129,7 @@ beforeEach(() => {
   process.env.AUTH_SECRET = SECRET;
   process.env.NEXTAUTH_SECRET = OTHER_SECRET;
   table.clear();
+  db.findUnique.mockImplementation(fakeFindUnique);
   db.upsert.mockImplementation(fakeUpsert);
   db.deleteMany.mockImplementation(fakeDeleteMany);
   consoleSpies = (["log", "info", "warn", "error", "debug"] as const).map((method) =>
@@ -213,7 +224,7 @@ describe("bucket keys", () => {
   });
 });
 
-describe("one statement per bucket", () => {
+describe("statements per bucket", () => {
   it("upserts each bucket once: insert with count 1, or increment, returning the count", async () => {
     await consumeAttempt({ email: EMAIL, ip: null, now: NOW });
     await consumeAttempt({ email: EMAIL, ip: null, now: NOW });
@@ -225,20 +236,94 @@ describe("one statement per bucket", () => {
       update: { count: { increment: 1 } },
       select: { count: true },
     };
-    // the same single call for a missing and an existing bucket
+    // the same single call for a missing and an existing bucket, and no read
     expect(db.upsert.mock.calls).toEqual([[expected], [expected]]);
+    expect(db.findUnique).not.toHaveBeenCalled();
     expect(table.get(key)?.count).toBe(2);
   });
 
-  it("uses only upsert for decisions (no read, reset or create path)", async () => {
+  it("reads only the IP bucket, before its upsert; pair and email are one upsert each", async () => {
+    const k = keys();
+    await consumeAttempt({ email: EMAIL, ip: IP, now: NOW });
+    await consumeAttempt({ email: EMAIL, ip: IP, now: NOW });
+
+    const firstAttempt = callLog().slice(0, 5);
+    expect(firstAttempt.map(([method]) => method)).toEqual([
+      "findUnique",
+      "upsert",
+      "upsert",
+      "upsert",
+      "deleteMany",
+    ]);
+    expect(firstAttempt[0][1]).toEqual({ where: { key: k.ip }, select: { count: true } });
+    expect(db.findUnique.mock.calls).toEqual([
+      [{ where: { key: k.ip }, select: { count: true } }],
+      [{ where: { key: k.ip }, select: { count: true } }],
+    ]);
+    // the second attempt (all buckets now exist) sends the very same calls
+    expect(callLog().slice(5)).toEqual(firstAttempt);
+  });
+
+  it("has no reset or create path: a full pair bucket costs the IP read and two upserts", async () => {
     seed(keys().pair, 5);
     await consumeAttempt({ email: EMAIL, ip: IP, now: NOW });
-    expect(callLog().map(([method]) => method)).toEqual(["upsert", "upsert", "deleteMany"]);
+    expect(callLog().map(([method]) => method)).toEqual(["findUnique", "upsert", "upsert", "deleteMany"]);
   });
 
   it("uses the current time when now is omitted", async () => {
     await consumeAttempt({ email: EMAIL, ip: null });
     expect(table.get(keys().email)?.windowStart).toEqual(WINDOW_START);
+  });
+});
+
+describe("IP stage short-circuit", () => {
+  it.each([
+    ["at the limit", 20],
+    ["above the limit (concurrent upserts overshot it)", 27],
+  ])("denies without writing when the IP bucket is already %s", async (_label, count) => {
+    const k = keys();
+    seed(k.ip, count);
+
+    await expect(consumeAttempt({ email: EMAIL, ip: IP, now: NOW })).resolves.toEqual({
+      allowed: false,
+      retryAfterSeconds: 10 * 60,
+    });
+    expect(callLog().map(([method]) => method)).toEqual(["findUnique", "deleteMany"]);
+    expect(table.get(k.ip)?.count).toBe(count);
+    expect(table.has(k.pair)).toBe(false);
+    expect(table.has(k.email)).toBe(false);
+  });
+
+  it("upserts when the IP bucket does not exist yet", async () => {
+    await expect(consumeAttempt({ email: EMAIL, ip: IP, now: NOW })).resolves.toEqual({ allowed: true });
+    expect(table.get(keys().ip)?.count).toBe(1);
+  });
+
+  it("lets the upsert decide below the limit: a stale read cannot allow past it", async () => {
+    // Another instance filled the bucket between this attempt's read and its upsert.
+    const k = keys();
+    seed(k.ip, 20);
+    db.findUnique.mockResolvedValueOnce({ count: 19 });
+
+    await expect(consumeAttempt({ email: EMAIL, ip: IP, now: NOW })).resolves.toEqual({
+      allowed: false,
+      retryAfterSeconds: 10 * 60,
+    });
+    expect(upsertedKeys()).toEqual([k.ip]);
+    expect(table.get(k.ip)?.count).toBe(21);
+    expect(table.has(k.pair)).toBe(false);
+  });
+
+  it("counts every attempt up to the limit, then stops writing", async () => {
+    const k = keys();
+    const results: ConsumeAttemptResult[] = [];
+    for (let i = 0; i < 25; i++) {
+      results.push(await consumeAttempt({ email: `user${i}@example.com`, ip: IP, now: NOW }));
+    }
+    expect(results.filter((r) => r.allowed)).toHaveLength(20);
+    expect(table.get(k.ip)?.count).toBe(20);
+    expect(db.upsert.mock.calls.filter(([args]) => (args as UpsertArgs).where.key === k.ip)).toHaveLength(20);
+    expect(db.findUnique).toHaveBeenCalledTimes(25);
   });
 });
 
@@ -258,7 +343,7 @@ describe("bucket order", () => {
     expect(upsertedKeys()).toEqual([keys().email]);
   });
 
-  it("stops at a full IP bucket (its counter still goes up): pair and email are not touched", async () => {
+  it("stops at a full IP bucket (read only, no write): pair and email are not touched", async () => {
     const k = keys();
     seed(k.ip, 20);
 
@@ -266,8 +351,8 @@ describe("bucket order", () => {
       allowed: false,
       retryAfterSeconds: 10 * 60,
     });
-    expect(upsertedKeys()).toEqual([k.ip]);
-    expect(table.get(k.ip)?.count).toBe(21);
+    expect(upsertedKeys()).toEqual([]);
+    expect(table.get(k.ip)?.count).toBe(20);
     expect(table.has(k.pair)).toBe(false);
     expect(table.has(k.email)).toBe(false);
   });
@@ -418,6 +503,13 @@ describe("decision errors propagate (the caller denies: fail-closed)", () => {
     });
     await expect(consumeAttempt({ email: EMAIL, ip: IP, now: NOW })).rejects.toBe(boom);
     expect(db.upsert).toHaveBeenCalledTimes(failingCall + 1);
+    expect(db.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("when the IP read fails, with no upsert and no prune after it", async () => {
+    db.findUnique.mockRejectedValue(boom);
+    await expect(consumeAttempt({ email: EMAIL, ip: IP, now: NOW })).rejects.toBe(boom);
+    expect(db.upsert).not.toHaveBeenCalled();
     expect(db.deleteMany).not.toHaveBeenCalled();
   });
 });

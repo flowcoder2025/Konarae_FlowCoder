@@ -9,19 +9,25 @@
  * runs scrypt once, also for another email and also while the attempt is
  * throttled. The User table is read only after the right password for the
  * configured email. So whether an email belongs to an account is not
- * revealed by the response or its timing. Each throttle bucket costs one
- * statement whether or not it exists yet, so earlier attempts on an email
- * do not show either. The statement count does vary with the stage that
- * denies (with an IP: 1 when the IP denies, 2 when the pair does, 3 when the
- * email does or nothing does; with no IP always 1), which reveals only the
- * requester's own IP or IP+email throttling: a full email-wide bucket costs
- * the same as an allowed attempt.
+ * revealed by the response or its timing. The pair and email buckets cost
+ * one statement each whether or not they exist yet, so earlier attempts on an
+ * email do not show either. The statement count does vary with the stage
+ * that denies (with an IP: 1, a read, when the IP bucket is already full; 2
+ * when the IP upsert denies; 3 when the pair does; 4 when the email does or
+ * nothing does; with no IP always 1), which reveals only the requester's own
+ * IP or IP+email throttling: a full email-wide bucket costs the same as an
+ * allowed attempt.
  *
- * Any error (database, throttle, configuration) is logged without the email,
- * IP or password and the attempt is denied: `authorize` returns `null` and
- * never throws, so Auth.js reports `CredentialsSignin`. A throw would surface
- * as `error=Configuration`, and @auth/core logs the request body (the
- * plaintext password) at debug level for errors thrown from `authorize`.
+ * Every rejection is logged with a reason and without the email, IP,
+ * password or configured hash: `not_configured` (ADMIN_LOGIN_EMAIL or
+ * ADMIN_PASSWORD_HASH missing) and `malformed_hash` (a hash that does not
+ * parse) at error level, so operators can tell them from `invalid_credentials`.
+ *
+ * Any error (database, throttle) is logged the same way and the attempt is
+ * denied: `authorize` returns `null` and never throws, so Auth.js reports
+ * `CredentialsSignin`. A throw would surface as `error=Configuration`, and
+ * @auth/core logs the request body (the plaintext password) at debug level
+ * for errors thrown from `authorize`.
  */
 
 import { Prisma } from "@prisma/client";
@@ -29,7 +35,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { createLogger } from "@/lib/logger";
 import { getClientIp } from "./client-ip";
-import { verifyPassword } from "./password";
+import { isWellFormedHash, verifyPassword } from "./password";
 import { consumeAttempt, type ConsumeAttemptResult } from "./throttle";
 
 const logger = createLogger({ lib: "admin-login" });
@@ -95,7 +101,8 @@ async function authorizeChecked(
   }
 
   const adminEmail = normalizeEmail(process.env.ADMIN_LOGIN_EMAIL);
-  const adminHash = process.env.ADMIN_PASSWORD_HASH || undefined;
+  // A pasted value can carry a trailing newline or spaces.
+  const adminHash = process.env.ADMIN_PASSWORD_HASH?.trim() || undefined;
   const emailMatches = adminEmail !== null && adminHash !== undefined && email === adminEmail;
   // Always runs: for another email, while throttled, and when the throttle failed.
   const passwordMatches = await verifyPassword(password, emailMatches ? adminHash : undefined);
@@ -113,7 +120,17 @@ async function authorizeChecked(
     return null;
   }
 
-  if (!emailMatches || !passwordMatches || adminEmail === null) {
+  if (adminEmail === null || adminHash === undefined) {
+    logger.error("Admin login rejected", { reason: "not_configured" });
+    return null;
+  }
+
+  if (!isWellFormedHash(adminHash)) {
+    logger.error("Admin login rejected", { reason: "malformed_hash" });
+    return null;
+  }
+
+  if (!emailMatches || !passwordMatches) {
     logger.warn("Admin login rejected", { reason: "invalid_credentials" });
     return null;
   }

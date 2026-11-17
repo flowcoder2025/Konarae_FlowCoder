@@ -74,6 +74,21 @@ function findManyFromRows(args: {
   );
 }
 
+/** `context.reason` of every "Admin login rejected" line, in order. */
+function rejectionReasons(): string[] {
+  return consoleSpies
+    .flatMap((spy) => spy.mock.calls)
+    .map((args) => {
+      try {
+        return JSON.parse(String(args[0]));
+      } catch {
+        return null;
+      }
+    })
+    .filter((entry) => entry?.message === "Admin login rejected")
+    .map((entry) => entry.context.reason);
+}
+
 function loggedText(): string {
   return consoleSpies
     .flatMap((spy) => spy.mock.calls)
@@ -193,23 +208,70 @@ describe("authorizeAdmin", () => {
   });
 
   it.each([
-    ["ADMIN_LOGIN_EMAIL is missing", { ADMIN_LOGIN_EMAIL: undefined }],
-    ["ADMIN_LOGIN_EMAIL is blank", { ADMIN_LOGIN_EMAIL: "  " }],
-    ["ADMIN_PASSWORD_HASH is missing", { ADMIN_PASSWORD_HASH: undefined }],
-    ["ADMIN_PASSWORD_HASH is empty", { ADMIN_PASSWORD_HASH: "" }],
-    ["both are missing", { ADMIN_LOGIN_EMAIL: undefined, ADMIN_PASSWORD_HASH: undefined }],
-  ])("always rejects when %s", async (_label, overrides: Record<string, string | undefined>) => {
-    for (const [key, value] of Object.entries(overrides)) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
+    ["ADMIN_LOGIN_EMAIL is missing", { ADMIN_LOGIN_EMAIL: undefined }, "not_configured"],
+    ["ADMIN_LOGIN_EMAIL is blank", { ADMIN_LOGIN_EMAIL: "  " }, "not_configured"],
+    ["ADMIN_PASSWORD_HASH is missing", { ADMIN_PASSWORD_HASH: undefined }, "not_configured"],
+    ["ADMIN_PASSWORD_HASH is empty", { ADMIN_PASSWORD_HASH: "" }, "not_configured"],
+    ["ADMIN_PASSWORD_HASH is only whitespace", { ADMIN_PASSWORD_HASH: " \n\t" }, "not_configured"],
+    ["both are missing", { ADMIN_LOGIN_EMAIL: undefined, ADMIN_PASSWORD_HASH: undefined }, "not_configured"],
+    ["ADMIN_PASSWORD_HASH is garbage", { ADMIN_PASSWORD_HASH: "not-a-hash-value" }, "malformed_hash"],
+    [
+      "ADMIN_PASSWORD_HASH has params below the minimum",
+      { ADMIN_PASSWORD_HASH: "scrypt:1024:8:1:AQEBAQEBAQEBAQEBAQEBAQ:AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE" },
+      "malformed_hash",
+    ],
+  ])(
+    "always rejects when %s, logging the reason",
+    async (_label, overrides: Record<string, string | undefined>, reason) => {
+      for (const [key, value] of Object.entries(overrides)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+
+      await expect(authorizeAdmin({ email: ADMIN_EMAIL, password: PASSWORD }, request())).resolves.toBeNull();
+
+      // Same work as any other failure: the attempt is recorded and scrypt runs once.
+      expect(mockConsumeAttempt).toHaveBeenCalledTimes(1);
+      expect(mockVerifyPassword).toHaveBeenCalledTimes(1);
+      expect(mockFindMany).not.toHaveBeenCalled();
+      expect(rejectionReasons()).toEqual([reason]);
+
+      const logs = loggedText();
+      for (const value of Object.values(overrides)) {
+        if (value && value.trim()) expect(logs).not.toContain(value.trim());
+      }
+      expect(logs).not.toContain(passwordHash);
+      expect(logs).not.toContain(PASSWORD);
     }
+  );
 
-    await expect(authorizeAdmin({ email: ADMIN_EMAIL, password: PASSWORD }, request())).resolves.toBeNull();
+  it("reports a malformed hash for another email too (operators see it on any attempt)", async () => {
+    process.env.ADMIN_PASSWORD_HASH = "not-a-hash-value";
+    await expect(
+      authorizeAdmin({ email: "someone@example.com", password: PASSWORD }, request())
+    ).resolves.toBeNull();
+    expect(mockVerifyPassword).toHaveBeenCalledWith(PASSWORD, undefined);
+    expect(rejectionReasons()).toEqual(["malformed_hash"]);
+  });
 
-    // Same work as any other failure: the attempt is recorded and scrypt runs once.
-    expect(mockConsumeAttempt).toHaveBeenCalledTimes(1);
-    expect(mockVerifyPassword).toHaveBeenCalledTimes(1);
-    expect(mockFindMany).not.toHaveBeenCalled();
+  it.each([
+    ["a trailing newline", (hash: string) => `${hash}\n`],
+    ["surrounding spaces and tabs", (hash: string) => ` \t${hash}  `],
+  ])("trims %s from ADMIN_PASSWORD_HASH", async (_label, wrap) => {
+    process.env.ADMIN_PASSWORD_HASH = wrap(passwordHash);
+
+    await expect(authorizeAdmin({ email: ADMIN_EMAIL, password: PASSWORD }, request())).resolves.toMatchObject({
+      id: "admin-1",
+    });
+    expect(mockVerifyPassword).toHaveBeenCalledWith(PASSWORD, passwordHash);
+  });
+
+  it.each([
+    ["a wrong password", { email: ADMIN_EMAIL, password: "wrong-password-0" }],
+    ["another email", { email: "someone@example.com", password: PASSWORD }],
+  ])("logs invalid_credentials for %s", async (_label, credentials) => {
+    await expect(authorizeAdmin(credentials, request())).resolves.toBeNull();
+    expect(rejectionReasons()).toEqual(["invalid_credentials"]);
   });
 
   it("rejects when no User row has the email", async () => {

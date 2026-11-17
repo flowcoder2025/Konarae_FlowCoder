@@ -9,6 +9,16 @@
  * does not understand fails the test. Not detected: data read inside a
  * `catch` before its `return`.
  *
+ * Admin server actions are:
+ * - every export of a file under src/lib/actions/ whose top-level directive is
+ *   "use server" and whose path contains "admin";
+ * - every inline server action (a function whose body starts with the
+ *   "use server" directive) in any file under src/app/admin/. Its guard comes
+ *   right after the directive. The one exception is the sign-out action in
+ *   src/app/admin/layout.tsx, whose whole body is `await signOut(...)`.
+ * A "use server" string the scan cannot place (not a function's or the file's
+ * directive), or a file-level "use server" under src/app/admin/, fails.
+ *
  * @jest-environment node
  */
 
@@ -18,7 +28,11 @@ import ts from "typescript";
 
 const ROOT = process.cwd();
 const ADMIN_API_DIR = path.join(ROOT, "src", "app", "api", "admin");
-const ADMIN_ACTIONS_FILE = path.join(ROOT, "src", "lib", "actions", "admin-actions.ts");
+const ACTIONS_DIR = path.join(ROOT, "src", "lib", "actions");
+const ADMIN_APP_DIR = path.join(ROOT, "src", "app", "admin");
+const ADMIN_LAYOUT = path.join("src", "app", "admin", "layout.tsx");
+const SOURCE_FILE = /\.(ts|tsx|js|jsx)$/;
+const USE_SERVER = "use server";
 
 const HTTP_METHODS = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]);
 // Next.js route segment config: plain values, not handlers.
@@ -36,16 +50,50 @@ type FunctionNode = ts.FunctionDeclaration | ts.ArrowFunction | ts.FunctionExpre
 type ExportedFunction = { name: string; node: FunctionNode };
 type ScanResult = { functions: ExportedFunction[]; problems: string[] };
 
-function findRouteFiles(dir: string): string[] {
+function findFiles(dir: string, pattern: RegExp): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) return findRouteFiles(full);
-    return /^route\.(ts|tsx|js|jsx)$/.test(entry.name) ? [full] : [];
+    if (entry.isDirectory()) return findFiles(full, pattern);
+    return pattern.test(entry.name) ? [full] : [];
   });
 }
 
+function findRouteFiles(dir: string): string[] {
+  return findFiles(dir, /^route\.(ts|tsx|js|jsx)$/);
+}
+
+function parseSource(fileName: string, code: string): ts.SourceFile {
+  const kind = /\.(tsx|jsx)$/.test(fileName) ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  return ts.createSourceFile(fileName, code, ts.ScriptTarget.Latest, true, kind);
+}
+
 function parse(file: string): ts.SourceFile {
-  return ts.createSourceFile(file, fs.readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
+  return parseSource(file, fs.readFileSync(file, "utf8"));
+}
+
+/** The leading string-literal statements (directives) and what follows them. */
+function splitDirectives(statements: readonly ts.Statement[]): {
+  directives: string[];
+  rest: readonly ts.Statement[];
+} {
+  let i = 0;
+  const directives: string[] = [];
+  while (i < statements.length) {
+    const statement = statements[i];
+    if (!ts.isExpressionStatement(statement) || !ts.isStringLiteral(statement.expression)) break;
+    directives.push(statement.expression.text);
+    i++;
+  }
+  return { directives, rest: statements.slice(i) };
+}
+
+function hasUseServerDirective(statements: readonly ts.Statement[]): boolean {
+  return splitDirectives(statements).directives.includes(USE_SERVER);
+}
+
+/** A "use server" file (top-level directive) whose path contains "admin". */
+function isAdminActionFile(relativePath: string, source: ts.SourceFile): boolean {
+  return /admin/i.test(relativePath) && hasUseServerDirective(source.statements);
 }
 
 function isExported(node: ts.Node): boolean {
@@ -113,10 +161,8 @@ function alwaysExits(statement: ts.Statement | undefined): boolean {
   return false;
 }
 
-function startsWithGuard(fn: FunctionNode): boolean {
-  const body = fn.body;
-  if (!body || !ts.isBlock(body)) return false;
-  const [first] = body.statements;
+function statementsStartWithGuard(statements: readonly ts.Statement[]): boolean {
+  const [first] = statements;
   if (isGuardStatement(first)) return true;
   if (!first || !ts.isTryStatement(first) || !isGuardStatement(first.tryBlock.statements[0])) {
     return false;
@@ -124,8 +170,86 @@ function startsWithGuard(fn: FunctionNode): boolean {
   // A failed guard throws into the catch (and the finally). Code there, or
   // after the try when the catch can finish normally, runs without an admin.
   if (first.finallyBlock) return false;
-  const tryIsLast = body.statements.length === 1;
+  const tryIsLast = statements.length === 1;
   return tryIsLast || alwaysExits(first.catchClause?.block);
+}
+
+function startsWithGuard(fn: FunctionNode): boolean {
+  const body = fn.body;
+  if (!body || !ts.isBlock(body)) return false;
+  return statementsStartWithGuard(body.statements);
+}
+
+type InlineAction = { line: number; rest: readonly ts.Statement[] };
+
+/** Functions whose body starts with the "use server" directive, and stray "use server" strings. */
+function scanInlineActions(source: ts.SourceFile): { actions: InlineAction[]; problems: string[] } {
+  const actions: InlineAction[] = [];
+  const directiveNodes = new Set<ts.Node>();
+  const line = (node: ts.Node) => source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
+
+  const fileDirectives = splitDirectives(source.statements);
+  source.statements.slice(0, fileDirectives.directives.length).forEach((s) => directiveNodes.add(s));
+
+  const visit = (node: ts.Node): void => {
+    if (
+      (ts.isFunctionDeclaration(node) ||
+        ts.isFunctionExpression(node) ||
+        ts.isArrowFunction(node) ||
+        ts.isMethodDeclaration(node)) &&
+      node.body &&
+      ts.isBlock(node.body)
+    ) {
+      const { directives, rest } = splitDirectives(node.body.statements);
+      if (directives.includes(USE_SERVER)) {
+        actions.push({ line: line(node), rest });
+        node.body.statements.slice(0, directives.length).forEach((s) => directiveNodes.add(s));
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+
+  const problems: string[] = [];
+  if (fileDirectives.directives.includes(USE_SERVER)) {
+    problems.push("file-level \"use server\": put admin actions in src/lib/actions/ (scanned there)");
+  }
+  const strays: ts.Node[] = [];
+  const findStrays = (node: ts.Node): void => {
+    if (
+      (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) &&
+      node.text === USE_SERVER &&
+      !directiveNodes.has(node.parent)
+    ) {
+      strays.push(node);
+    }
+    ts.forEachChild(node, findStrays);
+  };
+  findStrays(source);
+  for (const stray of strays) problems.push(`"use server" the scan cannot place, line ${line(stray)}`);
+
+  return { actions, problems };
+}
+
+/** `await signOut(...)` and nothing else. */
+function isSignOutOnly(statements: readonly ts.Statement[]): boolean {
+  if (statements.length !== 1) return false;
+  const [only] = statements;
+  if (!ts.isExpressionStatement(only) || !ts.isAwaitExpression(only.expression)) return false;
+  const call = only.expression.expression;
+  return ts.isCallExpression(call) && ts.isIdentifier(call.expression) && call.expression.text === "signOut";
+}
+
+/** Inline actions of one file under src/app/admin that are not guarded (and not the exempt sign-out). */
+function unguardedInlineActions(relativePath: string, source: ts.SourceFile): string[] {
+  const { actions } = scanInlineActions(source);
+  const guarded = (action: InlineAction) =>
+    statementsStartWithGuard(action.rest) ||
+    (relativePath === ADMIN_LAYOUT && isSignOutOnly(action.rest));
+  const failures = actions.filter((action) => !guarded(action)).map((action) => `line ${action.line}`);
+  const needsImport = actions.some((action) => statementsStartWithGuard(action.rest));
+  if (needsImport && !importsRequireAdmin(source)) failures.push("requireAdmin not imported from @/lib/auth-utils");
+  return failures;
 }
 
 function scanExports(
@@ -198,12 +322,26 @@ const routeHandlers = routeScans.flatMap((scan) =>
   scan.functions.map((fn) => ({ label: `${scan.file} ${fn.name}`, fn }))
 );
 
-const actionsSource = parse(ADMIN_ACTIONS_FILE);
-const actionsScan = scanExports(
-  actionsSource,
-  () => true,
-  () => false
+const actionFiles = findFiles(ACTIONS_DIR, SOURCE_FILE)
+  .map((file) => ({ file: relative(file), source: parse(file) }))
+  .filter(({ file, source }) => isAdminActionFile(file, source))
+  .sort((a, b) => a.file.localeCompare(b.file))
+  .map(({ file, source }) => ({
+    file,
+    source,
+    ...scanExports(
+      source,
+      () => true,
+      () => false
+    ),
+  }));
+const actionFunctions = actionFiles.flatMap((scan) =>
+  scan.functions.map((fn) => ({ label: `${scan.file} ${fn.name}`, fn }))
 );
+
+const adminAppFiles = findFiles(ADMIN_APP_DIR, SOURCE_FILE)
+  .map((file) => ({ file: relative(file), source: parse(file) }))
+  .sort((a, b) => a.file.localeCompare(b.file));
 
 describe("admin API route handlers (src/app/api/admin/**/route.ts)", () => {
   it("finds the admin routes on disk", () => {
@@ -224,25 +362,47 @@ describe("admin API route handlers (src/app/api/admin/**/route.ts)", () => {
   });
 });
 
-describe("admin server actions (src/lib/actions/admin-actions.ts)", () => {
-  it("finds the actions", () => {
-    expect(actionsScan.functions.length).toBeGreaterThanOrEqual(8);
+describe("admin server action files (src/lib/actions/**, \"use server\", path contains admin)", () => {
+  it("finds admin-actions.ts and its actions", () => {
+    expect(actionFiles.map((scan) => scan.file)).toContain(path.join("src", "lib", "actions", "admin-actions.ts"));
+    expect(actionFunctions.length).toBeGreaterThanOrEqual(8);
   });
 
-  it("exports only functions the scan understands", () => {
-    expect(actionsScan.problems).toEqual([]);
+  it.each(actionFiles)("$file exports only functions the scan understands", ({ problems }) => {
+    expect(problems).toEqual([]);
   });
 
-  it("imports requireAdmin from @/lib/auth-utils", () => {
-    expect(importsRequireAdmin(actionsSource)).toBe(true);
+  it.each(actionFiles)("$file imports requireAdmin from @/lib/auth-utils", ({ source }) => {
+    expect(importsRequireAdmin(source)).toBe(true);
   });
 
-  it.each(actionsScan.functions.map((fn) => ({ name: fn.name, fn })))(
-    "$name starts with await requireAdmin()",
-    ({ fn }) => {
-      expect(startsWithGuard(fn.node)).toBe(true);
-    }
-  );
+  it.each(actionFunctions)("$label starts with await requireAdmin()", ({ fn }) => {
+    expect(startsWithGuard(fn.node)).toBe(true);
+  });
+});
+
+describe("inline server actions (src/app/admin/**)", () => {
+  // Plain loops, not it.each: there may legitimately be no inline action in a page.
+  it("finds the admin files and the layout's sign-out action", () => {
+    const files = adminAppFiles.map((entry) => entry.file);
+    expect(files.filter((file) => /page\.tsx$/.test(file)).length).toBeGreaterThanOrEqual(8);
+    const layout = adminAppFiles.find((entry) => entry.file === ADMIN_LAYOUT);
+    expect(layout && scanInlineActions(layout.source).actions.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("every \"use server\" is a function directive the scan understands", () => {
+    const problems = adminAppFiles.flatMap(({ file, source }) =>
+      scanInlineActions(source).problems.map((problem) => `${file}: ${problem}`)
+    );
+    expect(problems).toEqual([]);
+  });
+
+  it("every inline action starts with await requireAdmin() (only the layout sign-out is exempt)", () => {
+    const failures = adminAppFiles.flatMap(({ file, source }) =>
+      unguardedInlineActions(file, source).map((failure) => `${file}: ${failure}`)
+    );
+    expect(failures).toEqual([]);
+  });
 });
 
 describe("the scan itself", () => {
@@ -351,5 +511,143 @@ describe("the scan itself", () => {
     ["a default export", "export default function handler() {}"],
   ])("flags %s", (_label, code) => {
     expect(check(code).problems.length).toBeGreaterThan(0);
+  });
+
+  describe("admin action file discovery", () => {
+    const isAction = (file: string, code: string) => isAdminActionFile(file, parseSource(file, code));
+
+    it.each([
+      ["admin-actions.ts", "src/lib/actions/admin-actions.ts", '"use server";\nexport async function a() {}'],
+      ["a nested admin directory", "src/lib/actions/admin/users.ts", "'use server';"],
+      ["admin in a nested file name", "src/lib/actions/billing/admin-credits.ts", '"use server";'],
+      ["a doc comment before the directive", "src/lib/actions/admin-x.ts", '/** doc */\n"use server";'],
+      ["another directive first", "src/lib/actions/Admin-y.ts", '"use strict";\n"use server";'],
+    ])("includes %s", (_label, file, code) => {
+      expect(isAction(file, code)).toBe(true);
+    });
+
+    it.each([
+      ["no admin in the path", "src/lib/actions/user-actions.ts", '"use server";'],
+      ["no directive", "src/lib/actions/admin-helpers.ts", "export function f() {}"],
+      ["a directive after an import (not a directive)", "src/lib/actions/admin-z.ts", 'import x from "y";\n"use server";'],
+    ])("excludes %s", (_label, file, code) => {
+      expect(isAction(file, code)).toBe(false);
+    });
+  });
+
+  describe("inline server actions under src/app/admin", () => {
+    const PAGE = path.join("src", "app", "admin", "users", "page.tsx");
+    const IMPORT = 'import { requireAdmin } from "@/lib/auth-utils";\n';
+    const inline = (file: string, code: string) => {
+      const source = parseSource(file, code);
+      return { ...scanInlineActions(source), failures: unguardedInlineActions(file, source) };
+    };
+
+    it.each([
+      [
+        "an arrow action guarded first",
+        PAGE,
+        `${IMPORT}export default async function Page() {
+          return <form action={async (fd: FormData) => { "use server"; await requireAdmin(); await save(fd); }} />;
+        }`,
+      ],
+      [
+        "a function declaration guarded first",
+        PAGE,
+        `${IMPORT}export default async function Page() {
+          async function save(fd: FormData) { "use server"; const s = await requireAdmin(); await store(s, fd); }
+          return <form action={save} />;
+        }`,
+      ],
+      [
+        "a guard first in a try whose catch ends in throw",
+        PAGE,
+        `${IMPORT}export default function Page() {
+          return <form action={async () => { "use server"; try { await requireAdmin(); } catch (e) { throw e; } await go(); }} />;
+        }`,
+      ],
+      [
+        "the layout's sign-out action",
+        ADMIN_LAYOUT,
+        `export default function Layout() {
+          return <form action={async () => { "use server"; await signOut({ redirectTo: "/admin-login" }); }} />;
+        }`,
+      ],
+      ["a page with no inline action", PAGE, "export default function Page() { return <div />; }"],
+    ])("accepts %s", (_label, file, code) => {
+      const result = inline(file, code);
+      expect(result.problems).toEqual([]);
+      expect(result.failures).toEqual([]);
+    });
+
+    it.each([
+      [
+        "an unguarded action",
+        PAGE,
+        `${IMPORT}export default function Page() {
+          return <form action={async (fd: FormData) => { "use server"; await prisma.user.delete({ where: { id: fd.get("id") } }); }} />;
+        }`,
+      ],
+      [
+        "a guard after other work",
+        PAGE,
+        `${IMPORT}export default function Page() {
+          return <form action={async () => { "use server"; await load(); await requireAdmin(); }} />;
+        }`,
+      ],
+      [
+        "an un-awaited guard",
+        PAGE,
+        `${IMPORT}export default function Page() {
+          return <form action={async () => { "use server"; requireAdmin(); await go(); }} />;
+        }`,
+      ],
+      [
+        "a sign-out-only action outside the layout",
+        PAGE,
+        `export default function Page() {
+          return <form action={async () => { "use server"; await signOut(); }} />;
+        }`,
+      ],
+      [
+        "a layout action that does more than sign out",
+        ADMIN_LAYOUT,
+        `export default function Layout() {
+          return <form action={async () => { "use server"; await signOut(); await prisma.user.deleteMany(); }} />;
+        }`,
+      ],
+      [
+        "a layout action that does something else first",
+        ADMIN_LAYOUT,
+        `export default function Layout() {
+          return <form action={async () => { "use server"; await audit(); await signOut(); }} />;
+        }`,
+      ],
+      [
+        "a guarded action without the requireAdmin import",
+        PAGE,
+        `export default function Page() {
+          return <form action={async () => { "use server"; await requireAdmin(); await go(); }} />;
+        }`,
+      ],
+    ])("rejects %s", (_label, file, code) => {
+      const result = inline(file, code);
+      expect(result.actions.length).toBeGreaterThan(0);
+      expect(result.failures.length).toBeGreaterThan(0);
+    });
+
+    it.each([
+      ["a file-level directive", PAGE, '"use server";\nexport async function act() { await go(); }'],
+      [
+        "a directive after another statement (not a directive)",
+        PAGE,
+        `export default function Page() {
+          return <form action={async () => { await go(); "use server"; }} />;
+        }`,
+      ],
+      ["the string elsewhere", PAGE, 'const mode = "use server";\nexport default function Page() { return <div />; }'],
+    ])("flags %s as a problem", (_label, file, code) => {
+      expect(inline(file, code).problems.length).toBeGreaterThan(0);
+    });
   });
 });

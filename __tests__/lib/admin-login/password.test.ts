@@ -5,6 +5,7 @@
 import crypto from "node:crypto";
 import {
   hashPassword,
+  isWellFormedHash,
   verifyPassword,
   SCRYPT_PARAMS,
 } from "@/lib/admin-login/password";
@@ -98,6 +99,25 @@ describe("verifyPassword", () => {
 
   it.each(malformed)("rejects a malformed stored hash (%s)", async (_label, value) => {
     await expect(verifyPassword(PASSWORD, value)).resolves.toBe(false);
+  });
+
+  describe("isWellFormedHash", () => {
+    it("accepts what hashPassword produces, and in-bounds params whose bytes do not match", () => {
+      expect(isWellFormedHash(stored)).toBe(true);
+      const [, n, r, p, s] = stored.split(":");
+      expect(isWellFormedHash(`scrypt:${n}:${r}:${p}:${s}:${b64url(32, 7)}`)).toBe(true);
+    });
+
+    it.each([["undefined", undefined], ["empty", ""], ...malformed])("rejects %s", (_label, value) => {
+      expect(isWellFormedHash(value)).toBe(false);
+    });
+
+    it("runs no scrypt", () => {
+      const spy = jest.spyOn(crypto, "scrypt");
+      isWellFormedHash(stored);
+      isWellFormedHash("not-a-hash");
+      expect(spy).not.toHaveBeenCalled();
+    });
   });
 
   it("rejects a hash whose params are in bounds but whose bytes do not match", async () => {

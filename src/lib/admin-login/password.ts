@@ -115,6 +115,15 @@ function parseStoredHash(stored: string | undefined): ParsedHash | null {
   return { N, r, p, salt, hash };
 }
 
+/**
+ * Whether `stored` is a hash `verifyPassword` would check against (format and
+ * bounds), for diagnostics only. Pure: no scrypt. The caller still runs
+ * `verifyPassword` either way, so the cost per attempt does not change.
+ */
+export function isWellFormedHash(stored: string | undefined): boolean {
+  return parseStoredHash(stored) !== null;
+}
+
 export async function hashPassword(password: string): Promise<string> {
   if (typeof password !== "string") {
     throw new TypeError("password must be a string");
