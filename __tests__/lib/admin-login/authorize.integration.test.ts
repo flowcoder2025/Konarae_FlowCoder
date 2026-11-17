@@ -44,10 +44,21 @@ describeWithDb(suiteTitle, () => {
   let loaded: Isolated<AuthorizeModule>;
   let db: PrismaClient;
   const createdUserIds: string[] = [];
+  /** Real-time throttle windows the logins may have counted in. */
+  const usedWindows = new Set<number>();
+  const WINDOW_MS = 15 * 60 * 1000;
+  const currentWindow = () => Math.floor(Date.now() / WINDOW_MS);
 
   const request = () =>
     new Request("https://mate.example.test/api/auth/callback/admin-credentials", { method: "POST" });
-  const login = () => loaded.module.authorizeAdmin({ email: configured, password }, request());
+  const login = async () => {
+    usedWindows.add(currentWindow());
+    try {
+      return await loaded.module.authorizeAdmin({ email: configured, password }, request());
+    } finally {
+      usedWindows.add(currentWindow());
+    }
+  };
 
   beforeAll(async () => {
     const url = assertDisposableDatabaseUrl(TEST_DATABASE_URL as string);
@@ -70,8 +81,11 @@ describeWithDb(suiteTitle, () => {
       if (createdUserIds.length > 0) {
         await db.user.deleteMany({ where: { id: { in: createdUserIds } } });
       }
-      const emailKey = createHmac("sha256", SECRET).update(`admin-login:email:${configured}`).digest("hex");
-      await db.adminLoginBucket.deleteMany({ where: { key: emailKey } });
+      // No IP here, so only the email bucket was used.
+      const keys = [...usedWindows].map((window) =>
+        createHmac("sha256", SECRET).update(`admin-login:email:${configured}\n${window}`).digest("hex")
+      );
+      await db.adminLoginBucket.deleteMany({ where: { key: { in: keys } } });
       await db.$disconnect();
     }
     for (const [name, value] of Object.entries(savedEnv)) {

@@ -413,9 +413,9 @@ describeWithDb(suiteTitle, () => {
     });
 
     it("a successful login consumes a slot like any attempt", async () => {
-      // Stay inside one real window for the whole test.
+      // Stay inside one real window for the whole test (it takes well under a second).
       const msToBoundary = W - (Date.now() % W);
-      if (msToBoundary < 10_000) await new Promise((resolve) => setTimeout(resolve, msToBoundary + 100));
+      if (msToBoundary < 3_000) await new Promise((resolve) => setTimeout(resolve, msToBoundary + 100));
       const window = windowOf(new Date());
 
       const adminEmail = email("success");
@@ -450,6 +450,6 @@ describeWithDb(suiteTitle, () => {
       await expect(login(secretPassword)).resolves.toBeNull(); // the pair is full
       expect(await count(pairKey(adminEmail, clientIp, window))).toBe(6);
       expect(windowOf(new Date())).toBe(window);
-    });
+    }, 20_000);
   });
 });
