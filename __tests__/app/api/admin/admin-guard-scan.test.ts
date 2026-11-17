@@ -493,7 +493,8 @@ describe("inline server actions (src/app/admin/**)", () => {
 describe("every other server action in src/ is listed", () => {
   it("finds the source files and the listed public actions", () => {
     const files = otherSrcFiles.map((entry) => entry.file);
-    expect(files.length).toBeGreaterThanOrEqual(300);
+    // 285 files after the 46 legacy API routes and their orphan libs were removed (2026-11-17).
+    expect(files.length).toBeGreaterThanOrEqual(280);
     for (const file of Object.keys(PUBLIC_INLINE_ACTIONS)) expect(files).toContain(file);
     for (const file of OTHER_ACTION_FILES) expect(files).toContain(file);
   });
