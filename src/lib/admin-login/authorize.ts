@@ -9,12 +9,13 @@
  * runs scrypt once, also for another email and also while the attempt is
  * throttled. The User table is read only after the right password for the
  * configured email. So whether an email belongs to an account is not
- * revealed by the response or its timing. Timing is not uniform, though: the
- * throttle's statement count depends on bucket state (one UPDATE for a
- * running bucket, three statements to deny, four to create a bucket) and it
- * stops at the first bucket that denies. A lock, and whether an email or pair
- * was already tried in the current window, may be inferable from response
- * times.
+ * revealed by the response or its timing. Each throttle bucket costs one
+ * statement whether or not it exists yet, so earlier attempts on an email
+ * do not show either. The statement count does vary with the stage that
+ * denies (with an IP: 1 when the IP denies, 2 when the pair does, 3 when the
+ * email does or nothing does; with no IP always 1), which reveals only the
+ * requester's own IP or IP+email throttling: a full email-wide bucket costs
+ * the same as an allowed attempt.
  *
  * Any error (database, throttle, configuration) is logged without the email,
  * IP or password and the attempt is denied: `authorize` returns `null` and

@@ -15,10 +15,10 @@
  * PrismaClient instances, each standing for one server instance, so
  * concurrent attempts really run on different connections.
  *
- * Every test uses its own emails and IPs. Pruning is global and follows the
- * `now` passed in, so `now` stays within base + ~16 minutes: far enough to
- * cover a window, close enough not to prune rows of the authorize integration
- * test that may run in parallel against the same database.
+ * Every test uses its own emails, IPs and (future) windows. Pruning is global
+ * and follows the `now` passed in: these future windows prune rows of the
+ * current real window, which the authorize integration test (running in
+ * parallel) does not depend on; its real-time pruning never reaches them.
  */
 
 import { createHmac, randomUUID } from "node:crypto";
@@ -36,6 +36,7 @@ type AuthorizeModule = typeof import("@/lib/admin-login/authorize");
 type Result = Awaited<ReturnType<ThrottleModule["consumeAttempt"]>>;
 
 const TEST_DATABASE_URL = process.env.ADMIN_LOGIN_TEST_DATABASE_URL;
+const W = 15 * 60 * 1000;
 
 // Always runs (no connection): the guard must reject non-disposable targets.
 describe("assertDisposableDatabaseUrl", () => {
@@ -68,8 +69,11 @@ describeWithDb(suiteTitle, () => {
   const SECRET = `throttle-integration-${randomUUID()}`;
   const CLIENTS = Number(process.env.ADMIN_LOGIN_TEST_CLIENTS ?? 8);
   const runId = randomUUID().replace(/-/g, "").slice(0, 8);
-  const base = Math.floor(Date.now() / 1000) * 1000;
-  const at = (seconds: number) => new Date(base + seconds * 1000);
+  /** First test window: two windows ahead of the real clock. */
+  const K = Math.floor(Date.now() / W) + 2;
+  /** A time `ms` into test window `w` (absolute window K + w). */
+  const t = (w: number, ms: number) => new Date((K + w) * W + ms);
+  const windowOf = (now: Date) => Math.floor(now.getTime() / W);
 
   const savedEnv = {
     AUTH_SECRET: process.env.AUTH_SECRET,
@@ -85,31 +89,33 @@ describeWithDb(suiteTitle, () => {
 
   const hmac = (input: string) =>
     createHmac("sha256", SECRET).update(`admin-login:${input}`).digest("hex");
-  const ipKey = (ip: string) => hmac(`ip:${ip}`);
-  const pairKey = (email: string, ip: string) => hmac(`pair:${email}\n${ip}`);
-  const emailKey = (email: string) => hmac(`email:${email}`);
+  /** Keys for an absolute window index. */
+  const ipKey = (ip: string, window: number) => hmac(`ip:${ip}\n${window}`);
+  const pairKey = (email: string, ip: string, window: number) => hmac(`pair:${email}\n${ip}\n${window}`);
+  const emailKey = (email: string, window: number) => hmac(`email:${email}\n${window}`);
 
   const email = (label: string) => `admin-${runId}-${label}@example.com`;
   // IPv6 documentation prefix, unique per run
   const ip = (n: number) => `2001:db8:${runId.slice(0, 4)}:${runId.slice(4)}::${n.toString(16)}`;
 
+  const track = (e: string, i: string | null, window: number) => {
+    usedKeys.add(emailKey(e, window));
+    if (i) usedKeys.add(ipKey(i, window)).add(pairKey(e, i, window));
+  };
+
   let next = 0;
   /** One attempt on the next client instance (round robin). */
   const attempt = (e: string, i: string | null, now: Date): Promise<Result> => {
-    usedKeys.add(emailKey(e));
-    if (i) {
-      usedKeys.add(ipKey(i));
-      usedKeys.add(pairKey(e, i));
-    }
+    track(e, i, windowOf(now));
     const instance = instances[next++ % instances.length];
     return instance.module.consumeAttempt({ email: e, ip: i, now });
   };
   const concurrently = (n: number, make: (index: number) => Promise<Result>) =>
     Promise.all(Array.from({ length: n }, (_, index) => make(index)));
   const allowedCount = (results: Result[]) => results.filter((r) => r.allowed).length;
-  const bucket = (key: string) => db.adminLoginBucket.findUnique({ where: { key } });
-  const existing = async (keys: string[]) =>
-    db.adminLoginBucket.count({ where: { key: { in: keys } } });
+  const count = async (key: string) =>
+    (await db.adminLoginBucket.findUnique({ where: { key } }))?.count ?? null;
+  const existing = (keys: string[]) => db.adminLoginBucket.count({ where: { key: { in: keys } } });
 
   beforeAll(async () => {
     // Guard first: nothing below may run against a non-disposable database.
@@ -140,12 +146,14 @@ describeWithDb(suiteTitle, () => {
     }
   });
 
-  describe("SQL per step (Prisma query log)", () => {
+  describe("SQL per bucket (Prisma query log)", () => {
     const DATA = new Set(["SELECT", "INSERT", "UPDATE", "DELETE"]);
-    // Prisma wraps some statements in BEGIN/COMMIT, and with pgbouncer=true
-    // every statement, after a DEALLOCATE ALL. Nothing else may appear.
+    // With pgbouncer=true Prisma wraps every statement in BEGIN / DEALLOCATE
+    // ALL / ... / COMMIT. Nothing else may appear.
     const CONTROL = new Set(["BEGIN", "COMMIT", "DEALLOCATE"]);
     const kind = (query: string) => query.trim().split(/\s+/)[0].toUpperCase();
+    const UPSERT =
+      /^INSERT INTO "public"\."admin_login_buckets" \("key","windowStart","count"\) VALUES \(\$1,\$2,\$3\) ON CONFLICT \("key"\) DO UPDATE SET "count" = \("public"\."admin_login_buckets"\."count" \+ \$4\) WHERE .* RETURNING .*"public"\."admin_login_buckets"\."count"$/;
 
     /** Data statements in order; fails on anything unexpected or two in one transaction. */
     function dataStatements(queries: string[]): string[] {
@@ -172,50 +180,56 @@ describeWithDb(suiteTitle, () => {
       return statements;
     }
 
-    async function logged(run: () => Promise<Result>): Promise<{ result: Result; queries: string[] }> {
+    /** Queries of one consumeAttempt call on instance 0. */
+    async function logged(e: string, i: string | null, now: Date): Promise<{ result: Result; queries: string[] }> {
       const instance = instances[0];
+      track(e, i, windowOf(now));
       await new Promise((resolve) => setImmediate(resolve));
       instance.queries.length = 0;
-      const result = await run();
+      const result = await instance.module.consumeAttempt({ email: e, ip: i, now });
       await new Promise((resolve) => setImmediate(resolve));
       return { result, queries: [...instance.queries] };
     }
-    const once = (e: string, now: Date) => () => {
-      usedKeys.add(emailKey(e));
-      return instances[0].module.consumeAttempt({ email: e, ip: null, now });
-    };
 
-    it("increment and reset are one conditional UPDATE each; create is one INSERT", async () => {
+    it("each bucket is one native upsert, and a new bucket costs exactly what an existing one does", async () => {
       const e = email("sql");
+      const x = ip(1);
 
-      // missing: increment misses, reset misses, read, insert; then prune
-      const fresh = await logged(once(e, at(0)));
+      const fresh = await logged(e, x, t(0, 1000));
       expect(fresh.result).toEqual({ allowed: true });
-      expect(dataStatements(fresh.queries)).toEqual(["UPDATE", "UPDATE", "SELECT", "INSERT", "DELETE"]);
-      const [increment, reset] = fresh.queries.filter((q) => kind(q) === "UPDATE");
-      expect(increment).toMatch(/SET "count" = \("public"\."admin_login_buckets"\."count" \+ \$1\)/);
-      expect(increment).toMatch(/WHERE \(.*"key" = \$2 AND .*"windowStart" > \$3 AND .*"count" < \$4\)$/);
-      expect(reset).toMatch(/SET "count" = \$1, "windowStart" = \$2/);
-      expect(reset).toMatch(/WHERE \(.*"key" = \$3 AND .*"windowStart" <= \$4\)$/);
-      const [insert] = fresh.queries.filter((q) => kind(q) === "INSERT");
-      expect(insert).toMatch(/^INSERT INTO "public"\."admin_login_buckets"/);
+      expect(dataStatements(fresh.queries)).toEqual(["INSERT", "INSERT", "INSERT", "DELETE"]);
+      const upserts = fresh.queries.filter((q) => kind(q) === "INSERT");
+      for (const upsert of upserts) expect(upsert).toMatch(UPSERT);
+      expect(fresh.queries.find((q) => kind(q) === "DELETE")).toMatch(
+        /^DELETE FROM "public"\."admin_login_buckets" WHERE "public"\."admin_login_buckets"\."windowStart" < \$1$/
+      );
 
-      // running, below the limit: the increment alone decides
-      const running = await logged(once(e, at(1)));
-      expect(running.result).toEqual({ allowed: true });
-      expect(dataStatements(running.queries)).toEqual(["UPDATE", "DELETE"]);
+      // All three buckets now exist: the very same statements, in the same order.
+      const again = await logged(e, x, t(0, 2000));
+      expect(again.result).toEqual({ allowed: true });
+      expect(again.queries).toEqual(fresh.queries);
+      expect(await count(pairKey(e, x, K))).toBe(2);
+    });
 
-      // full: both updates miss, one read, no write
-      for (let i = 2; i < 50; i++) await once(e, at(1))();
-      const full = await logged(once(e, at(2)));
-      expect(full.result).toEqual({ allowed: false, retryAfterSeconds: 898 });
-      expect(dataStatements(full.queries)).toEqual(["UPDATE", "UPDATE", "SELECT", "DELETE"]);
+    it("the statement count varies only with the stage that denies", async () => {
+      const x = ip(2);
+      const noIp = await logged(email("sql-no-ip"), null, t(0, 1000));
+      expect(dataStatements(noIp.queries)).toEqual(["INSERT", "DELETE"]);
 
-      // window over: the reset decides
-      const reset2 = await logged(once(e, at(900)));
-      expect(reset2.result).toEqual({ allowed: true });
-      expect(dataStatements(reset2.queries)).toEqual(["UPDATE", "UPDATE", "DELETE"]);
-      await expect(bucket(emailKey(e))).resolves.toMatchObject({ windowStart: at(900), count: 1 });
+      // fill X's IP bucket (20), then one more is denied at the IP stage
+      const emails = Array.from({ length: 20 }, (_, i) => email(`sql-ip-${i}`));
+      for (const e of emails) await attempt(e, x, t(0, 1000));
+      const atIp = await logged(email("sql-ip-21"), x, t(0, 1000));
+      expect(atIp.result).toEqual({ allowed: false, retryAfterSeconds: 899 });
+      expect(dataStatements(atIp.queries)).toEqual(["INSERT", "DELETE"]);
+
+      // a full pair: denied at the second stage
+      const y = ip(3);
+      const e = email("sql-pair");
+      for (let i = 0; i < 5; i++) await attempt(e, y, t(0, 1000));
+      const atPair = await logged(e, y, t(0, 1000));
+      expect(atPair.result).toMatchObject({ allowed: false });
+      expect(dataStatements(atPair.queries)).toEqual(["INSERT", "INSERT", "DELETE"]);
     });
   });
 
@@ -227,12 +241,13 @@ describeWithDb(suiteTitle, () => {
       for (let round = 0; round < rounds; round++) {
         const e = email(`pair-${n}-${round}`);
         const x = ip(1000 + n * 10 + round);
-        const results = await concurrently(n, () => attempt(e, x, at(0)));
+        const results = await concurrently(n, () => attempt(e, x, t(0, 5000)));
 
         expect(allowedCount(results)).toBe(5);
-        await expect(bucket(ipKey(x))).resolves.toMatchObject({ count: Math.min(n, 20) });
-        await expect(bucket(pairKey(e, x))).resolves.toMatchObject({ count: 5 });
-        await expect(bucket(emailKey(e))).resolves.toMatchObject({ count: 5 });
+        // every attempt counts at the IP; only the IP's 20 reach the pair; only the pair's 5 reach the email
+        expect(await count(ipKey(x, K))).toBe(n);
+        expect(await count(pairKey(e, x, K))).toBe(Math.min(n, 20));
+        expect(await count(emailKey(e, K))).toBe(5);
       }
     });
 
@@ -240,12 +255,12 @@ describeWithDb(suiteTitle, () => {
       for (let round = 0; round < 3; round++) {
         const x = ip(2000 + round);
         const emails = Array.from({ length: 30 }, (_, i) => email(`ip-${round}-${i}`));
-        const results = await concurrently(30, (i) => attempt(emails[i], x, at(0)));
+        const results = await concurrently(30, (i) => attempt(emails[i], x, t(0, 5000)));
 
         expect(allowedCount(results)).toBe(20);
-        await expect(bucket(ipKey(x))).resolves.toMatchObject({ count: 20 });
-        expect(await existing(emails.map((e) => pairKey(e, x)))).toBe(20);
-        expect(await existing(emails.map(emailKey))).toBe(20);
+        expect(await count(ipKey(x, K))).toBe(30);
+        expect(await existing(emails.map((e) => pairKey(e, x, K)))).toBe(20);
+        expect(await existing(emails.map((e) => emailKey(e, K)))).toBe(20);
       }
     });
 
@@ -253,27 +268,27 @@ describeWithDb(suiteTitle, () => {
       const x = ip(2100);
       const emails = Array.from({ length: 30 }, (_, i) => email(`ip-seq-${i}`));
       const results: Result[] = [];
-      for (const e of emails) results.push(await attempt(e, x, at(0)));
+      for (const e of emails) results.push(await attempt(e, x, t(0, 5000)));
 
       expect(results.slice(0, 20).every((r) => r.allowed)).toBe(true);
-      expect(results.slice(20)).toEqual(Array(10).fill({ allowed: false, retryAfterSeconds: 900 }));
-      expect(await existing(emails.map((e) => pairKey(e, x)))).toBe(20);
-      expect(await existing(emails.map(emailKey))).toBe(20);
+      expect(results.slice(20)).toEqual(Array(10).fill({ allowed: false, retryAfterSeconds: 895 }));
+      expect(await existing(emails.map((e) => pairKey(e, x, K)))).toBe(20);
+      expect(await existing(emails.map((e) => emailKey(e, K)))).toBe(20);
     });
 
     it("allows exactly 50 of 150 IPs x 2 concurrent attempts on one email", async () => {
       const e = email("email-wide");
-      const results = await concurrently(300, (i) => attempt(e, ip(3000 + Math.floor(i / 2)), at(0)));
+      const results = await concurrently(300, (i) => attempt(e, ip(3000 + Math.floor(i / 2)), t(0, 5000)));
 
       expect(allowedCount(results)).toBe(50);
-      await expect(bucket(emailKey(e))).resolves.toMatchObject({ count: 50 });
+      expect(await count(emailKey(e, K))).toBe(300);
     });
 
     it("allows exactly 50 of 60 concurrent attempts on one email with no IP", async () => {
       const e = email("no-ip-concurrent");
-      const results = await concurrently(60, () => attempt(e, null, at(0)));
+      const results = await concurrently(60, () => attempt(e, null, t(0, 5000)));
       expect(allowedCount(results)).toBe(50);
-      await expect(bucket(emailKey(e))).resolves.toMatchObject({ count: 50 });
+      expect(await count(emailKey(e, K))).toBe(60);
     });
   });
 
@@ -287,7 +302,7 @@ describeWithDb(suiteTitle, () => {
       const fromOthers: Result[] = [];
 
       for (let burst = 0; burst < 20; burst++) {
-        const now = at(1 + burst);
+        const now = t(0, 10_000 + burst * 1000);
         const others: Promise<Result>[] = [attempt(e, ip(4100 + burst), now)]; // inside the burst
         const yInside = burst % 4 === 0 ? [attempt(e, y, now)] : [];
         const xBurst = concurrently(60, () => attempt(e, x, now));
@@ -305,46 +320,52 @@ describeWithDb(suiteTitle, () => {
       expect(fromOthers).toHaveLength(30);
       expect(fromOthers.every((r) => r.allowed)).toBe(true);
       // X spent only its pair's 5 slots of the email's 50.
-      await expect(bucket(emailKey(e))).resolves.toMatchObject({ count: 5 + 5 + 30 });
-      await expect(bucket(ipKey(x))).resolves.toMatchObject({ count: 20 });
+      expect(await count(emailKey(e, K))).toBe(5 + 5 + 30);
+      expect(await count(pairKey(e, x, K))).toBe(20);
+      expect(await count(ipKey(x, K))).toBe(20 * 60);
 
       // Y's own pair limit still applies.
-      await expect(attempt(e, y, at(30))).resolves.toEqual({ allowed: false, retryAfterSeconds: 900 - 29 });
+      await expect(attempt(e, y, t(0, 60_000))).resolves.toEqual({ allowed: false, retryAfterSeconds: 840 });
     });
   });
 
-  describe("fixed window", () => {
-    it("is still closed at +899 s and reopens at +900 s", async () => {
+  describe("fixed epoch windows", () => {
+    it("denies in the last millisecond of a window and allows in the first of the next", async () => {
       const e = email("window");
       const x = ip(5000);
-      for (let i = 0; i < 5; i++) await expect(attempt(e, x, at(0))).resolves.toEqual({ allowed: true });
+      for (let i = 0; i < 5; i++) await expect(attempt(e, x, t(1, 0))).resolves.toEqual({ allowed: true });
 
-      await expect(attempt(e, x, at(60))).resolves.toEqual({ allowed: false, retryAfterSeconds: 840 });
-      await expect(attempt(e, x, at(899))).resolves.toEqual({ allowed: false, retryAfterSeconds: 1 });
-      await expect(attempt(e, x, at(900))).resolves.toEqual({ allowed: true });
-      await expect(bucket(pairKey(e, x))).resolves.toMatchObject({ windowStart: at(900), count: 1 });
+      await expect(attempt(e, x, t(1, 60_000))).resolves.toEqual({ allowed: false, retryAfterSeconds: 840 });
+      await expect(attempt(e, x, t(1, W - 1))).resolves.toEqual({ allowed: false, retryAfterSeconds: 1 });
+      await expect(attempt(e, x, t(2, 0))).resolves.toEqual({ allowed: true });
+      expect(await count(pairKey(e, x, K + 2))).toBe(1);
+      await expect(db.adminLoginBucket.findUnique({ where: { key: pairKey(e, x, K + 2) } })).resolves.toMatchObject({
+        windowStart: t(2, 0),
+      });
     });
 
-    it("allows exactly the limit when concurrent attempts arrive exactly at expiry", async () => {
+    it("allows exactly the limit in each window when concurrent attempts straddle a boundary (3 rounds)", async () => {
       for (let round = 0; round < 3; round++) {
-        const e = email(`expiry-${round}`);
+        const before = 3 + round * 2;
+        const e = email(`straddle-${round}`);
         const x = ip(5100 + round);
-        for (let i = 0; i < 5; i++) await attempt(e, x, at(0));
+        // 30 + 30 interleaved: the last millisecond of one window, the first of the next
+        const results = await concurrently(60, (i) => attempt(e, x, i % 2 === 0 ? t(before, W - 1) : t(before + 1, 0)));
+        const late = results.filter((_, i) => i % 2 === 0);
+        const early = results.filter((_, i) => i % 2 === 1);
 
-        const results = await concurrently(30, () => attempt(e, x, at(900)));
-        expect(allowedCount(results)).toBe(5);
-        await expect(bucket(pairKey(e, x))).resolves.toMatchObject({ windowStart: at(900), count: 5 });
+        expect(allowedCount(late)).toBe(5);
+        expect(allowedCount(early)).toBe(5);
+        expect(await count(pairKey(e, x, K + before))).toBe(20);
+        expect(await count(pairKey(e, x, K + before + 1))).toBe(20);
       }
     });
 
-    it("allows exactly 50 when 60 attempts with no IP arrive exactly at expiry", async () => {
-      const e = email("expiry-no-ip");
-      for (let i = 0; i < 50; i++) await attempt(e, null, at(0));
-      await expect(attempt(e, null, at(1))).resolves.toMatchObject({ allowed: false });
-
-      const results = await concurrently(60, () => attempt(e, null, at(900)));
-      expect(allowedCount(results)).toBe(50);
-      await expect(bucket(emailKey(e))).resolves.toMatchObject({ windowStart: at(900), count: 50 });
+    it("allows exactly 50 in each window when attempts with no IP straddle a boundary", async () => {
+      const e = email("straddle-no-ip");
+      const results = await concurrently(120, (i) => attempt(e, null, i % 2 === 0 ? t(9, W - 1) : t(10, 0)));
+      expect(allowedCount(results.filter((_, i) => i % 2 === 0))).toBe(50);
+      expect(allowedCount(results.filter((_, i) => i % 2 === 1))).toBe(50);
     });
   });
 
@@ -352,25 +373,28 @@ describeWithDb(suiteTitle, () => {
     it("allows 50 attempts for one email, denies the 51st, and leaves other emails alone", async () => {
       const e = email("no-ip");
       for (let i = 0; i < 50; i++) {
-        await expect(attempt(e, null, at(10))).resolves.toEqual({ allowed: true });
+        await expect(attempt(e, null, t(11, 10_000))).resolves.toEqual({ allowed: true });
       }
-      await expect(attempt(e, null, at(20))).resolves.toEqual({ allowed: false, retryAfterSeconds: 890 });
+      await expect(attempt(e, null, t(11, 20_000))).resolves.toEqual({ allowed: false, retryAfterSeconds: 880 });
       // the email-wide bucket is shared with attempts that do have an IP
-      await expect(attempt(e, ip(6000), at(21))).resolves.toEqual({ allowed: false, retryAfterSeconds: 889 });
-      await expect(attempt(email("no-ip-other"), null, at(22))).resolves.toEqual({ allowed: true });
+      await expect(attempt(e, ip(6000), t(11, 21_000))).resolves.toEqual({
+        allowed: false,
+        retryAfterSeconds: 879,
+      });
+      await expect(attempt(email("no-ip-other"), null, t(11, 22_000))).resolves.toEqual({ allowed: true });
     });
   });
 
   describe("pruning", () => {
-    it("deletes buckets whose window is over and keeps running ones", async () => {
+    it("deletes windows before the previous one and keeps the previous and current", async () => {
       const old = email("prune-old");
-      const running = email("prune-running");
-      await attempt(old, null, at(0));
-      await attempt(running, null, at(100));
+      const previous = email("prune-previous");
+      await attempt(old, null, t(20, 0));
+      await attempt(previous, null, t(21, 0));
 
-      await attempt(email("prune-trigger"), null, at(950));
-      await expect(bucket(emailKey(old))).resolves.toBeNull();
-      await expect(bucket(emailKey(running))).resolves.toMatchObject({ count: 1 });
+      await attempt(email("prune-trigger"), null, t(22, 0));
+      expect(await count(emailKey(old, K + 20))).toBeNull();
+      expect(await count(emailKey(previous, K + 21))).toBe(1);
     });
   });
 
@@ -389,6 +413,11 @@ describeWithDb(suiteTitle, () => {
     });
 
     it("a successful login consumes a slot like any attempt", async () => {
+      // Stay inside one real window for the whole test.
+      const msToBoundary = W - (Date.now() % W);
+      if (msToBoundary < 10_000) await new Promise((resolve) => setTimeout(resolve, msToBoundary + 100));
+      const window = windowOf(new Date());
+
       const adminEmail = email("success");
       const clientIp = ip(7000);
       const secretPassword = `integration-${randomUUID()}`;
@@ -399,7 +428,7 @@ describeWithDb(suiteTitle, () => {
       process.env.ADMIN_LOGIN_EMAIL = adminEmail;
       process.env.ADMIN_PASSWORD_HASH = await hashPassword(secretPassword);
       process.env.VERCEL = "1";
-      usedKeys.add(ipKey(clientIp)).add(pairKey(adminEmail, clientIp)).add(emailKey(adminEmail));
+      track(adminEmail, clientIp, window);
 
       const request = () =>
         new Request("https://mate.example.test/api/auth/callback/admin-credentials", {
@@ -415,11 +444,12 @@ describeWithDb(suiteTitle, () => {
         email: adminEmail,
         name: "Integration Admin",
       });
-      await expect(bucket(pairKey(adminEmail, clientIp))).resolves.toMatchObject({ count: 4 });
+      expect(await count(pairKey(adminEmail, clientIp, window))).toBe(4);
 
       await expect(login(secretPassword)).resolves.not.toBeNull(); // 5th slot
       await expect(login(secretPassword)).resolves.toBeNull(); // the pair is full
-      await expect(bucket(pairKey(adminEmail, clientIp))).resolves.toMatchObject({ count: 5 });
+      expect(await count(pairKey(adminEmail, clientIp, window))).toBe(6);
+      expect(windowOf(new Date())).toBe(window);
     });
   });
 });

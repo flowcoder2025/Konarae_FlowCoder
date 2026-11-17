@@ -4,37 +4,40 @@ import { prisma } from "@/lib/prisma";
 import { createLogger } from "@/lib/logger";
 
 /**
- * Admin password login throttle: fixed-window counters in Postgres
- * (`admin_login_buckets`), one row per bucket.
+ * Admin password login throttle: counters in Postgres (`admin_login_buckets`),
+ * one row per bucket per fixed 15-minute window.
  *
- * Every attempt (failed or successful) takes one slot, in this order, over a
- * fixed 15-minute window that starts with the first attempt in the bucket:
+ * Windows are fixed epoch windows: window index = floor(now / 15 min), so
+ * every counter resets at the same quarter-hour boundaries. The window index
+ * is part of each bucket's key, so each window has its own row and there is no
+ * reset path.
+ *
+ * Every attempt (failed or successful) is counted, in this order:
  *   1. ip:    same client IP, any email           limit 20
  *   2. pair:  same email AND same IP               limit 5
  *   3. email: same email, any IP or no IP          limit 50
- * A bucket is consumed only if every earlier bucket allowed the attempt, and
- * slots already taken in earlier buckets are not given back when a later one
- * denies (they belong to the requester's own IP and pair). With no IP only the
- * email bucket applies. One IP can therefore spend at most 5 slots of an
- * email's 50 per window (its pair limit), and at most 20 pair/email slots in
- * total (its IP limit): locking an email for everyone takes 10 or more IPs.
+ * An attempt reaches a bucket only if every earlier bucket allowed it. A
+ * denied attempt still counts in the bucket that denied it (it never reaches
+ * the later ones), and counts already taken in earlier buckets are not given
+ * back (they belong to the requester's own IP and pair). With no IP only the
+ * email bucket applies. One IP can therefore spend at most 5 of an email's 50
+ * slots per window (its pair limit) and touch at most 20 pair/email buckets
+ * (its IP limit): locking an email for everyone takes 10 or more IPs.
  *
- * Each bucket is decided with single statements only, so concurrent requests
- * can never exceed a limit and nothing is left half-done if a request dies:
- *   1. UPDATE ... SET count = count + 1 WHERE key AND window running AND count < limit
- *   2. UPDATE ... SET count = 1, windowStart = now WHERE key AND window over
- *   3. SELECT the row: running and full => denied; missing => INSERT it with
- *      count 1 (a concurrent INSERT of the same key fails with P2002: retry).
- *      Any other state means a concurrent request changed the row between the
- *      statements: retry. After 3 rounds without a decision: denied.
- * Postgres re-evaluates an UPDATE's WHERE on the newest row version after
- * waiting for a concurrent writer, so the conditional increment and reset
- * cannot overshoot or both win. No pending state, interactive transaction or
- * advisory lock is used (PgBouncer transaction pooling).
+ * Each bucket is one statement, a native upsert:
+ *   INSERT ... (count 1) ON CONFLICT (key) DO UPDATE SET count = count + 1 RETURNING count
+ * and the attempt is allowed iff the returned count is at most the limit.
+ * Postgres serializes concurrent upserts of one key, so each gets a distinct
+ * count and exactly `limit` of them are allowed. The statement is the same
+ * whether or not the bucket exists, so the work done does not reveal that.
+ * No read-then-write, interactive transaction or advisory lock (PgBouncer
+ * transaction pooling), and nothing is left half-done if a request dies.
  *
- * After the decision, buckets whose window is over are deleted (best-effort;
- * errors are logged and never change the result). Decision errors propagate:
- * the caller must deny the login (fail-closed).
+ * After the decision, rows older than the previous window are deleted
+ * (best-effort; errors are logged and never change the result). The previous
+ * window is kept so that a request whose clock is just behind a boundary
+ * still counts on its window's existing row instead of recreating it.
+ * Decision errors propagate: the caller must deny the login (fail-closed).
  *
  * Keys are HMAC-SHA256 under the Auth.js secret, never the raw email/IP.
  */
@@ -43,7 +46,6 @@ const WINDOW_MS = 15 * 60 * 1000;
 const IP_LIMIT = 20;
 const PAIR_LIMIT = 5;
 const EMAIL_LIMIT = 50;
-const MAX_ROUNDS = 3;
 
 export const ADMIN_LOGIN_THROTTLE = Object.freeze({
   windowMs: WINDOW_MS,
@@ -55,6 +57,7 @@ export const ADMIN_LOGIN_THROTTLE = Object.freeze({
 export type ConsumeAttemptResult = { allowed: true } | { allowed: false; retryAfterSeconds: number };
 
 type Bucket = { key: string; limit: number };
+type Window = { index: number; start: Date };
 
 const logger = createLogger({ lib: "admin-login-throttle" });
 
@@ -75,65 +78,40 @@ function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
-function buckets(secret: string, email: string, ip: string | null): Bucket[] {
-  const emailBucket = { key: bucketKey(secret, `email:${email}`), limit: EMAIL_LIMIT };
+function windowOf(now: Date): Window {
+  const index = Math.floor(now.getTime() / WINDOW_MS);
+  return { index, start: new Date(index * WINDOW_MS) };
+}
+
+// The window index (digits) is always the last "\n"-separated part and an IP
+// never contains "\n" (header values cannot), so every input splits one way.
+function buckets(secret: string, email: string, ip: string | null, window: number): Bucket[] {
+  const emailBucket = { key: bucketKey(secret, `email:${email}\n${window}`), limit: EMAIL_LIMIT };
   if (!ip) return [emailBucket];
   return [
-    { key: bucketKey(secret, `ip:${ip}`), limit: IP_LIMIT },
-    // An IP never contains "\n" (header values cannot), so the split is unambiguous.
-    { key: bucketKey(secret, `pair:${email}\n${ip}`), limit: PAIR_LIMIT },
+    { key: bucketKey(secret, `ip:${ip}\n${window}`), limit: IP_LIMIT },
+    { key: bucketKey(secret, `pair:${email}\n${ip}\n${window}`), limit: PAIR_LIMIT },
     emailBucket,
   ];
 }
 
-function denied(windowStart: Date, now: Date): ConsumeAttemptResult {
-  const reopensInMs = windowStart.getTime() + WINDOW_MS - now.getTime();
+async function tryConsume({ key, limit }: Bucket, window: Window, now: Date): Promise<ConsumeAttemptResult> {
+  const { count } = await prisma.adminLoginBucket.upsert({
+    where: { key },
+    create: { key, windowStart: window.start, count: 1 },
+    update: { count: { increment: 1 } },
+    select: { count: true },
+  });
+  if (count <= limit) return { allowed: true };
+
+  const reopensInMs = window.start.getTime() + WINDOW_MS - now.getTime();
   return { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil(reopensInMs / 1000)) };
 }
 
-function isUniqueViolation(error: unknown): boolean {
-  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
-}
-
-async function tryConsume({ key, limit }: Bucket, now: Date): Promise<ConsumeAttemptResult> {
-  const windowOverAt = new Date(now.getTime() - WINDOW_MS);
-
-  for (let round = 0; round < MAX_ROUNDS; round++) {
-    const taken = await prisma.adminLoginBucket.updateMany({
-      where: { key, windowStart: { gt: windowOverAt }, count: { lt: limit } },
-      data: { count: { increment: 1 } },
-    });
-    if (taken.count === 1) return { allowed: true };
-
-    const reset = await prisma.adminLoginBucket.updateMany({
-      where: { key, windowStart: { lte: windowOverAt } },
-      data: { count: 1, windowStart: now },
-    });
-    if (reset.count === 1) return { allowed: true };
-
-    const bucket = await prisma.adminLoginBucket.findUnique({ where: { key } });
-    if (bucket === null) {
-      try {
-        await prisma.adminLoginBucket.create({ data: { key, windowStart: now, count: 1 } });
-        return { allowed: true };
-      } catch (error) {
-        if (!isUniqueViolation(error)) throw error;
-        continue; // created concurrently: count on that row
-      }
-    }
-    if (bucket.windowStart > windowOverAt && bucket.count >= limit) {
-      return denied(bucket.windowStart, now);
-    }
-    // Reset, emptied or expired by a concurrent request in between: start over.
-  }
-
-  return { allowed: false, retryAfterSeconds: WINDOW_MS / 1000 };
-}
-
-async function pruneExpired(now: Date): Promise<void> {
+async function pruneOldWindows(window: Window): Promise<void> {
   try {
     await prisma.adminLoginBucket.deleteMany({
-      where: { windowStart: { lt: new Date(now.getTime() - WINDOW_MS) } },
+      where: { windowStart: { lt: new Date(window.start.getTime() - WINDOW_MS) } },
     });
   } catch (error) {
     logger.warn("Admin login throttle prune failed", {
@@ -150,13 +128,14 @@ export async function consumeAttempt(input: {
 }): Promise<ConsumeAttemptResult> {
   const now = input.now ?? new Date();
   const secret = authSecret();
+  const window = windowOf(now);
 
   let result: ConsumeAttemptResult = { allowed: true };
-  for (const bucket of buckets(secret, normalizeEmail(input.email), input.ip)) {
-    result = await tryConsume(bucket, now);
+  for (const bucket of buckets(secret, normalizeEmail(input.email), input.ip, window.index)) {
+    result = await tryConsume(bucket, window, now);
     if (!result.allowed) break;
   }
 
-  await pruneExpired(now);
+  await pruneOldWindows(window);
   return result;
 }
