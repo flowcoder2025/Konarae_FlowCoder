@@ -39,6 +39,7 @@
 │   # 비즈니스 로직
 ├── matching.ts             # RAG 매칭 엔진
 ├── rag.ts                  # RAG 검색 시스템
+├── rag-access.ts           # RAG 임베딩 읽기·쓰기 권한 canAccessEmbeddings()
 ├── text-config.ts          # i18n 텍스트 설정
 ├── notifications.ts        # 알림 시스템
 ├── export.ts               # 데이터 내보내기
@@ -159,9 +160,19 @@ export default async function Page() {
 - `adminAuthAt`은 `auth.config.ts` jwt 콜백이 `admin-credentials` 로그인 때만 넣는다. 다른 로그인은 지우고, `trigger: "update"`·`session` 인자에서는 읽지 않는다.
 - `admin-login/*`의 Prisma·`node:crypto` 코드는 `auth.ts`로만 들어간다. `admin-login/` 중 `auth.config.ts`가 import하는 것은 `constants.ts`뿐이다(`__tests__/lib/auth-edge-imports.test.ts`).
 - 잠금은 `consumeAttempt()`(`admin-login/throttle.ts`) 하나다. 창은 `floor(now / 15분)` 고정 창이고 창 번호가 버킷 키(HMAC)에 들어간다. 버킷마다 native upsert 한 문장(`INSERT … ON CONFLICT (key) DO UPDATE SET count = count + 1 RETURNING count`)이 판정하고, 돌려받은 count가 한도 이하면 통과다. 쌍·이메일 버킷은 있든 없든 그 한 문장뿐이라 버킷 존재가 응답 시간에 드러나지 않는다. IP 버킷만 먼저 `findUnique`로 읽어 이미 한도면 쓰지 않고 거부한다(`pgbouncer=true`에서 문장마다 BEGIN…COMMIT이라, 한 IP 폭주가 한 행 잠금에 몰려 서버 연결을 붙잡지 않게). 이 읽기는 거부만 하고 통과는 늘 upsert가 정한다. 그 밖에 먼저 읽고 쓰는 코드·대화형 트랜잭션·advisory lock·raw SQL을 쓰지 않는다(PgBouncer transaction 모드, 10.1). 정리는 직전 창보다 오래된 행만 지운다. 판정 오류는 던지고, `authorizeAdmin`이 잡아 로그(이메일·IP·비밀번호 없이) 후 `null`로 거부한다.
-- `authorizeAdmin`은 `ADMIN_PASSWORD_HASH`를 trim해서 쓰고, 거부 로그 `reason`을 `not_configured`(env 없음)·`malformed_hash`(`isWellFormedHash` 거짓, error 수준)·`invalid_credentials` 등으로 나눈다. 어느 경우든 시도 한 칸과 scrypt 한 번(`verifyPassword`)은 그대로다.
+- `authorizeAdmin`은 `ADMIN_PASSWORD_HASH`를 trim해서 쓰고, 거부 로그 `reason`을 `not_configured`(env 없음)·`malformed_hash`(`isWellFormedHash` 거짓, error 수준)·`invalid_credentials` 등으로 나눈다. 입력 검사를 통과한 시도라면 어느 경우든 시도 한 칸과 scrypt 한 번(`verifyPassword`)은 그대로다. 이메일·비밀번호가 비었거나 너무 길면(`invalid_input`) 둘 다 하지 않는다.
 - `auth.ts`의 Auth.js `logger`는 `error`만 둔다: `type === "CredentialsSignin"`은 스택 없는 warn 한 줄, 나머지는 그대로 `console.error`. `debug`를 넣지 않는다(`debug: false`가 깐 no-op을 덮어써 요청 본문 로그가 살아난다).
 - 운영 env·잠금·복구 절차: 루트 `claude.md` 9.7.
+
+### 4.4 RAG 임베딩 권한 (rag-access.ts)
+
+- `/api/rag/*`에서 `document_embeddings`를 읽거나 바꾸기 전에 `canAccessEmbeddings(userId, sourceType, sourceId, "read" | "write")`를 부른다.
+  - support_project: 읽기는 로그인한 누구나, 쓰기는 관리자(`getAdminSession()`)만.
+  - company: 읽기 viewer, 쓰기 company admin(owner 포함).
+  - business_plan: 읽기 viewer, 쓰기 owner.
+- `hybridSearch()`는 source id로 거르지 못한다. 그래서 `/api/rag/search`에서 관리자가 아니면 support_project만 검색한다(종류를 안 주면 support_project, company·business_plan을 주면 403). 서버 내부 호출(`business-plan-generator.ts`)은 결과를 사업계획서의 `companyId`·`projectId`로 거른다. 이 값이 사용자 권한으로 검증됐는지는 그 호출 쪽 책임이다(2026-11-17 기준 사업계획서 생성은 `companyId`를 검사하지 않는다 — 열린 gap).
+- `/api/rag/embed` 본문은 10만 자까지다(청크마다 OpenAI 호출 한 번).
+- 경계 테스트: `__tests__/app/api/rag/rag-access.test.ts`(ReBAC·관리자 판정은 실제 코드, 거부된 요청은 임베딩 함수에 닿지 않음).
 
 ---
 
@@ -364,3 +375,4 @@ export async function PATCH(req, { params }) {
 | 2025-12-15 | 허브 연결 섹션 추가, 디렉토리 구조 확장 |
 | 2026-11-17 | 4.3 관리자 판정(`getAdminSession` 하나), `/admin-login` 모듈 구조 추가 |
 | 2026-11-17 | 4.3 잠금 IP 버킷 선읽기, 거부 `reason` 분리·해시 trim, Auth.js `logger`, IP 없음 경고 |
+| 2026-11-17 | 4.4 RAG 임베딩 권한(`rag-access.ts`) |

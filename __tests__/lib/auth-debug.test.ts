@@ -9,9 +9,11 @@
  * (index.js L122); a failed credentials sign-in is a `CredentialsSignin`
  * (lib/actions/callback/index.js L236) whose `type` is "CredentialsSignin"
  * (errors.js L26 `this.type = this.constructor.type`, L172) while its `name`
- * is `constructor.name` (L24), which a minifier may rename. The real class
- * cannot be loaded here (next-auth is mocked and @auth/core is not resolvable
- * from the project root), so the errors below are built with the same shape.
+ * is `constructor.name` (L24), which a minifier may rename. next-auth is
+ * mocked here, so the real error classes come from the @auth/core copy that
+ * next-auth resolves, loaded with Node's own `require` (ESM only, see
+ * auth-core-flow.test.ts); hand-built errors of the same shape cover a
+ * minified name.
  *
  * @jest-environment node
  */
@@ -53,6 +55,19 @@ function nextAuthConfig(): Record<string, unknown> {
   return nextAuthCalls[0][0] as Record<string, unknown>;
 }
 
+type AuthErrorClass = new (message?: string) => Error & { type: string };
+
+/** The real @auth/core error classes (the copy next-auth itself resolves). */
+function realAuthErrors(): Record<"CredentialsSignin" | "CallbackRouteError", AuthErrorClass> {
+  const { getBuiltinModule } = process as { getBuiltinModule?: (id: string) => unknown };
+  if (typeof getBuiltinModule !== "function") {
+    throw new Error(`Node ${process.version} lacks process.getBuiltinModule; needs Node >= 20.19 or >= 22.12.`);
+  }
+  const { createRequire } = getBuiltinModule("node:module") as typeof import("node:module");
+  const fromNextAuth = createRequire(require.resolve("next-auth"));
+  return fromNextAuth("@auth/core/errors") as Record<"CredentialsSignin" | "CallbackRouteError", AuthErrorClass>;
+}
+
 /** An error shaped like an @auth/core AuthError subclass instance. */
 function authError(type: string, name: string, message = `Read more at https://errors.authjs.dev#${type.toLowerCase()}`) {
   return Object.assign(new Error(message), { name, type, kind: "signIn", code: "credentials" });
@@ -91,10 +106,11 @@ describe("auth.ts", () => {
     });
 
     it.each([
-      ["its class name", "CredentialsSignin"],
-      ["a minified class name", "e"],
-    ])("reports CredentialsSignin (named %s) as one warn line without a stack", (_label, name) => {
-      const error = authError("CredentialsSignin", name);
+      ["the real @auth/core class", () => new (realAuthErrors().CredentialsSignin)()],
+      ["its class name", () => authError("CredentialsSignin", "CredentialsSignin")],
+      ["a minified class name", () => authError("CredentialsSignin", "e")],
+    ])("reports CredentialsSignin (%s) as one warn line without a stack", (_label, make) => {
+      const error = make();
       expect(error.stack).toBeTruthy();
 
       logger().error!(error);
@@ -113,6 +129,7 @@ describe("auth.ts", () => {
     });
 
     it.each([
+      ["the real @auth/core CallbackRouteError", () => new (realAuthErrors().CallbackRouteError)("db down")],
       ["another Auth.js error", () => authError("CallbackRouteError", "CallbackRouteError", "db down")],
       ["an AccessDenied error", () => authError("AccessDenied", "AccessDenied")],
       ["a plain Error", () => new Error("boom")],
