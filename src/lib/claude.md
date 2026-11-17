@@ -31,7 +31,7 @@
 ├── /admin-login            # 관리자 이메일 + 비밀번호 로그인
 │   ├── constants.ts        #    provider id, 세션 12시간 (Edge에서도 import, import 없음)
 │   ├── password.ts         #    scrypt 해시·검증
-│   ├── throttle.ts         #    잠금 (admin_login_attempts)
+│   ├── throttle.ts         #    잠금 (admin_login_buckets: IP 20 → 쌍 5 → 이메일 50, 15분 버킷 카운터)
 │   ├── client-ip.ts        #    IP (VERCEL=1일 때만 신뢰)
 │   ├── authorize.ts        #    Credentials authorize
 │   └── submit.ts           #    /admin-login 폼 제출 ("use server" 금지)
@@ -158,6 +158,7 @@ export default async function Page() {
 - 판정은 `getAdminSession()`(`auth-utils.ts`) 하나다. `requireAdmin()`(API·서버 액션, 세션 없음 401·그 외 403)과 `requireAdminPage()`(페이지, `/admin-login?callbackUrl=%2Fadmin`으로 리다이렉트)가 이것을 쓴다. role만 보는 판정(예: `user.role === "admin"` 직접 비교)을 따로 만들지 않는다.
 - `adminAuthAt`은 `auth.config.ts` jwt 콜백이 `admin-credentials` 로그인 때만 넣는다. 다른 로그인은 지우고, `trigger: "update"`·`session` 인자에서는 읽지 않는다.
 - `admin-login/*`의 Prisma·`node:crypto` 코드는 `auth.ts`로만 들어간다. `admin-login/` 중 `auth.config.ts`가 import하는 것은 `constants.ts`뿐이다(`__tests__/lib/auth-edge-imports.test.ts`).
+- 잠금은 `consumeAttempt()`(`admin-login/throttle.ts`) 하나다. 버킷마다 조건부 UPDATE 한 문장(창 안 + 한도 미만이면 +1) → 만료면 조건부 리셋 → 없으면 INSERT(동시 생성 P2002면 재시도, 3회 넘으면 거부). pending 행·대화형 트랜잭션·advisory lock을 쓰지 않는다(PgBouncer transaction 모드). 판정 오류는 던지고, `authorizeAdmin`이 잡아 로그(이메일·IP·비밀번호 없이) 후 `null`로 거부한다.
 - 운영 env·잠금·복구 절차: 루트 `claude.md` 9.7.
 
 ---

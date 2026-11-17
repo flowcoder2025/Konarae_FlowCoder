@@ -505,15 +505,20 @@ CRAWLER_IMAGE=$(R flowmate-crawler) EMBEDDING_IMAGE=$(R flowmate-embedding) PARS
 - Vercel env (둘 중 하나라도 없으면 관리자 로그인은 전부 거부된다):
   - `ADMIN_LOGIN_EMAIL`: 관리자 `User` 행(role=admin)의 이메일.
   - `ADMIN_PASSWORD_HASH`: `node scripts/hash-admin-password.mjs`가 출력한 한 줄. 터미널에서 직접 실행한다(비밀번호를 가려서 두 번 입력, 14자 이상, 인자·환경변수·파이프로는 받지 않는다).
-- 잠금(`admin_login_attempts`, 15분 창): 이메일+IP 쌍 5회, IP 20회, 이메일 전체 50회 실패. 잠긴 동안의 시도는 세지 않고, 최대 15분 뒤 자동으로 풀린다. 오류 문구는 실패·잠금 모두 같다.
-- IP 한도는 런타임 env `VERCEL=1`일 때만 켜진다. Vercel 프로젝트 설정 Environment Variables의 "Enable access to System Environment Variables"가 켜져 있어야 이 값이 생긴다. 꺼져 있으면 IP 헤더를 믿지 않아 IP를 모르고, 쌍 한도가 이메일만으로 걸린다(이메일을 아는 사람이 5회로 15분 잠글 수 있다).
+- 잠금(`admin_login_buckets`, 버킷마다 15분 고정 창): 시도 하나가 IP(20회) → 이메일+IP 쌍(5회) → 이메일 전체(50회) 순서로 버킷 한 칸씩 쓴다. 앞 버킷이 거부하면 뒤 버킷은 건드리지 않고, 앞에서 쓴 칸은 돌려주지 않는다. 성공한 로그인도 한 칸을 쓴다. 창은 버킷의 첫 시도부터 15분이고, 끝난 뒤 첫 시도가 새 창을 연다. IP를 모르면 이메일 전체 버킷만 쓴다. 오류 문구는 실패·잠금 모두 같다.
+- 한 IP는 한 이메일의 50칸 중 자기 쌍의 5칸만 쓸 수 있다. 이메일 전체를 잠그려면 15분마다 IP 10개 이상이 필요하다. 그런 분산 공격이 이어지는 동안에는 표를 비워도 곧 다시 잠긴다. 이 잔여 위험은 받아들였다(로그인에 성공한 기기의 쿠키 면제는 후속 작업).
+- IP 한도는 런타임 env `VERCEL=1`일 때만 켜진다. Vercel 프로젝트 설정 Environment Variables의 "Enable access to System Environment Variables"가 켜져 있어야 이 값이 생긴다(이 프로젝트는 2026-11-17 켜져 있음 확인). 꺼져 있으면 IP 헤더를 믿지 않아 IP를 모르고, 이메일 전체 한도만 걸린다(이메일을 아는 사람 하나가 50회로 15분 잠글 수 있다).
 - 복구:
-  - 잠김: 15분 기다린다. 급하면 DB 터널로 시도 행을 지운다. 키가 `AUTH_SECRET` HMAC이라 이메일로 행을 고를 수 없으므로 표를 비운다(잠금 기록만 담는 표라 지워도 무해하다).
+  - 잠김: 15분 기다린다. 급하면 DB 터널로 버킷 표를 비운다. 키가 `AUTH_SECRET` HMAC이라 이메일로 행을 고를 수 없으므로 표 전체를 지운다(시도 횟수만 담는 표라 지워도 무해하다). 위 분산 공격 중이면 지워도 소용없다. 비밀번호는 명령줄에 쓰지 않는다(`ps`·셸 히스토리에 남는다): 가려서 입력받아 그 명령의 env로만 넘긴다. 특수문자는 `node` 한 줄이 URL 인코딩한다.
     ```bash
     # on Mini (터미널 1): 터널
     ssh -L 5433:127.0.0.1:5433 oci
-    # on Mini (터미널 2, FlowMate 디렉터리): <pw> = OCI /home/ubuntu/flowmate-db/.env 의 flowmate_owner 비밀번호
-    echo 'DELETE FROM admin_login_attempts;' | npx prisma db execute --stdin --url "postgresql://flowmate_owner:<pw>@127.0.0.1:5433/flowmate"
+    # on Mini (터미널 2, FlowMate 디렉터리)
+    # 다음 줄에서 OCI /home/ubuntu/flowmate-db/.env 의 flowmate_owner 비밀번호를 입력한다(화면에 보이지 않는다).
+    read -rs PW
+    U="postgresql://flowmate_owner:$(PW="$PW" node -e 'process.stdout.write(encodeURIComponent(process.env.PW))')@127.0.0.1:5433/flowmate"
+    echo 'DELETE FROM admin_login_buckets;' | DATABASE_URL="$U" DIRECT_URL="$U" npx prisma db execute --stdin --schema prisma/schema.prisma
+    unset PW U
     ```
   - 비밀번호 분실: `node scripts/hash-admin-password.mjs`로 새 해시를 만든다 → Vercel `ADMIN_PASSWORD_HASH` 값 교체(`vercel-account` 스킬) → 재배포(env는 재배포 뒤에 적용된다).
 
@@ -614,3 +619,4 @@ CREATE POLICY "users can view own data" ON companies
 | 2026-03-06 | 3.3.0 | Worker 메모리 관리 규칙 추가, OCI 배포 절차 문서화 |
 | 2026-11-02 | 3.4.0 | 9.5 OCI 사양(2 OCPU/12GB)·SSH(`ssh oci`) 정정, DB 스택(Postgres 17 + PgBouncer)·DB 연결 문자열 추가 |
 | 2026-11-17 | 3.5.0 | 9.7 관리자 비밀번호 로그인(`/admin-login`)·Vercel env `ADMIN_LOGIN_EMAIL`/`ADMIN_PASSWORD_HASH`·잠금/분실 복구 절차 추가 |
+| 2026-11-17 | 3.5.1 | 9.7 잠금을 버킷 카운터(`admin_login_buckets`, IP → 쌍 → 이메일)로 교체, 잠김 복구 명령에서 비밀번호를 명령줄 밖으로 |
