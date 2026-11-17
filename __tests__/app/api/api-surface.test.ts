@@ -4,24 +4,26 @@
  * adding it here with a reason, and a deleted legacy route cannot come back
  * unnoticed. The other cases close the ways a route could be served without
  * showing up here: the Pages Router, a root app directory, symlinks, route
- * groups, other files under src/app/api and custom page extensions. Reads the
- * file system and loads next.config.ts.
+ * groups, other files under src/app/api and api directories elsewhere in
+ * src/app. Reads the file system only.
  *
- * Scope: route-handler files only. Rewrites in the Next.js config, responses
- * from middleware and files under public/api are not covered.
+ * Detection does not depend on pageExtensions: whatever extensions Next.js is
+ * configured with, a route handler is named route.<ext>, and every such file
+ * counts. Scope: route-handler files plus anything placed under an api
+ * directory in src/app. Rewrites in the Next.js config, responses from
+ * middleware and files under public/api are not covered.
  *
  * @jest-environment node
  */
 
 import fs from "node:fs";
 import path from "node:path";
-import { PHASE_PRODUCTION_BUILD } from "next/constants";
 
 const ROOT = process.cwd();
 const APP_DIR = path.join(ROOT, "src", "app");
 const API_DIR = path.join(APP_DIR, "api");
-// Wide on purpose: any route-like file name counts when looking for unlisted routes.
-const ROUTE_FILE = /^route\.(ts|tsx|js|jsx|mts|cts|mjs|cjs)$/;
+// Any file named route.<anything>, so custom pageExtensions (route.api.ts) cannot hide a route.
+const ROUTE_FILE = /^route\./;
 // The only file names allowed under src/app/api: the extensions Next.js serves by default.
 const SERVED_ROUTE_FILE = /^route\.(ts|tsx|js|jsx)$/;
 
@@ -99,6 +101,15 @@ function exists(target: string): boolean {
   }
 }
 
+/** Every directory under dir (symlinks are not followed). */
+function findDirs(dir: string): string[] {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    if (!entry.isDirectory()) return [];
+    const full = path.join(dir, entry.name);
+    return [full, ...findDirs(full)];
+  });
+}
+
 function findSymlinks(dir: string): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const full = path.join(dir, entry.name);
@@ -170,6 +181,17 @@ describe("API surface", () => {
     expect(["src/pages", "pages", "app"].filter((dir) => exists(path.join(ROOT, dir)))).toEqual([]);
   });
 
+  it("has src/app/api as the only directory named api under src/app", () => {
+    // A group or slot such as src/app/(g)/api/... maps to an /api/... URL, the
+    // middleware matcher skips every path starting with api, and pages or
+    // metadata files there are not route files, so the other cases miss them.
+    const apiDirs = findDirs(APP_DIR)
+      .filter((dir) => path.basename(dir) === "api")
+      .map(relative);
+
+    expect(apiDirs).toEqual(["src/app/api"]);
+  });
+
   it("serves every route from its literal directory (no group, parallel or intercepting segment)", () => {
     // discoverRoutes drops route groups, so a grouped file such as
     // src/app/api/(g)/admin/x/route.ts would match /api/admin/x in KEEP_ROUTES
@@ -203,23 +225,6 @@ describe("API surface", () => {
     expect(findSymlinks(APP_DIR).map(relative)).toEqual([]);
   });
 
-  it("does not set pageExtensions in the Next.js config", async () => {
-    // Custom page extensions change which file names are routes (e.g.
-    // route.api.ts), and ROUTE_FILE would no longer match them. The resolved
-    // config is checked, so a spread or computed key cannot hide the setting.
-    const configs = fs.readdirSync(ROOT).filter((name) => /^next\.config\./.test(name));
-    expect(configs).toEqual(["next.config.ts"]);
-
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const exported = (require(path.join(ROOT, "next.config.ts")) as { default?: unknown }).default;
-    const config = (
-      typeof exported === "function" ? await exported(PHASE_PRODUCTION_BUILD, { defaultConfig: {} }) : exported
-    ) as Record<string, unknown> | undefined;
-
-    expect(config).toEqual(expect.objectContaining({ experimental: expect.any(Object) }));
-    expect(config?.pageExtensions).toBeUndefined();
-  });
-
   it("turns route file paths into URL patterns", () => {
     expect(
       discoverRoutes([
@@ -232,15 +237,16 @@ describe("API surface", () => {
         "src/app/api/docs/[[...slug]]/route.cts",
         "src/app/api/m/route.mjs",
         "src/app/api/c/route.cjs",
+        "src/app/api/h/route.api.ts",
         "src/app/api/v1/projects/helpers.ts",
-        "src/app/api/v1/projects/route.test.ts",
-        "src/app/api/v1/projects/route.d.ts",
+        "src/app/api/v1/projects/routes.ts",
       ])
     ).toEqual([
       "/api",
       "/api/auth/[...nextauth]",
       "/api/c",
       "/api/docs/[[...slug]]",
+      "/api/h",
       "/api/m",
       "/api/v1/projects",
       "/api/v1/projects/[id]",
