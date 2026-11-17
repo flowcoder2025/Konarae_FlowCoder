@@ -9,8 +9,6 @@ export const DEFAULT_AFTER_LOGIN = "/projects";
 export const ADMIN_HOME_PATH = "/admin";
 /** Admin email + password sign-in page. */
 export const ADMIN_LOGIN_PATH = "/admin-login";
-/** Where a signed-in non-admin lands after trying /admin. Offers sign-out. */
-export const ADMIN_DENIED_PATH = "/access-denied";
 
 const PUBLIC_ROUTES = [
   "/",
@@ -70,24 +68,15 @@ export function sanitizeCallbackUrl(
   if (url.origin !== SANITIZE_BASE) return fallback;
   if (url.pathname.startsWith("//")) return fallback;
   if (matchesRoute(url.pathname, LOGIN_PATH)) return fallback;
+  if (matchesRoute(url.pathname, ADMIN_LOGIN_PATH)) return fallback;
   if (matchesRoute(url.pathname, "/api")) return fallback;
 
   return `${url.pathname}${url.search}`;
 }
 
-/** Query flag on the login page: ask the provider to let the user pick another account. */
-export const SWITCH_ACCOUNT_PARAM = "switchAccount";
-
-/**
- * Login URL that returns the user to the given local path after sign-in.
- * With `switchAccount`, the provider is asked not to reuse its current session.
- */
-export function buildLoginUrl(
-  callbackPath: string,
-  options: { switchAccount?: boolean } = {}
-): string {
-  const url = `${LOGIN_PATH}?callbackUrl=${encodeURIComponent(callbackPath)}`;
-  return options.switchAccount ? `${url}&${SWITCH_ACCOUNT_PARAM}=1` : url;
+/** Login URL that returns the user to the given local path after sign-in. */
+export function buildLoginUrl(callbackPath: string): string {
+  return `${LOGIN_PATH}?callbackUrl=${encodeURIComponent(callbackPath)}`;
 }
 
 /** Admin sign-in URL that returns to the given local path after sign-in. */
@@ -120,12 +109,28 @@ export function resolveAuthRoute(input: {
     return { action: "redirect", location: LOGIN_PATH };
   }
 
+  // The admin sign-in page renders its form for anyone, also over a social
+  // session: sending that session away would bounce it back here via /admin.
+  if (pathname === ADMIN_LOGIN_PATH) {
+    return { action: "allow" };
+  }
+
+  if (pathname.startsWith(`${ADMIN_LOGIN_PATH}/`)) {
+    return { action: "redirect", location: ADMIN_LOGIN_PATH };
+  }
+
   if (PUBLIC_ROUTES.some((route) => matchesRoute(pathname, route))) {
     return { action: "allow" };
   }
 
   if (isLoggedIn) {
     return { action: "allow" };
+  }
+
+  // Admins sign in with a password, never with Kakao or Google. A signed-in
+  // non-admin is turned away by the admin page guard instead.
+  if (matchesRoute(pathname, ADMIN_HOME_PATH)) {
+    return { action: "redirect", location: buildAdminLoginUrl(`${pathname}${search}`) };
   }
 
   return { action: "redirect", location: buildLoginUrl(`${pathname}${search}`) };
