@@ -511,7 +511,7 @@ CRAWLER_IMAGE=$(R flowmate-crawler) EMBEDDING_IMAGE=$(R flowmate-embedding) PARS
 - 잠금(`admin_login_buckets`, 15분 고정 창): 시도 하나가 IP(20회) → 이메일+IP 쌍(5회) → 이메일 전체(50회) 순서로 버킷 카운터를 하나씩 올리고, 올린 값이 한도 이하면 통과다. 앞 버킷이 거부하면 뒤 버킷은 건드리지 않고(쌍·이메일 버킷은 거부할 때도 카운터가 올라간다), 앞에서 올린 값은 돌려주지 않는다. IP 버킷만 먼저 읽어서 이미 한도에 찼으면 올리지 않고 거부한다(한 IP의 폭주가 한 행 잠금에 몰려 PgBouncer 연결을 붙잡지 않게). 한도 아래면 올린 값으로 판정하므로 동시 요청에서도 한도만큼만 통과한다. 성공한 로그인도 한 번으로 센다. 창은 시각 기준으로 고정이라 모든 버킷이 15분 경계(매시 00·15·30·45분)에 함께 리셋된다. 창 번호가 키에 들어 있어 창마다 새 행이 생기고, 지난 창의 행은 그다음 창이 끝난 뒤의 첫 시도 때 지워진다. 경계 직전과 직후에 몰아 쓰면 짧은 시간에 한도의 두 배까지 시도할 수 있다. IP를 모르면 이메일 전체 버킷만 쓴다. 오류 문구는 실패·잠금 모두 같다.
 - 한 IP는 한 이메일의 50칸 중 자기 쌍의 5칸만 쓸 수 있다. 이메일 전체를 잠그려면 15분마다 IP 10개 이상이 필요하다. 그런 분산 공격이 이어지는 동안에는 표를 비워도 곧 다시 잠긴다. 이 잔여 위험은 받아들였다(로그인에 성공한 기기의 쿠키 면제는 후속 작업).
 - IP 한도는 런타임 env `VERCEL=1`일 때만 켜진다. Vercel 프로젝트 설정 Environment Variables의 "Enable access to System Environment Variables"가 켜져 있어야 이 값이 생긴다(이 프로젝트는 2026-11-17 켜져 있음 확인). 꺼져 있으면 IP 헤더를 믿지 않아 IP를 모르고, 이메일 전체 한도만 걸린다(이메일을 아는 사람 하나가 50회로 그 15분 창이 끝날 때까지 잠글 수 있다). 이때 운영(`NODE_ENV=production`)에서는 인스턴스(프로세스)마다 한 번 경고 `Admin login IP limit disabled …`(`reason: vercel_system_env_not_exposed`)가 남는다. Vercel인데 IP 헤더가 없으면 `reason: no_client_ip_header`. 헤더 값은 남기지 않는다.
-- 실패 로그 `Admin login rejected`의 `reason`: `invalid_credentials`·`throttled`·`no_admin_user`·`internal_error`, 그리고 설정 문제 `not_configured`(`ADMIN_LOGIN_EMAIL`·`ADMIN_PASSWORD_HASH` 중 하나가 없음)와 `malformed_hash`(해시를 읽을 수 없음)는 error 수준이다. 이메일·IP·비밀번호·해시 값은 남기지 않는다. Auth.js의 `CredentialsSignin`은 스택 없는 경고 한 줄(`Auth.js sign-in rejected`)이고, 다른 Auth.js 오류는 그대로 `console.error`로 나간다.
+- 실패 로그 `Admin login rejected`의 `reason`: `invalid_credentials`·`throttled`·`no_admin_user`·`internal_error`, `invalid_input`(이메일·비밀번호가 비었거나 너무 길다. 이때는 시도 칸을 쓰지 않고 해시도 계산하지 않는다), 그리고 설정 문제 `not_configured`(`ADMIN_LOGIN_EMAIL`·`ADMIN_PASSWORD_HASH` 중 하나가 없음)와 `malformed_hash`(해시를 읽을 수 없음)는 error 수준이다. 이메일·IP·비밀번호·해시 값은 남기지 않는다. Auth.js의 `CredentialsSignin`은 스택 없는 경고 한 줄(`Auth.js sign-in rejected`)이고, 다른 Auth.js 오류는 그대로 `console.error`로 나간다.
 - 복구:
   - 잠김: 다음 15분 경계까지 기다린다. 급하면 DB 터널로 버킷 표를 비운다. 키가 `AUTH_SECRET` HMAC이라 이메일로 행을 고를 수 없으므로 표 전체를 지운다(시도 횟수만 담는 표라 지워도 무해하다). 위 분산 공격 중이면 지워도 소용없다. 비밀번호는 명령줄에 쓰지 않는다(`ps`·셸 히스토리에 남는다): 가려서 입력받아 그 명령의 env로만 넘긴다. 특수문자는 `node` 한 줄이 URL 인코딩한다.
     ```bash
@@ -528,7 +528,15 @@ CRAWLER_IMAGE=$(R flowmate-crawler) EMBEDDING_IMAGE=$(R flowmate-embedding) PARS
     ```bash
     H=$(node scripts/hash-admin-password.mjs) && printf '%s\n' "$H" | vercel env add ADMIN_PASSWORD_HASH production --force; unset H
     ```
-  - 비밀번호 유출 의심: 위처럼 해시를 교체하고 `NEXTAUTH_SECRET`도 새 값(예: `openssl rand -base64 32`)으로 바꾼 뒤 재배포한다. 해시만 바꾸면 이미 로그인한 관리자 세션(최대 12시간 관리자)이 남는다. 시크릿을 바꾸면 모든 JWT가 무효가 되어 소셜 로그인 사용자까지 전원 로그아웃되고, 잠금 버킷 키(HMAC)도 바뀌어 지금 창의 시도 횟수가 처음부터 다시 센다. next-auth와 잠금은 `AUTH_SECRET`이 있으면 그것을 먼저 쓰므로, Vercel에 `AUTH_SECRET`이 있다면 그 값을 바꾼다. 바꾸기 전에 그 env가 어느 환경·유형으로 저장돼 있는지 확인한다(위 `--force` 명령은 production 하나에 넣은 `ADMIN_PASSWORD_HASH`를 기준으로만 확인했다).
+  - 비밀번호 유출 의심: 위처럼 해시를 교체하고 `NEXTAUTH_SECRET`도 새 값(예: `openssl rand -base64 32`)으로 바꾼 뒤 재배포한다. 해시만 바꾸면 이미 로그인한 관리자 세션(최대 12시간 관리자)이 남는다. 시크릿을 바꾸면 모든 JWT가 무효가 되어 소셜 로그인 사용자까지 전원 로그아웃되고, 잠금 버킷 키(HMAC)도 바뀌어 지금 창의 시도 횟수가 처음부터 다시 센다. next-auth와 잠금은 `AUTH_SECRET`이 있으면 그것을 먼저 쓰므로, Vercel에 `AUTH_SECRET`이 있다면 그 값을 바꾼다.
+    - 2026-11-17 확인(`vercel env ls`, 이름만): `AUTH_SECRET`은 없고, `NEXTAUTH_SECRET`은 변수 하나에 Production·Preview·Development가 함께 걸려 있다. 위 `vercel env add … production --force`는 production 하나에 넣은 `ADMIN_PASSWORD_HASH`로만 확인했고, 세 환경에 걸린 변수를 이 명령이 어떻게 바꾸는지는 검증하지 않았다. 그래서 이 변수에는 쓰지 않는다.
+    - 교체는 대시보드(Project Settings → Environment Variables → `NEXTAUTH_SECRET` → Edit)에서 값만 바꾼다(환경은 그대로). 새 값은 화면·셸 히스토리에 남지 않게 클립보드로 넘긴다. 그 뒤 production을 재배포한다.
+      ```bash
+      # on Mini/MBP
+      openssl rand -base64 32 | tr -d '\n' | pbcopy   # 대시보드 값 칸에 붙여 넣는다
+      printf '' | pbcopy                              # 붙여 넣은 뒤 클립보드를 비운다
+      ```
+- 옛 배포 URL(`konarae-flow-coder-*-flowcoder.vercel.app`)은 Vercel Authentication 뒤에 있어 공개로 닿지 않는다(2026-11-17 확인: 이 기능 전의 production·preview 배포 `/admin` → `vercel.com` 302). 이 보호를 끄면 그 배포들에서는 role=admin 소셜 세션이 다시 관리자가 된다(9.7 이전 판정).
 
 ---
 
@@ -630,3 +638,4 @@ CREATE POLICY "users can view own data" ON companies
 | 2026-11-17 | 3.5.1 | 9.7 잠금을 버킷 카운터(`admin_login_buckets`, IP → 쌍 → 이메일)로 교체, 잠김 복구 명령에서 비밀번호를 명령줄 밖으로 |
 | 2026-11-17 | 3.5.2 | 9.7 잠금 창을 15분 고정 경계로, `ADMIN_PASSWORD_HASH` 등록 명령(변수에 받은 뒤 파이프) |
 | 2026-11-17 | 3.5.3 | 9.7 IP 버킷은 한도에 차면 읽기만, IP 한도 꺼짐 경고·실패 `reason`, 비밀번호 교체(`--force`)·유출 시 `NEXTAUTH_SECRET` 교체 |
+| 2026-11-17 | 3.5.4 | 9.7 `invalid_input` reason, `NEXTAUTH_SECRET` 저장 형태와 대시보드 교체 절차, 옛 배포 URL 보호 확인 |

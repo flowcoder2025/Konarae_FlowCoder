@@ -39,6 +39,7 @@
 │   # 비즈니스 로직
 ├── matching.ts             # RAG 매칭 엔진
 ├── rag.ts                  # RAG 검색 시스템
+├── rag-access.ts           # RAG 임베딩 읽기·쓰기 권한 canAccessEmbeddings()
 ├── text-config.ts          # i18n 텍스트 설정
 ├── notifications.ts        # 알림 시스템
 ├── export.ts               # 데이터 내보내기
@@ -162,6 +163,15 @@ export default async function Page() {
 - `authorizeAdmin`은 `ADMIN_PASSWORD_HASH`를 trim해서 쓰고, 거부 로그 `reason`을 `not_configured`(env 없음)·`malformed_hash`(`isWellFormedHash` 거짓, error 수준)·`invalid_credentials` 등으로 나눈다. 어느 경우든 시도 한 칸과 scrypt 한 번(`verifyPassword`)은 그대로다.
 - `auth.ts`의 Auth.js `logger`는 `error`만 둔다: `type === "CredentialsSignin"`은 스택 없는 warn 한 줄, 나머지는 그대로 `console.error`. `debug`를 넣지 않는다(`debug: false`가 깐 no-op을 덮어써 요청 본문 로그가 살아난다).
 - 운영 env·잠금·복구 절차: 루트 `claude.md` 9.7.
+
+### 4.4 RAG 임베딩 권한 (rag-access.ts)
+
+- `/api/rag/*`에서 `document_embeddings`를 읽거나 바꾸기 전에 `canAccessEmbeddings(userId, sourceType, sourceId, "read" | "write")`를 부른다.
+  - support_project: 읽기는 로그인한 누구나, 쓰기는 관리자(`getAdminSession()`)만.
+  - company: 읽기 viewer, 쓰기 company admin(owner 포함).
+  - business_plan: 읽기 viewer, 쓰기 owner.
+- `hybridSearch()`는 source id로 거르지 못한다. 그래서 `/api/rag/search`에서 관리자가 아니면 support_project만 검색한다(종류를 안 주면 support_project, company·business_plan을 주면 403). 서버 내부 호출(`business-plan-generator.ts` 등)은 결과를 sourceId로 거른 뒤 쓴다.
+- 경계 테스트: `__tests__/app/api/rag/rag-access.test.ts`(ReBAC·관리자 판정은 실제 코드, 거부된 요청은 임베딩 함수에 닿지 않음).
 
 ---
 
@@ -364,3 +374,4 @@ export async function PATCH(req, { params }) {
 | 2025-12-15 | 허브 연결 섹션 추가, 디렉토리 구조 확장 |
 | 2026-11-17 | 4.3 관리자 판정(`getAdminSession` 하나), `/admin-login` 모듈 구조 추가 |
 | 2026-11-17 | 4.3 잠금 IP 버킷 선읽기, 거부 `reason` 분리·해시 trim, Auth.js `logger`, IP 없음 경고 |
+| 2026-11-17 | 4.4 RAG 임베딩 권한(`rag-access.ts`) |

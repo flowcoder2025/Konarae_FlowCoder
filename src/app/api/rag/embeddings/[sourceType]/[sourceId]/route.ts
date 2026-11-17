@@ -2,15 +2,14 @@
  * RAG Embeddings Management API (PRD 4.8)
  * GET /api/rag/embeddings/:sourceType/:sourceId - Get embedding info
  * DELETE /api/rag/embeddings/:sourceType/:sourceId - Delete embeddings
+ *
+ * GET needs read access and DELETE write access to the source
+ * (`canAccessEmbeddings` in src/lib/rag-access.ts).
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { getAdminSession } from "@/lib/auth-utils";
-import {
-  checkCompanyPermission,
-  checkBusinessPlanPermission,
-} from "@/lib/rebac";
+import { canAccessEmbeddings } from "@/lib/rag-access";
 import {
   getEmbeddingCount,
   deleteEmbeddings,
@@ -39,6 +38,10 @@ export async function GET(
         { error: "Invalid source type" },
         { status: 400 }
       );
+    }
+
+    if (!(await canAccessEmbeddings(session.user.id, sourceType as SourceType, sourceId, "read"))) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
     const count = await getEmbeddingCount(
@@ -81,31 +84,12 @@ export async function DELETE(
       );
     }
 
-    // Permission check based on sourceType
-    let hasPermission = false;
-
-    switch (sourceType) {
-      case "support_project":
-        // Only an admin (password sign-in + role=admin) can delete support project embeddings
-        hasPermission = (await getAdminSession()) !== null;
-        break;
-      case "company":
-        // Company owner or admin can delete company embeddings
-        hasPermission = await checkCompanyPermission(
-          session.user.id,
-          sourceId,
-          "admin"
-        );
-        break;
-      case "business_plan":
-        // Business plan owner can delete embeddings
-        hasPermission = await checkBusinessPlanPermission(
-          session.user.id,
-          sourceId,
-          "owner"
-        );
-        break;
-    }
+    const hasPermission = await canAccessEmbeddings(
+      session.user.id,
+      sourceType as SourceType,
+      sourceId,
+      "write"
+    );
 
     if (!hasPermission) {
       logger.warn("Unauthorized embedding deletion attempt", {

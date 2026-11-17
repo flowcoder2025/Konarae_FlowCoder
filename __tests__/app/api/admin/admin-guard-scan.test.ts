@@ -19,6 +19,13 @@
  * A "use server" string the scan cannot place (not a function's or the file's
  * directive), or a file-level "use server" under src/app/admin/, fails.
  *
+ * Every other server action in src/ must be listed: a file-level "use server"
+ * outside src/lib/actions/, or one there without "admin" in its path, fails
+ * unless it is in OTHER_ACTION_FILES, and a file outside src/app/admin/ must
+ * have exactly the number of inline actions PUBLIC_INLINE_ACTIONS gives it
+ * (none if absent). A new server action anywhere therefore fails until it is
+ * guarded as an admin action or listed here with the reason it needs no admin.
+ *
  * @jest-environment node
  */
 
@@ -27,12 +34,30 @@ import path from "node:path";
 import ts from "typescript";
 
 const ROOT = process.cwd();
+const SRC_DIR = path.join(ROOT, "src");
 const ADMIN_API_DIR = path.join(ROOT, "src", "app", "api", "admin");
 const ACTIONS_DIR = path.join(ROOT, "src", "lib", "actions");
 const ADMIN_APP_DIR = path.join(ROOT, "src", "app", "admin");
 const ADMIN_LAYOUT = path.join("src", "app", "admin", "layout.tsx");
 const SOURCE_FILE = /\.(ts|tsx|js|jsx)$/;
 const USE_SERVER = "use server";
+
+/**
+ * Inline server actions outside src/app/admin/ (file -> how many). Each is a
+ * public endpoint, so each entry says why it needs no admin.
+ */
+const PUBLIC_INLINE_ACTIONS: Record<string, number> = {
+  // Kakao and Google sign-in buttons: start an OAuth redirect, nothing else.
+  [path.join("src", "app", "login", "page.tsx")]: 2,
+  // The admin password sign-in form; attempts are throttled in authorizeAdmin.
+  [path.join("src", "app", "admin-login", "page.tsx")]: 1,
+};
+
+/**
+ * "use server" files that are not admin action files (src/lib/actions/, path
+ * containing "admin"), with the reason they need no admin. None today.
+ */
+const OTHER_ACTION_FILES: ReadonlySet<string> = new Set<string>();
 
 const HTTP_METHODS = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]);
 // Next.js route segment config: plain values, not handlers.
@@ -182,8 +207,18 @@ function startsWithGuard(fn: FunctionNode): boolean {
 
 type InlineAction = { line: number; rest: readonly ts.Statement[] };
 
+type InlineScan = {
+  actions: InlineAction[];
+  /** The file starts with the "use server" directive. */
+  fileLevel: boolean;
+  /** "use server" strings that are neither the file's nor a function's directive. */
+  strays: string[];
+  /** For a file under src/app/admin/: the file-level directive and the strays. */
+  problems: string[];
+};
+
 /** Functions whose body starts with the "use server" directive, and stray "use server" strings. */
-function scanInlineActions(source: ts.SourceFile): { actions: InlineAction[]; problems: string[] } {
+function scanInlineActions(source: ts.SourceFile): InlineScan {
   const actions: InlineAction[] = [];
   const directiveNodes = new Set<ts.Node>();
   const line = (node: ts.Node) => source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
@@ -210,25 +245,53 @@ function scanInlineActions(source: ts.SourceFile): { actions: InlineAction[]; pr
   };
   visit(source);
 
-  const problems: string[] = [];
-  if (fileDirectives.directives.includes(USE_SERVER)) {
-    problems.push("file-level \"use server\": put admin actions in src/lib/actions/ (scanned there)");
-  }
-  const strays: ts.Node[] = [];
+  const fileLevel = fileDirectives.directives.includes(USE_SERVER);
+  const strayNodes: ts.Node[] = [];
   const findStrays = (node: ts.Node): void => {
     if (
       (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) &&
       node.text === USE_SERVER &&
       !directiveNodes.has(node.parent)
     ) {
-      strays.push(node);
+      strayNodes.push(node);
     }
     ts.forEachChild(node, findStrays);
   };
   findStrays(source);
-  for (const stray of strays) problems.push(`"use server" the scan cannot place, line ${line(stray)}`);
+  const strays = strayNodes.map((stray) => `"use server" the scan cannot place, line ${line(stray)}`);
 
-  return { actions, problems };
+  const problems = [
+    ...(fileLevel ? ["file-level \"use server\": put admin actions in src/lib/actions/ (scanned there)"] : []),
+    ...strays,
+  ];
+  return { actions, fileLevel, strays, problems };
+}
+
+const isUnder = (relativePath: string, dir: string) => relativePath.startsWith(path.relative(ROOT, dir) + path.sep);
+
+/**
+ * Server actions of one file outside src/app/admin/ that are neither admin
+ * actions the scan guards nor listed as public (see the module comment).
+ */
+function unaccountedServerActions(relativePath: string, source: ts.SourceFile): string[] {
+  const { actions, fileLevel, strays } = scanInlineActions(source);
+  const failures = [...strays];
+  if (
+    fileLevel &&
+    !(isUnder(relativePath, ACTIONS_DIR) && isAdminActionFile(relativePath, source)) &&
+    !OTHER_ACTION_FILES.has(relativePath)
+  ) {
+    failures.push(
+      "file-level \"use server\" outside the admin action files: put admin actions in src/lib/actions/ with admin in the path, or list the file in OTHER_ACTION_FILES"
+    );
+  }
+  const expected = PUBLIC_INLINE_ACTIONS[relativePath] ?? 0;
+  if (actions.length !== expected) {
+    failures.push(
+      `${actions.length} inline server action(s), PUBLIC_INLINE_ACTIONS lists ${expected}: guard admin actions under src/app/admin/, or list public ones`
+    );
+  }
+  return failures;
 }
 
 /** `await signOut(...)` and nothing else. */
@@ -343,6 +406,13 @@ const adminAppFiles = findFiles(ADMIN_APP_DIR, SOURCE_FILE)
   .map((file) => ({ file: relative(file), source: parse(file) }))
   .sort((a, b) => a.file.localeCompare(b.file));
 
+// Everything else in src/ (src/app/admin/ is covered by the inline scan above).
+const otherSrcFiles = findFiles(SRC_DIR, SOURCE_FILE)
+  .map(relative)
+  .filter((file) => !isUnder(file, ADMIN_APP_DIR))
+  .sort()
+  .map((file) => ({ file, source: parse(path.join(ROOT, file)) }));
+
 describe("admin API route handlers (src/app/api/admin/**/route.ts)", () => {
   it("finds the admin routes on disk", () => {
     expect(routeFiles.length).toBeGreaterThanOrEqual(19);
@@ -400,6 +470,22 @@ describe("inline server actions (src/app/admin/**)", () => {
   it("every inline action starts with await requireAdmin() (only the layout sign-out is exempt)", () => {
     const failures = adminAppFiles.flatMap(({ file, source }) =>
       unguardedInlineActions(file, source).map((failure) => `${file}: ${failure}`)
+    );
+    expect(failures).toEqual([]);
+  });
+});
+
+describe("every other server action in src/ is listed", () => {
+  it("finds the source files and the listed public actions", () => {
+    const files = otherSrcFiles.map((entry) => entry.file);
+    expect(files.length).toBeGreaterThanOrEqual(300);
+    for (const file of Object.keys(PUBLIC_INLINE_ACTIONS)) expect(files).toContain(file);
+    for (const file of OTHER_ACTION_FILES) expect(files).toContain(file);
+  });
+
+  it("has no unlisted \"use server\" file or inline action outside src/app/admin/", () => {
+    const failures = otherSrcFiles.flatMap(({ file, source }) =>
+      unaccountedServerActions(file, source).map((failure) => `${file}: ${failure}`)
     );
     expect(failures).toEqual([]);
   });
@@ -648,6 +734,30 @@ describe("the scan itself", () => {
       ["the string elsewhere", PAGE, 'const mode = "use server";\nexport default function Page() { return <div />; }'],
     ])("flags %s as a problem", (_label, file, code) => {
       expect(inline(file, code).problems.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe("server actions elsewhere in src/", () => {
+    const LOGIN = path.join("src", "app", "login", "page.tsx");
+    const unaccounted = (file: string, code: string) => unaccountedServerActions(file, parseSource(file, code));
+    const action = 'async () => { "use server"; await go(); }';
+
+    it.each([
+      ["an admin action file", path.join("src", "lib", "actions", "admin-actions.ts"), '"use server";\nexport async function a() {}'],
+      ["the listed login actions", LOGIN, `export default function P() { return <><form action={${action}} /><form action={${action}} /></>; }`],
+      ["a file without server actions", path.join("src", "lib", "rag.ts"), "export async function f() {}"],
+    ])("accepts %s", (_label, file, code) => {
+      expect(unaccounted(file, code)).toEqual([]);
+    });
+
+    it.each([
+      ["a \"use server\" file outside src/lib/actions", path.join("src", "features", "admin", "actions.ts"), '"use server";\nexport async function a() {}'],
+      ["a \"use server\" file without admin in the path", path.join("src", "lib", "actions", "user-actions.ts"), '"use server";\nexport async function a() {}'],
+      ["an inline action in an unlisted page", path.join("src", "app", "(app)", "settings", "page.tsx"), `export default function P() { return <form action={${action}} />; }`],
+      ["a third login action", LOGIN, `export default function P() { return <><form action={${action}} /><form action={${action}} /><form action={${action}} /></>; }`],
+      ["a stray \"use server\" string", path.join("src", "lib", "x.ts"), 'export const mode = "use server";'],
+    ])("rejects %s", (_label, file, code) => {
+      expect(unaccounted(file, code).length).toBeGreaterThan(0);
     });
   });
 });
