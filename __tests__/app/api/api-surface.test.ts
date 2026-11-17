@@ -4,18 +4,26 @@
  * adding it here with a reason, and a deleted legacy route cannot come back
  * unnoticed. The other cases close the ways a route could be served without
  * showing up here: the Pages Router, a root app directory, symlinks, route
- * groups and custom page extensions. Reads the file system only.
+ * groups, other files under src/app/api and custom page extensions. Reads the
+ * file system and loads next.config.ts.
+ *
+ * Scope: route-handler files only. Rewrites in the Next.js config, responses
+ * from middleware and files under public/api are not covered.
  *
  * @jest-environment node
  */
 
 import fs from "node:fs";
 import path from "node:path";
+import { PHASE_PRODUCTION_BUILD } from "next/constants";
 
 const ROOT = process.cwd();
 const APP_DIR = path.join(ROOT, "src", "app");
 const API_DIR = path.join(APP_DIR, "api");
+// Wide on purpose: any route-like file name counts when looking for unlisted routes.
 const ROUTE_FILE = /^route\.(ts|tsx|js|jsx|mts|cts|mjs|cjs)$/;
+// The only file names allowed under src/app/api: the extensions Next.js serves by default.
+const SERVED_ROUTE_FILE = /^route\.(ts|tsx|js|jsx)$/;
 
 const KEEP_ROUTES: readonly string[] = [
   // NextAuth handler (social sign-in, admin password sign-in, session).
@@ -157,8 +165,8 @@ describe("API surface", () => {
   });
 
   it("has no Pages Router and no root app directory", () => {
-    // pages/api/* would be served as API routes that discoverRoutes never sees,
-    // and a root app/ or pages/ makes Next.js ignore src/app altogether.
+    // pages/api/* would be served as API routes that discoverRoutes never sees.
+    // A root pages/ supersedes src/pages, and a root app/ supersedes src/app.
     expect(["src/pages", "pages", "app"].filter((dir) => exists(path.join(ROOT, dir)))).toEqual([]);
   });
 
@@ -179,21 +187,37 @@ describe("API surface", () => {
     expect({ nonLiteral, withoutLiteralDirectory }).toEqual({ nonLiteral: [], withoutLiteralDirectory: [] });
   });
 
+  it("has only route.ts, route.tsx, route.js or route.jsx files under src/app/api", () => {
+    // A page or metadata file (icon.tsx, opengraph-image.tsx, ...) would be
+    // served without a route file, and route.mjs/.cjs/.mts/.cts would match
+    // ROUTE_FILE while Next.js does not serve it. Finder's .DS_Store is never served.
+    const files = findFiles(API_DIR, /^(?!\.DS_Store$)/).map(relative);
+
+    expect(files.length).toBeGreaterThan(0);
+    expect(files.filter((file) => !SERVED_ROUTE_FILE.test(path.posix.basename(file)))).toEqual([]);
+  });
+
   it("has no symlinks under src/app", () => {
     // The directory walk does not follow symlinks, but Next.js does: a linked
     // directory could serve routes this test never sees.
     expect(findSymlinks(APP_DIR).map(relative)).toEqual([]);
   });
 
-  it("does not set pageExtensions in the Next.js config", () => {
+  it("does not set pageExtensions in the Next.js config", async () => {
     // Custom page extensions change which file names are routes (e.g.
-    // route.api.ts), and ROUTE_FILE would no longer match them.
-    const configs = fs.readdirSync(ROOT).filter((name) => /^next\.config\.(js|mjs|cjs|ts|mts|cts)$/.test(name));
+    // route.api.ts), and ROUTE_FILE would no longer match them. The resolved
+    // config is checked, so a spread or computed key cannot hide the setting.
+    const configs = fs.readdirSync(ROOT).filter((name) => /^next\.config\./.test(name));
+    expect(configs).toEqual(["next.config.ts"]);
 
-    expect(configs.length).toBeGreaterThan(0);
-    expect(
-      configs.filter((name) => fs.readFileSync(path.join(ROOT, name), "utf8").includes("pageExtensions"))
-    ).toEqual([]);
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const exported = (require(path.join(ROOT, "next.config.ts")) as { default?: unknown }).default;
+    const config = (
+      typeof exported === "function" ? await exported(PHASE_PRODUCTION_BUILD, { defaultConfig: {} }) : exported
+    ) as Record<string, unknown> | undefined;
+
+    expect(config).toEqual(expect.objectContaining({ experimental: expect.any(Object) }));
+    expect(config?.pageExtensions).toBeUndefined();
   });
 
   it("turns route file paths into URL patterns", () => {

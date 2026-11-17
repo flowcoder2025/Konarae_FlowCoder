@@ -66,7 +66,7 @@ export default async function AppLayout({ children }) {
 
 레이아웃은 접근 경계가 아니다(클라이언트 내비게이션 형식의 요청은 레이아웃 없이 페이지만 렌더링한다). `/admin/**`의 **모든 `page`·`layout`·`template`·`default`는 첫 `await`로 `requireAdminPage()`를 호출**한다. `generateMetadata`·`generateViewport`를 내보내면 그 함수도 같다. `/admin` 아래에 `route.ts`는 두지 않는다(관리자 API는 `/api/admin`). `__tests__/app/admin-page-guard.test.ts`가 디스크의 파일 전부에 대해 이를 강제한다.
 
-API 표면은 `__tests__/app/api/api-surface.test.ts`의 `KEEP_ROUTES`가 정한다(`/api/auth`·`/api/admin`·`/api/cron`·`/api/internal`·`/api/v1`만, `src/app/api` 밖 `route.*` 금지). 새 라우트는 이유와 함께 목록에 넣는다.
+API 표면은 `__tests__/app/api/api-surface.test.ts`의 `KEEP_ROUTES`가 정한다(`/api/auth`·`/api/admin`·`/api/cron`·`/api/internal`·`/api/v1`만, `src/app/api` 밖 `route.*` 금지). 새 라우트는 이유와 함께 목록에 넣는다. 같은 테스트가 막는 것: `src/pages`·루트 `pages`·루트 `app`, `src/app/api` 안의 그룹 `(x)`·병렬 `@x`·가로채기 `(.)x` 세그먼트와 `route.{ts,tsx,js,jsx}` 아닌 파일, `src/app` 아래 심볼릭 링크, `next.config.ts`의 `pageExtensions`.
 
 서버 액션은 전부 공개 엔드포인트다. `__tests__/app/api/admin/admin-guard-scan.test.ts`가 `src` 전체의 `"use server"`를 센다: 관리자 액션은 `src/lib/actions/`(경로에 admin)의 파일 단위 액션이거나 `/admin/**`의 인라인 액션이고 첫 줄이 `await requireAdmin()`이다. 그 밖의 액션(지금은 `/login`의 `await signIn(...)` 2개, `/admin-login`의 `await submitAdminLogin(...)` 1개)은 그 테스트의 `PUBLIC_INLINE_ACTIONS`(개수와 본문 호출 하나)·`OTHER_ACTION_FILES`에 이유와 함께 적어야 통과한다.
 
