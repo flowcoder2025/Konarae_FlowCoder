@@ -21,6 +21,21 @@ const PUBLIC_ROUTES = [
   "/sitemap.xml",
 ];
 
+/**
+ * Files under public/ and metadata routes, open to everyone. Matched by exact
+ * path so a file name can never open a page: the middleware still runs on
+ * these paths and this list is the only thing that lets them through.
+ * Kept in sync with public/ by __tests__/lib/auth-routes.test.ts.
+ */
+export const PUBLIC_FILES: readonly string[] = [
+  "/Flow_icon.ico",
+  "/Flow_icon.png",
+  "/fonts/NotoSansKR-Regular.ttf",
+  "/manifest.webmanifest",
+  "/opengraph-image.png",
+  "/twitter-image.png",
+];
+
 const LEGACY_REDIRECT_ROUTES = [
   "/dashboard",
   "/home",
@@ -98,6 +113,10 @@ export function resolveAuthRoute(input: {
 
   if (LEGACY_REDIRECT_ROUTES.some((route) => matchesRoute(pathname, route))) {
     return { action: "redirect", location: DEFAULT_AFTER_LOGIN };
+  }
+
+  if (PUBLIC_FILES.includes(pathname)) {
+    return { action: "allow" };
   }
 
   // The sign-in page itself must stay reachable without a session.

@@ -3,6 +3,7 @@ import path from "node:path";
 import * as authRoutes from "@/lib/auth-routes";
 import {
   ADMIN_LOGIN_PATH,
+  PUBLIC_FILES,
   buildAdminLoginUrl,
   buildLoginUrl,
   resolveAuthRoute,
@@ -279,5 +280,72 @@ describe("removed account-switch flow", () => {
     });
 
     expect(hits).toEqual([]);
+  });
+});
+
+describe("public files", () => {
+  const PUBLIC_DIR = path.join(process.cwd(), "public");
+  // Metadata routes generated from src/app (no file under public/).
+  const METADATA_FILES = ["/manifest.webmanifest"];
+
+  function publicFilesOnDisk(dir: string = PUBLIC_DIR): string[] {
+    return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      // Finder metadata and other dotfiles are not part of the site.
+      if (entry.name.startsWith(".")) return [];
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) return publicFilesOnDisk(full);
+      return [`/${path.relative(PUBLIC_DIR, full).split(path.sep).join("/")}`];
+    });
+  }
+
+  it("lists exactly the files under public/ plus the metadata routes", () => {
+    const onDisk = publicFilesOnDisk();
+
+    expect(onDisk.length).toBeGreaterThan(0);
+    expect([...PUBLIC_FILES].sort()).toEqual([...onDisk, ...METADATA_FILES].sort());
+    expect(fs.existsSync(path.join(process.cwd(), "src", "app", "manifest.ts"))).toBe(true);
+  });
+
+  it("serves every public file to an anonymous visitor and to a signed-in one", () => {
+    for (const file of PUBLIC_FILES) {
+      expect({ file, decision: decide(file) }).toEqual({ file, decision: { action: "allow" } });
+      expect({ file, decision: decide(file, true) }).toEqual({ file, decision: { action: "allow" } });
+    }
+  });
+
+  it("matches the exact path only", () => {
+    expect(decide("/Flow_icon.png/x")).toEqual({
+      action: "redirect",
+      location: "/login?callbackUrl=%2FFlow_icon.png%2Fx",
+    });
+    expect(decide("/flow_icon.png")).toEqual({
+      action: "redirect",
+      location: "/login?callbackUrl=%2Fflow_icon.png",
+    });
+    expect(decide("/fonts")).toEqual({ action: "redirect", location: "/login?callbackUrl=%2Ffonts" });
+    expect(decide("/fonts/other.ttf")).toEqual({
+      action: "redirect",
+      location: "/login?callbackUrl=%2Ffonts%2Fother.ttf",
+    });
+    expect(decide("/x/opengraph-image.png")).toEqual({
+      action: "redirect",
+      location: "/login?callbackUrl=%2Fx%2Fopengraph-image.png",
+    });
+  });
+
+  it("does not open admin or legacy paths that end in a public file name", () => {
+    expect(decide("/admin/Flow_icon.png")).toEqual({
+      action: "redirect",
+      location: "/admin-login?callbackUrl=%2Fadmin%2FFlow_icon.png",
+    });
+    expect(decide("/dashboard/opengraph-image.png")).toEqual({ action: "redirect", location: "/projects" });
+    expect(decide("/dashboard/opengraph-image.png", true)).toEqual({ action: "redirect", location: "/projects" });
+  });
+
+  it("names no page, API or framework path", () => {
+    for (const file of PUBLIC_FILES) {
+      expect(file).toMatch(/^\/[^?#]+\.[a-z0-9]+$/);
+      expect(file).not.toMatch(/^\/(api|admin|_next)(\/|$)/);
+    }
   });
 });

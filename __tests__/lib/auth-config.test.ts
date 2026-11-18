@@ -88,6 +88,12 @@ describe("authConfig.callbacks.authorized", () => {
     expect(await authorize("/")).toBe(true);
     expect(await authorize("/projects/abc")).toBe(true);
   });
+
+  it("serves public files to an anonymous request", async () => {
+    expect(await authorize("/Flow_icon.png")).toBe(true);
+    expect(await authorize("/opengraph-image.png")).toBe(true);
+    expect(await authorize("/manifest.webmanifest")).toBe(true);
+  });
 });
 
 describe("middleware matcher", () => {
@@ -101,6 +107,16 @@ describe("middleware matcher", () => {
     expect(matches("/admin")).toBe(true);
     expect(matches("/admin/crawler")).toBe(true);
     expect(matches("/dashboard")).toBe(true);
+  });
+
+  it("runs on public files, so the route decision alone opens them", () => {
+    // Excluding them here by extension would also skip page paths that end in
+    // a file extension.
+    expect(matches("/Flow_icon.png")).toBe(true);
+    expect(matches("/opengraph-image.png")).toBe(true);
+    expect(matches("/fonts/NotoSansKR-Regular.ttf")).toBe(true);
+    expect(matches("/manifest.webmanifest")).toBe(true);
+    expect(matches("/admin/Flow_icon.png")).toBe(true);
   });
 
   it("skips API routes and Next.js assets", () => {
