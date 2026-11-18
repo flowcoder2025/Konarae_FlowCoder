@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { createLogger } from "@/lib/logger";
+import { hasAdminApiKey, hasCronBearer } from "@/lib/cron-auth";
 
 const logger = createLogger({ api: "cron-close-expired" });
 
@@ -22,13 +23,11 @@ export const dynamic = "force-dynamic";
  * Verify request authorization
  */
 function verifyAuthorization(req: NextRequest): { valid: boolean; source: string } {
-  const authHeader = req.headers.get("authorization");
-  if (authHeader === `Bearer ${process.env.CRON_SECRET}`) {
+  if (hasCronBearer(req)) {
     return { valid: true, source: "vercel-cron" };
   }
 
-  const apiKey = req.headers.get("x-api-key");
-  if (apiKey === process.env.ADMIN_API_KEY) {
+  if (hasAdminApiKey(req)) {
     return { valid: true, source: "admin" };
   }
 

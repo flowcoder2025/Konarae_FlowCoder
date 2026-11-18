@@ -12,6 +12,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifyQStashSignature } from "@/lib/qstash";
 import { prisma } from "@/lib/prisma";
 import { createLogger } from "@/lib/logger";
+import { hasAdminApiKey, hasCronBearer } from "@/lib/cron-auth";
 
 const logger = createLogger({ api: "cron-analyze-projects" });
 const ANALYSIS_BATCH_SIZE = 100;
@@ -26,8 +27,7 @@ async function verifyAuthorization(
   req: NextRequest
 ): Promise<{ valid: boolean; source: string }> {
   // 1. Check Vercel Cron secret
-  const authHeader = req.headers.get("authorization");
-  if (authHeader === `Bearer ${process.env.CRON_SECRET}`) {
+  if (hasCronBearer(req)) {
     return { valid: true, source: "vercel-cron" };
   }
 
@@ -42,8 +42,7 @@ async function verifyAuthorization(
   }
 
   // 3. Check manual admin trigger
-  const apiKey = req.headers.get("x-api-key");
-  if (apiKey === process.env.ADMIN_API_KEY) {
+  if (hasAdminApiKey(req)) {
     return { valid: true, source: "admin" };
   }
 

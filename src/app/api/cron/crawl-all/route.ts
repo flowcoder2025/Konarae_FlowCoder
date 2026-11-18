@@ -17,6 +17,7 @@ import {
   markStalePendingCrawlJobs,
   markStaleRunningCrawlJobs,
 } from "@/lib/crawler/job-scheduler";
+import { hasAdminApiKey, hasCronBearer } from "@/lib/cron-auth";
 
 const logger = createLogger({ api: "cron-crawl-all" });
 
@@ -29,8 +30,7 @@ export const dynamic = "force-dynamic";
  */
 async function verifyAuthorization(req: NextRequest): Promise<{ valid: boolean; source: string }> {
   // 1. Check Vercel Cron secret (GET requests)
-  const authHeader = req.headers.get("authorization");
-  if (authHeader === `Bearer ${process.env.CRON_SECRET}`) {
+  if (hasCronBearer(req)) {
     return { valid: true, source: "vercel-cron" };
   }
 
@@ -45,8 +45,7 @@ async function verifyAuthorization(req: NextRequest): Promise<{ valid: boolean; 
   }
 
   // 3. Check for manual admin trigger (with API key)
-  const apiKey = req.headers.get("x-api-key");
-  if (apiKey === process.env.ADMIN_API_KEY) {
+  if (hasAdminApiKey(req)) {
     return { valid: true, source: "admin" };
   }
 

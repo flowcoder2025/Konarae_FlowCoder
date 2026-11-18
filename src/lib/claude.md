@@ -26,6 +26,7 @@
 ├── auth.config.ts          # NextAuth 옵션 (Edge 미들웨어용, Prisma·crypto 금지)
 ├── auth-routes.ts          # 미들웨어 경로 판정, callbackUrl 정리 (import 없음). public/ 파일은 PUBLIC_FILES에 정확한 경로로 넣어야 비로그인에게 열린다
 ├── auth-utils.ts           # 인증 유틸리티, 관리자 판정 getAdminSession()
+├── cron-auth.ts            # 크론 라우트 공유 secret 검사 (secret이 비면 거부, 핸들러는 process.env와 직접 비교 금지)
 ├── admin-guard.ts          # /admin 페이지 가드 requireAdminPage()
 ├── rebac.ts                # ReBAC 권한 시스템
 ├── /admin-login            # 관리자 이메일 + 비밀번호 로그인
