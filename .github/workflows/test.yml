@@ -16,7 +16,8 @@ permissions:
 
 concurrency:
   group: test-${{ github.ref }}
-  cancel-in-progress: true
+  # Only superseded PR runs are cancelled; every main commit keeps its own result.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   jest:
@@ -65,12 +66,24 @@ jobs:
         env:
           ADMIN_LOGIN_TEST_DATABASE_URL: postgresql://postgres:test@127.0.0.1:55432/flowmate_test
 
-      # A skipped suite passes jest. Every suite must run here, including the
-      # ones gated on a database or a pty.
+      # A skipped suite passes jest. Every jest suite must run here, including
+      # the ones gated on a database or a pty, and those must still be picked
+      # up by testMatch (a renamed file would vanish without a skip).
       - name: No skipped or todo tests
         run: |
           node <<'EOF'
+          const path = require("node:path");
           const r = require("./jest-results.json");
+          const gated = [
+            "__tests__/lib/admin-login/authorize.integration.test.ts",
+            "__tests__/lib/admin-login/throttle.integration.test.ts",
+            "__tests__/scripts/hash-admin-password.test.ts",
+          ];
+          const ran = new Map(r.testResults.map((t) => [path.relative(process.cwd(), t.name), t]));
+          const missing = gated.filter((f) => {
+            const t = ran.get(f);
+            return !t || t.status !== "passed" || t.assertionResults.length === 0;
+          });
           const counts = {
             total: r.numTotalTests,
             passed: r.numPassedTests,
@@ -81,6 +94,10 @@ jobs:
           console.log("jest:", JSON.stringify(counts));
           if (!r.numTotalTests || r.numPendingTests || r.numTodoTests || r.numPendingTestSuites) {
             console.error("::error::jest skipped tests or ran none; every suite must run in CI");
+            process.exit(1);
+          }
+          if (missing.length) {
+            console.error(`::error::gated suites did not run and pass: ${missing.join(", ")}`);
             process.exit(1);
           }
           EOF
