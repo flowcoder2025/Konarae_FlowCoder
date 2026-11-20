@@ -4,9 +4,22 @@
  */
 
 import type { PrismaClient } from "@prisma/client";
+import { isCi } from "../../ci-env";
 
 const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
 const FORBIDDEN_PORT = "5433";
+
+/**
+ * ADMIN_LOGIN_TEST_DATABASE_URL, or undefined to skip the DB suites locally.
+ * In CI a missing URL throws: a skipped suite would pass the check silently.
+ */
+export function testDatabaseUrl(): string | undefined {
+  const raw = process.env.ADMIN_LOGIN_TEST_DATABASE_URL;
+  if (!raw && isCi()) {
+    throw new Error("CI is set but ADMIN_LOGIN_TEST_DATABASE_URL is not: the DB integration suites must run in CI");
+  }
+  return raw;
+}
 
 /** Throws unless the URL is a postgres URL on loopback, not on the production tunnel port. */
 export function assertDisposableDatabaseUrl(raw: string): URL {

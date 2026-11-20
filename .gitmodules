@@ -1,0 +1,3 @@
+[submodule "text_parser"]
+	path = text_parser
+	url = https://github.com/Jerome87hyunil/text_parser.git

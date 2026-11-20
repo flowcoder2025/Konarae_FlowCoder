@@ -18,6 +18,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { SCRYPT_PARAMS, verifyPassword } from "@/lib/admin-login/password";
+import { isCi } from "../ci-env";
 
 const SCRIPT = path.join(process.cwd(), "scripts", "hash-admin-password.mjs");
 const PASSWORD = "correct horse battery staple";
@@ -304,6 +305,9 @@ function expectNothingEchoed(result: PtyResult, typed: string[] = [PASSWORD]) {
 }
 
 const ptyUnavailable = ptyUnavailableReason();
+if (ptyUnavailable && isCi()) {
+  throw new Error(`CI is set but the pty tests cannot run: ${ptyUnavailable}`);
+}
 if (ptyUnavailable) {
   // Visible in the jest output; the pure-function and non-TTY tests above still run.
   console.warn(`SKIPPED: hash-admin-password.mjs pty tests: ${ptyUnavailable}`);

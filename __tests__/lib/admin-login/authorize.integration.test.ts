@@ -15,13 +15,14 @@ import { hashPassword } from "@/lib/admin-login/password";
 import {
   assertDisposableDatabaseUrl,
   loadIsolated,
+  testDatabaseUrl,
   withDefaultConnectionLimit,
   type Isolated,
 } from "./disposable-db";
 
 type AuthorizeModule = typeof import("@/lib/admin-login/authorize");
 
-const TEST_DATABASE_URL = process.env.ADMIN_LOGIN_TEST_DATABASE_URL;
+const TEST_DATABASE_URL = testDatabaseUrl();
 const describeWithDb = TEST_DATABASE_URL ? describe : describe.skip;
 const suiteTitle = TEST_DATABASE_URL
   ? "authorizeAdmin (integration, disposable Postgres)"
