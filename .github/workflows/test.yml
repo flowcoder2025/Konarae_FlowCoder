@@ -15,8 +15,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: test-${{ github.ref }}
-  # Only superseded PR runs are cancelled; every main commit keeps its own result.
+  # PR runs share a group per PR and cancel superseded runs. Push and dispatch
+  # runs get a group per commit (a group keeps only one waiting run), so every
+  # main commit keeps its own result.
+  group: test-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
