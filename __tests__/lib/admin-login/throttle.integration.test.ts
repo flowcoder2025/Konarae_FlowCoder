@@ -27,6 +27,7 @@ import { hashPassword } from "@/lib/admin-login/password";
 import {
   assertDisposableDatabaseUrl,
   loadIsolated,
+  testDatabaseUrl,
   withDefaultConnectionLimit,
   type Isolated,
 } from "./disposable-db";
@@ -35,7 +36,7 @@ type ThrottleModule = typeof import("@/lib/admin-login/throttle");
 type AuthorizeModule = typeof import("@/lib/admin-login/authorize");
 type Result = Awaited<ReturnType<ThrottleModule["consumeAttempt"]>>;
 
-const TEST_DATABASE_URL = process.env.ADMIN_LOGIN_TEST_DATABASE_URL;
+const TEST_DATABASE_URL = testDatabaseUrl();
 const W = 15 * 60 * 1000;
 
 // Always runs (no connection): the guard must reject non-disposable targets.
